@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+client/dist/
+shared/dist/
+*.tsbuildinfo
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# env / local
+.env
+.env.local
+.vercel/
+
+# test / coverage
+coverage/

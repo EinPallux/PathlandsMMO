@@ -4,15 +4,15 @@ Engine and infrastructure spec. The governing constraint: **Phases 1–5 ship a 
 
 ## 1. Stack & Rationale
 
-| Layer | Choice | Why |
-|---|---|---|
-| Language | TypeScript, `strict` everywhere | One language across client/shared/server; the shared sim core is the whole plan |
-| 3D | **Three.js** (no game framework) | Mature, performant enough for chunked voxel rendering with our own meshing; full control |
-| Client app | Vite + React (DOM overlay UI) + Zustand | Vite for DX/static builds (Vercel); React only for UI panels — the 3D scene is plain Three.js; Zustand bridges sim→UI cheaply |
-| Sim core | `shared/` pure TS package | No DOM/Three/Node imports — enforced by ESLint import rules + a dedicated tsconfig |
-| Server (P6) | Node.js 22, `ws` (upgrade to `uWebSockets.js` only if load tests demand), PostgreSQL, Drizzle ORM | Boring, debuggable, fits a single VPS; imports `shared/` unchanged |
-| Persistence | IndexedDB (P1–5, via `idb-keyval`) → PostgreSQL (P6) | Same versioned schema both sides |
-| Deploy | Vercel static (client) · Docker Compose on VPS (server+db+nginx) | Matches the phase plan |
+| Layer       | Choice                                                                                            | Why                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Language    | TypeScript, `strict` everywhere                                                                   | One language across client/shared/server; the shared sim core is the whole plan                                               |
+| 3D          | **Three.js** (no game framework)                                                                  | Mature, performant enough for chunked voxel rendering with our own meshing; full control                                      |
+| Client app  | Vite + React (DOM overlay UI) + Zustand                                                           | Vite for DX/static builds (Vercel); React only for UI panels — the 3D scene is plain Three.js; Zustand bridges sim→UI cheaply |
+| Sim core    | `shared/` pure TS package                                                                         | No DOM/Three/Node imports — enforced by ESLint import rules + a dedicated tsconfig                                            |
+| Server (P6) | Node.js 22, `ws` (upgrade to `uWebSockets.js` only if load tests demand), PostgreSQL, Drizzle ORM | Boring, debuggable, fits a single VPS; imports `shared/` unchanged                                                            |
+| Persistence | IndexedDB (P1–5, via `idb-keyval`) → PostgreSQL (P6)                                              | Same versioned schema both sides                                                                                              |
+| Deploy      | Vercel static (client) · Docker Compose on VPS (server+db+nginx)                                  | Matches the phase plan                                                                                                        |
 
 Explicit **no**s: no .vox/GLTF asset files (models are code, see ART_GUIDE), no physics engine (voxel AABB collision is bespoke and simple), no ECS framework (plain typed structures + systems functions; an ECS library is complexity we don't need at this entity count), no Colyseus (we want protocol control and `shared/` reuse).
 
@@ -36,7 +36,7 @@ pathlands/
 └─ docs/
 ```
 
-Rule of thumb: if deleting `client/` would lose game *rules*, the code is in the wrong package.
+Rule of thumb: if deleting `client/` would lose game _rules_, the code is in the wrong package.
 
 ## 3. Simulation Core (`shared/sim`)
 
@@ -96,7 +96,7 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 ## 10. Risk Register (watch these)
 
 1. **Meshing/GC pressure** on chunk churn → transferable buffers, pooled geometry, profile early (Phase 1 acceptance gate).
-2. **Content pipeline throughput** (110 quests, ~40 models) → data-driven schemas + authoring helpers *first*, content second (ordering inside Phases 2–4 reflects this).
+2. **Content pipeline throughput** (110 quests, ~40 models) → data-driven schemas + authoring helpers _first_, content second (ordering inside Phases 2–4 reflects this).
 3. **Prediction edge cases in P6** (swim/fall/slope) → movement rules pure & tick-based from Phase 1; record/replay harness for divergence hunting.
 4. **Safari/WebGL quirks** → compatibility pass is a Phase 5 deliverable, not a launch surprise.
 5. **Scope creep** → ROADMAP backlog section is the only door; GDD scope constants are load-bearing.

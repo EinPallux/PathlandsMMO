@@ -1,0 +1,291 @@
+// Deterministic continent generation. Everything here is a pure function of the
+// world seed: same seed + same code ⇒ byte-identical world on any machine
+// (client worker, test, or the Phase-6 server). No Math.random, no wall-clock.
+
+import {
+  CHUNK_SIZE,
+  CHUNK_AREA,
+  WORLD_HEIGHT,
+  SEA_LEVEL,
+  BEACH_HEIGHT,
+  SNOW_LINE,
+  Voxel,
+  isSolidVoxel,
+} from '../core/constants.js';
+import { Noise } from '../core/noise.js';
+import { deriveSeed, hashFloat2, hashFloat3 } from '../core/rng.js';
+import { clamp, lerp, smoothstep } from '../core/math.js';
+import { Biome, BIOMES, BIOME_LIST, normX, normZ } from './biomes.js';
+
+export interface ColumnSample {
+  /** Surface height (index of the topmost solid voxel). */
+  readonly height: number;
+  /** Dominant biome at this column. */
+  readonly biome: Biome;
+  /** Voxel material of the surface voxel. */
+  readonly surface: Voxel;
+  /** True when the surface is rock/snow/crystal (drives subsurface material). */
+  readonly rocky: boolean;
+}
+
+export interface ChunkData {
+  readonly cx: number;
+  readonly cz: number;
+  /** CHUNK_SIZE × CHUNK_SIZE × WORLD_HEIGHT voxel materials. */
+  readonly voxels: Uint8Array;
+  /** Per-column dominant biome (CHUNK_AREA entries), for mesh colouring. */
+  readonly biomes: Uint8Array;
+  /** Highest occupied voxel (terrain or water) in this chunk. */
+  readonly maxY: number;
+}
+
+export function voxelIndex(lx: number, ly: number, lz: number): number {
+  return lx + lz * CHUNK_SIZE + ly * CHUNK_AREA;
+}
+
+interface BlendedParams {
+  base: number;
+  amp: number;
+  ridgeAmp: number;
+  primary: Biome;
+  caves: boolean;
+}
+
+export class World {
+  readonly seed: number;
+  private readonly elev: Noise;
+  private readonly warp: Noise;
+  private readonly river: Noise;
+  private readonly caveA: Noise;
+  private readonly caveB: Noise;
+  private readonly columnCache = new Map<number, ColumnSample>();
+
+  constructor(seed: number) {
+    this.seed = seed;
+    this.elev = new Noise(deriveSeed(seed, 'elevation'));
+    this.warp = new Noise(deriveSeed(seed, 'warp'));
+    this.river = new Noise(deriveSeed(seed, 'river'));
+    this.caveA = new Noise(deriveSeed(seed, 'caveA'));
+    this.caveB = new Noise(deriveSeed(seed, 'caveB'));
+  }
+
+  // --- Biome blending -------------------------------------------------------
+
+  /** Blend zone parameters by inverse-square proximity to the two nearest centres. */
+  private blendedParams(x: number, z: number): BlendedParams {
+    // Domain-warp normalised coords so zone borders wiggle rather than being straight.
+    const wnx = normX(x) + this.warp.perlin2(x * 0.0009, z * 0.0009) * 0.06;
+    const wnz = normZ(z) + this.warp.perlin2(x * 0.0009 + 53.1, z * 0.0009 + 53.1) * 0.06;
+
+    let wsum = 0;
+    let base = 0;
+    let amp = 0;
+    let ridgeAmp = 0;
+    let bestW = -1;
+    let primary = Biome.Vale;
+    let primaryCaves = false;
+
+    for (const p of BIOME_LIST) {
+      const dx = wnx - p.cx;
+      const dz = wnz - p.cz;
+      const d2 = dx * dx + dz * dz + 1e-4;
+      const w = 1 / (d2 * d2); // inverse 4th power → tight cells, smooth seams
+      wsum += w;
+      base += w * p.base;
+      amp += w * p.amp;
+      ridgeAmp += w * p.ridgeAmp;
+      if (w > bestW) {
+        bestW = w;
+        primary = p.biome;
+        primaryCaves = p.caves;
+      }
+    }
+
+    return {
+      base: base / wsum,
+      amp: amp / wsum,
+      ridgeAmp: ridgeAmp / wsum,
+      primary,
+      caves: primaryCaves,
+    };
+  }
+
+  /** Dominant biome at a world column. */
+  biomeAt(x: number, z: number): Biome {
+    return this.blendedParams(x, z).primary;
+  }
+
+  // --- Elevation ------------------------------------------------------------
+
+  /** Raise crag walls at the north & east world edges (impassable borders). */
+  private cragRise(nx: number, nz: number): number {
+    const north = 1 - smoothstep(0.05, 0.13, nz);
+    const east = smoothstep(0.87, 0.96, nx);
+    return Math.max(north, east) * 82;
+  }
+
+  /** Drop terrain into the sea at the south & west world edges. */
+  private seaFalloff(nx: number, nz: number): number {
+    const south = smoothstep(0.88, 1.0, nz);
+    const west = 1 - smoothstep(0.0, 0.1, nx);
+    return Math.max(south, west) * 64;
+  }
+
+  /** Continuous surface height (integer) at a world column. */
+  heightAt(x: number, z: number): number {
+    const p = this.blendedParams(x, z);
+
+    // Warp the sampling position for more organic hills.
+    const wx = x + this.warp.perlin2(x * 0.004 + 11.7, z * 0.004 + 11.7) * 26;
+    const wz = z + this.warp.perlin2(x * 0.004 + 71.3, z * 0.004 + 71.3) * 26;
+
+    const hills = this.elev.fbm2(wx, wz, 5, 0.0055);
+    let h = p.base + hills * p.amp;
+
+    if (p.ridgeAmp > 0.5) {
+      const ridge = this.elev.ridged2(wx, wz, 4, 0.0042);
+      h += ridge * p.ridgeAmp;
+    }
+
+    const nx = normX(x);
+    const nz = normZ(z);
+    h += this.cragRise(nx, nz);
+    h -= this.seaFalloff(nx, nz);
+
+    // Rivers: carve meandering channels through lowlands down toward the water table.
+    if (h < 88) {
+      const r = Math.abs(this.river.perlin2(x * 0.0016, z * 0.0016));
+      if (r < 0.03) {
+        const t = smoothstep(0.03, 0.006, r);
+        h = lerp(h, SEA_LEVEL - 2, t * 0.9);
+      }
+    }
+
+    return Math.round(clamp(h, 3, WORLD_HEIGHT - 2));
+  }
+
+  // --- Surface material -----------------------------------------------------
+
+  private pickSurface(x: number, z: number, h: number, biome: Biome, slope: number): Voxel {
+    if (h <= SEA_LEVEL) return Voxel.Sand; // seabed
+    if (h <= SEA_LEVEL + BEACH_HEIGHT) return Voxel.Sand; // beach
+    if (biome === Biome.Peaks) {
+      if (h > SNOW_LINE) return Voxel.Snow;
+      return hashFloat2(x, z, this.seed ^ 0x51a1) < 0.14 ? Voxel.CrystalRock : Voxel.Rock;
+    }
+    if (slope >= 4) return Voxel.Rock; // exposed cliff band
+    if (h > SNOW_LINE + 8) return Voxel.Snow; // snowy tops elsewhere (Trollmoor peaks)
+    return Voxel.Grass;
+  }
+
+  /** Sample a column's height, biome, and surface material (memoised). */
+  sampleColumn(x: number, z: number): ColumnSample {
+    // Offset-packed key: collision-free for any coord in [-4096, 4092] (covers the
+    // 3072-wide world plus out-of-bounds neighbour/camera queries).
+    const key = ((x | 0) + 4096) * 8192 + ((z | 0) + 4096);
+    const cached = this.columnCache.get(key);
+    if (cached) return cached;
+
+    const h = this.heightAt(x, z);
+    const biome = this.biomeAt(x, z);
+    const slope = Math.max(
+      Math.abs(h - this.heightAt(x + 1, z)),
+      Math.abs(h - this.heightAt(x - 1, z)),
+      Math.abs(h - this.heightAt(x, z + 1)),
+      Math.abs(h - this.heightAt(x, z - 1)),
+    );
+    const surface = this.pickSurface(x, z, h, biome, slope);
+    const rocky = surface === Voxel.Rock || surface === Voxel.CrystalRock || surface === Voxel.Snow;
+
+    const sample: ColumnSample = { height: h, biome, surface, rocky };
+    if (this.columnCache.size > 24000) this.columnCache.clear();
+    this.columnCache.set(key, sample);
+    return sample;
+  }
+
+  // --- Caves ----------------------------------------------------------------
+
+  private caveCarved(x: number, y: number, z: number, h: number): boolean {
+    if (y < 6 || y > h - 4) return false;
+    const c1 = this.caveA.perlin3(x * 0.028, y * 0.045, z * 0.028);
+    const c2 = this.caveB.perlin3(x * 0.028, y * 0.045, z * 0.028);
+    return c1 * c1 + c2 * c2 < 0.018;
+  }
+
+  // --- Single-voxel query (collision) ---------------------------------------
+
+  voxelAt(x: number, y: number, z: number): Voxel {
+    if (y < 0) return Voxel.Stone;
+    if (y >= WORLD_HEIGHT) return Voxel.Air;
+    const s = this.sampleColumn(x, z);
+    const h = s.height;
+    if (y <= h) {
+      if (BIOMES[s.biome].caves && this.caveCarved(x, y, z, h)) return Voxel.Air;
+      if (y === h) return s.surface;
+      if (y > h - 3)
+        return s.rocky ? Voxel.Stone : s.surface === Voxel.Sand ? Voxel.Sand : Voxel.Dirt;
+      return Voxel.Stone;
+    }
+    if (y <= SEA_LEVEL) return Voxel.Water;
+    return Voxel.Air;
+  }
+
+  isSolidAt(x: number, y: number, z: number): boolean {
+    return isSolidVoxel(this.voxelAt(Math.floor(x), Math.floor(y), Math.floor(z)));
+  }
+
+  isFluidAt(x: number, y: number, z: number): boolean {
+    return this.voxelAt(Math.floor(x), Math.floor(y), Math.floor(z)) === Voxel.Water;
+  }
+
+  // --- Chunk generation -----------------------------------------------------
+
+  generateChunk(cx: number, cz: number): ChunkData {
+    const voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT);
+    const biomes = new Uint8Array(CHUNK_AREA);
+    let maxY = 0;
+
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      const wz = cz * CHUNK_SIZE + lz;
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const wx = cx * CHUNK_SIZE + lx;
+        const s = this.sampleColumn(wx, wz);
+        const h = s.height;
+        const biome = s.biome;
+        const hasCaves = BIOMES[biome].caves;
+        biomes[lx + lz * CHUNK_SIZE] = biome;
+
+        // Solid column, top-down, with optional cave carving.
+        for (let y = 0; y <= h && y < WORLD_HEIGHT; y++) {
+          if (hasCaves && this.caveCarved(wx, y, wz, h)) continue; // air pocket
+          let v: Voxel;
+          if (y === h) {
+            v = s.surface;
+          } else if (y > h - 3) {
+            v = s.rocky ? Voxel.Stone : s.surface === Voxel.Sand ? Voxel.Sand : Voxel.Dirt;
+          } else {
+            v = Voxel.Stone;
+            if (biome === Biome.Peaks && y < h - 6 && hashFloat3(wx, y, wz, this.seed) < 0.02) {
+              v = Voxel.CrystalRock;
+            }
+          }
+          voxels[voxelIndex(lx, y, lz)] = v;
+        }
+
+        // Water fill above terrain up to sea level (oceans, rivers, lakes).
+        if (h < SEA_LEVEL) {
+          for (let y = h + 1; y <= SEA_LEVEL; y++) {
+            if (voxels[voxelIndex(lx, y, lz)] === Voxel.Air) {
+              voxels[voxelIndex(lx, y, lz)] = Voxel.Water;
+            }
+          }
+        }
+
+        const colTop = Math.max(h, h < SEA_LEVEL ? SEA_LEVEL : h);
+        if (colTop > maxY) maxY = colTop;
+      }
+    }
+
+    return { cx, cz, voxels, biomes, maxY: Math.min(maxY, WORLD_HEIGHT - 1) };
+  }
+}
