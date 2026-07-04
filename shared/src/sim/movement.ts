@@ -122,7 +122,10 @@ export function stepPlayerMovement(
   const feetInWater = sampler.isFluid(p.x, p.y + 0.1, p.z);
 
   // Horizontal wish → velocity (arcade-direct for crisp control).
-  const wishLen = Math.hypot(intent.wishX, intent.wishZ);
+  // Math.sqrt is IEEE-754 correctly-rounded (identical across JS engines);
+  // Math.hypot is only "implementation-approximated" and could diverge a client
+  // (browser) from the Phase-6 server (Node) — breaking prediction. Keep it sqrt.
+  const wishLen = Math.sqrt(intent.wishX * intent.wishX + intent.wishZ * intent.wishZ);
   const speed = p.inWater ? SWIM_SPEED : intent.sprint ? RUN_SPEED : WALK_SPEED;
   if (wishLen > 1e-4) {
     const norm = Math.min(1, wishLen);

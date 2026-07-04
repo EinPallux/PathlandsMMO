@@ -55,7 +55,8 @@ export class PlayerController {
 
     let wishX = fwdX * f + rightX * s;
     let wishZ = fwdZ * f + rightZ * s;
-    const len = Math.hypot(wishX, wishZ);
+    // Match the simulation's deterministic length (sqrt, not approximated hypot).
+    const len = Math.sqrt(wishX * wishX + wishZ * wishZ);
     const moving = len > 1e-3;
     if (moving) {
       wishX /= len;
