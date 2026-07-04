@@ -1,0 +1,172 @@
+# ROADMAP.md — Development Phases
+
+Pathlands is built in **six phases**. Each phase is a major milestone that ends with a playable, deployable build — never a skeleton. Phases 1–5 produce a complete single-player game on Vercel; Phase 6 turns it into a true MMO on a Linux VPS.
+
+**Status legend:** `[ ]` not started · `[~]` in progress · `[x]` done
+
+## Current Status
+
+> **Phase 0 complete (2026-07-04).** Next up: **Phase 1 — Voxel Engine & The Continent**.
+> *(Update this block at the end of every session.)*
+
+---
+
+## Phase 0 — Planning ✅
+
+- [x] Full documentation set: README, CLAUDE.md, AGENTS.md, ROADMAP.md, CHANGELOG.md, docs/GAME_DESIGN.md, docs/WORLD.md, docs/ARCHITECTURE.md, docs/ART_GUIDE.md
+- [x] Key decisions locked: tab-target combat, medium scope (cap 30, 6 zones, ~110 quests, 5 Hollows), hybrid asset pipeline (code-built 3D models + PNGs as UI art), 4 classes (Warrior, Ranger, Priest, Mage)
+
+---
+
+## Phase 1 — Voxel Engine & The Continent
+
+**Milestone:** Walk, run, jump, and swim across the *entire* generated continent in the browser at 60 FPS, with the four class characters rendered and animated. Deployed on Vercel.
+
+### Deliverables
+
+- [ ] **Monorepo scaffold** — pnpm workspaces (`client/`, `shared/`), Vite + React + Three.js + Zustand, TS strict, ESLint/Prettier, Vitest, scripts per CLAUDE.md; Vercel deploy config.
+- [ ] **Deterministic worldgen v1** (`shared/worldgen`) — fixed world seed; continent heightmap (~3072×3072 voxel columns, height 0–192) with the six-zone macro layout from docs/WORLD.md: elevation, biome assignment, rivers/lakes, beaches, cliff bands, cave carving for designated cavern regions. Seeded RNG streams; determinism unit tests.
+- [ ] **Chunk engine** — 32×32-column chunks meshed in Web Workers (greedy meshing, vertex colors, ambient occlusion); load/unload ring around player; view-distance fog (Cube World look); frustum culling; target budgets from CLAUDE.md.
+- [ ] **Voxel model system** (`shared/models` + client renderer) — typed code-authored voxel-grid format with named parts (head/torso/arms/legs/…); runtime mesher; part-based keyframe animation (idle, walk, run, jump, swim, attack, cast, hit, death); palette system per docs/ART_GUIDE.md.
+- [ ] **First character models** — Warrior, Ranger, Priest recreated from their PNGs; **Mage authored new** (plus its UI portrait treatment per ART_GUIDE); shared humanoid rig proportions.
+- [ ] **Player controller** — third-person camera (orbit + zoom, collision-aware), WASD + jump, gravity, swimming, walkable-slope/step logic, voxel collision (capsule vs. voxel AABBs) with movement rules in `shared/`.
+- [ ] **Environment pass v1** — sky dome, day/night cycle (visual only), directional sun + ambient light, water plane rendering, biome ground-color palettes.
+- [ ] **Dev tooling** — free-fly camera, teleport-to-coordinates, chunk-border/FPS/draw-call overlay, seed inspector map view (2D render of the whole continent for verifying worldgen).
+
+### Acceptance Criteria
+
+1. `pnpm build` deploys to Vercel; the game loads to playable in ≤ 5 s (warm cache) and holds ≥ 60 FPS on a mid-range laptop while running through terrain.
+2. You can traverse the whole continent border-to-border with no holes, floating chunks, or fall-throughs; the world regenerates byte-identical across reloads and machines (verified by test hash).
+3. All four class models render with idle/walk/run/jump animations; switching class model via dev menu works.
+4. Six biome regions are visually distinct (color palettes, terrain shape) and match docs/WORLD.md's macro map.
+5. Determinism, collision, and worldgen unit tests pass in CI-style run (`pnpm test`).
+
+---
+
+## Phase 2 — A Living World (Zones, Towns & Navigation)
+
+**Milestone:** The continent becomes a place: six fully dressed zones, the capital Waymeet, villages built from the building assets, roads, props, wildlife, minimap and world map. It feels like an MMO world with the players missing.
+
+### Deliverables
+
+- [ ] **Prop & structure system** — code-authored voxel models for trees (per-biome variants), rocks, bushes, flowers, crops, fences, lanterns, bridges, signposts, market stalls, wells, graves, ruins, ore veins & herb nodes (visual shells for Phase 4), etc.; instanced rendering; deterministic seeded placement per biome + authored placement layer for hand-designed locations.
+- [ ] **Buildings** — voxel reconstructions of all 12 building PNGs (houses 1–4, big houses 1–2, inn, church, stable, bathhouse, worker hut, fountain) with enterable interiors where the design calls for it; building kit reuse rules per ART_GUIDE.
+- [ ] **Settlements & roads** — capital **Waymeet** plus the settlements from docs/WORLD.md (Brookhollow, Fernwick, Grubbers' Rest, Glimmercamp, Mossgate outpost…), placed via the authored layer; road/path network connecting them (voxel road surfaces + signposts); Waystones placed at every settlement and key wilderness points.
+- [ ] **NPC shells** — voxel villager/guard/vendor models (male/female variants, palette-swapped outfits); NPCs stand/wander/turn-to-face-player; nameplates; placeholder dialogue window (real dialogue content arrives with quests in Phase 4).
+- [ ] **Ambient wildlife** — non-hostile critters (deer, rabbits, birds, fish shadows in water) with simple wander AI; Dire Stag model built from its PNG as a neutral rare.
+- [ ] **Minimap + world map** — live minimap (terrain colors, North indicator, nearby POI icons); full-screen world map rendered from worldgen data with zone borders, roads, settlements, discovered-Waystone markers, player position; fog-of-discovery per map region.
+- [ ] **The five Hollows (spaces only)** — cave/ruin structures carved and dressed for Briarhollow Warrens, Gloomroot Cavern, the Crystal Deeps, Ironvein Halls, and the Sunken Crypt (docs/WORLD.md); no combat population yet.
+- [ ] **Ambience** — biome-tinted lighting, simple weather (clear/overcast/rain), emissive light sources at night (windows, lanterns, crystals).
+
+### Acceptance Criteria
+
+1. Every zone, settlement, road, and Hollow in docs/WORLD.md exists in-world where the atlas says it is; the world map reflects reality.
+2. Walking Brookhollow → Waymeet → each zone capital along roads passes signposts and encounters no unfinished areas within normal sightlines.
+3. Minimap and world map work (POIs, discovery fog, player tracking); map opens/closes at 60 FPS.
+4. All 12 building models are recognizably faithful to their PNGs (side-by-side check) and appear in settlements; at least the inn, church, and player-relevant interiors are enterable.
+5. Frame budget still holds inside the densest settlement (Waymeet market at midday).
+
+---
+
+## Phase 3 — Combat, Classes & Character Growth
+
+**Milestone:** Pathlands becomes a game: create a character, fight through the world, level 1→30, loot and equip gear, die and respawn, get stronger. All ten enemy assets live in the world.
+
+### Deliverables
+
+- [ ] **Onboarding v1** — title screen → local character list → character creation (class choice with PNG portraits, name, 4–6 voxel appearance options like skin/hair palette) → spawn into Heartmead Vale. Local profiles via the versioned save system (IndexedDB).
+- [ ] **Core stats & leveling** — the full stat model, XP curve to 30, per-level class growth, rested XP, level-up presentation — exactly per GDD §Stats/§Leveling.
+- [ ] **Tab-target combat** — target selection (click/Tab/nearest-enemy), hotbar (10 slots + consumable slots), cast times, cooldowns, global cooldown, auto-attack, range/line-of-sight checks, threat, damage/heal/crit floaters, target frame with cast bar, combat state; all resolution math in `shared/combat`.
+- [ ] **Four classes complete** — every skill for Warrior/Ranger/Priest/Mage per GDD (10–12 skills each, learned by level), class resources (Rage/Focus/Mana), Path specialization choices at 10/20/30, trainer NPCs, respec.
+- [ ] **Enemy AI & population** — aggro radius, leash, chase, skill use, flee-at-low-HP archetypes; spawn tables + respawn timers per zone from docs/WORLD.md; all 10 enemy PNGs as in-game models (Briar Goblin, Mossfang Wolf, Thornback Boar, Venomcap Spriggan, Hollowroot Treant, Dire Stag, Cave Gnoll, Stonejaw Grub, Crystalback Lizard, Ironhide Troll) plus level-band variants and ~8 new Claude-authored enemy models to fill spawn-table gaps (bandits, skeletons, crypt horrors, slimes, bats, marsh drakes…); elites and named rares.
+- [ ] **Hollow population** — the five Hollows stocked with elite packs and end bosses with mechanics per docs/WORLD.md; solo-tuned with nearby-ally scaling hooks (used properly in Phase 6).
+- [ ] **Items, inventory & gear** — item schema (rarity, ilvl, stats, requirements), 11 equip slots, bag grid + bag upgrades, loot rolls/loot windows, gold, vendors (buy/sell/buyback), quest-item flagging; itemization tables for levels 1–30 per GDD.
+- [ ] **Death & Waystones** — death → release → respawn at last-activated Waystone with brief "Winded" debuff; Waystone activation network + paid fast travel between activated Waystones.
+- [ ] **HUD v1** — player/target frames, hotbar, XP bar, buff/debuff icons, character sheet, inventory, skill book, basic settings (keybinds, volume placeholders, view distance).
+
+### Acceptance Criteria
+
+1. A new character of each class can be created and played to at least level 12 entirely through combat/exploration without dev commands; XP, loot, and gear progression match GDD tables.
+2. All 10 asset enemies (and the new ones) fight with functioning AI, animations, loot, and correct level bands in their atlas-assigned regions.
+3. Briarhollow Warrens (the level ~8–12 Hollow) is clearable solo at-level, including its boss; death/respawn/Waystone loop works.
+4. Combat math unit tests pass (damage, mitigation, crit, threat, XP); save/load round-trips a mid-progress character losslessly.
+5. Full playthrough of the onboarding flow works on the Vercel deploy on desktop Chrome + Firefox.
+
+---
+
+## Phase 4 — Quests, Professions & the Long Game
+
+**Milestone:** The content game: ~110 quests including the main story, all five professions, meta progression, mounts, achievements, and an endgame loop. This is the "the world has things to do everywhere" phase.
+
+### Deliverables
+
+- [ ] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains), quest log (~25 active max), tracker HUD, map/minimap markers, NPC `!`/`?` indicators, dialogue windows using NPC portraits, XP/gold/item/choice rewards, prerequisites & chain state, shareable-later flags for Phase 6.
+- [ ] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path" (Waystone mystery, ~30 quests, finale in the Sunken Crypt), zone side-quest arcs, Hollow quest lines, profession intro quests, one daily-repeatable bounty board per major settlement.
+- [ ] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100, node placement activated across all zones (deterministic spawns + respawn timers), tiered materials per zone level band, gathering cast/channel + fishing timing minigame, tool items.
+- [ ] **Crafting professions** — Blacksmithing (weapons/armor incl. several best-pre-boss items) and Alchemy (combat/utility/profession potions, flasks); recipe books, trainers, discovery recipes, crafting UI with material requirements; economy-consistent material flows (mining→smithing, herbalism→alchemy).
+- [ ] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on account-wide perks (rested-XP bonus, bag slot, mount discount, Waystone fee reduction, starter-gear upgrades for alts) per GDD §Meta; titles displayed at nameplate.
+- [ ] **Mounts** — Wolf mount from its PNG (+60% speed, level 20, gold sink), mount/dismount rules, 2–3 palette-variant skins as Deed/endgame rewards.
+- [ ] **Endgame loop v1** — daily bounties, named rare-elite hunt targets with Deed tracking, Hollow boss loot tables worth re-running, profession masteries, a repeatable "restore the final Waystone" world event stub (full multiplayer version in Phase 6).
+- [ ] **Supporting systems** — bank storage in Waymeet, mailbox stub (letters from quest NPCs; player mail comes with Phase 6), improved settings, keybind remapping.
+
+### Acceptance Criteria
+
+1. A fresh character can quest 1→30 with no XP gaps (quest+kill XP suffices without grinding walls), finishing the main story solo.
+2. All five professions are levelable 1→100 within the existing world's nodes/recipes; at least 10 crafted items are genuinely useful at-level; fishing minigame works.
+3. Quest tracker, map markers, and NPC indicators behave correctly across chains, multi-objectives, and abandons; quest state survives save/load.
+4. Deeds fire correctly, Path Points accrue and spend, perks apply account-wide across local characters; mount works everywhere outdoors.
+5. Playtest checklist in docs (leveling pace table) roughly matches: reaching cap in ~25–35 played hours as a quest-follower.
+
+---
+
+## Phase 5 — Polish: The Complete Solo Game
+
+**Milestone:** Release-quality single-player Pathlands on Vercel. If Phase 6 never happened, this would still be a finished indie game. This phase is deliberately about quality, not new systems.
+
+### Deliverables
+
+- [ ] **Audio** — music beds per zone/situation (day/night/combat/city/Hollow), SFX for combat/UI/footsteps-by-surface/ambience (birds, wind, water, rain, taverns); WebAudio implementation with volume buses. Procedurally generated/synthesized or hand-composed in-code sequences — no downloaded copyrighted assets.
+- [ ] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels.
+- [ ] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors.
+- [ ] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning.
+- [ ] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery.
+- [ ] **Resilience** — autosave + rotating save backups, save-corruption recovery, versioned save migration test suite, error boundary + bug-report info screen.
+- [ ] **Content gap fill** — whatever playtesting exposes: dead map corners, quest dead spots, missing vendor, confusing moments. Tracked as a checklist added to this file during the phase.
+
+### Acceptance Criteria
+
+1. Blind-playtest run (someone who never saw the game) reaches level 5 without external help; onboarding answers class/movement/combat/quest questions itself.
+2. Full 1→30 + main story + all five Hollows + a profession to 100, in one save, no blockers, no console errors.
+3. Budgets hold everywhere (worst-case scene ≥ 50 FPS on the reference laptop, ≥ 60 typical); loads within targets on a cold cache over average broadband.
+4. Audio/VFX exist for every player-facing action; nothing fires silently/invisibly.
+5. The Vercel deployment is publicly shareable as a complete game ("v1.0-solo" tag).
+
+---
+
+## Phase 6 — The MMO (Server Authority & Launch)
+
+**Milestone:** Pathlands becomes a true MMORPG: accounts, one shared persistent world on a Linux VPS, other players visible and playable-with. Launch-ready.
+
+### Deliverables
+
+- [ ] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU).
+- [ ] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume).
+- [ ] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import).
+- [ ] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks).
+- [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).
+- [ ] **Multiplayer endgame** — weekly world boss at the restored final Waystone, group bounty variants, guild Deeds; anti-cheat essentials (server validates everything; speed/teleport/rate sanity checks; no client-trusted numbers).
+- [ ] **Ops & launch** — VPS deployment via Docker Compose (server, PostgreSQL, nginx + TLS/wss, backups cron), GitHub Actions deploy pipeline, structured logging + metrics dashboard (CCU, tick time, DB health), load test at 200 simulated clients, GM tooling (kick/mute/teleport/item-grant), status page; launch checklist & rollback plan.
+
+### Acceptance Criteria
+
+1. Two browsers on different networks: both players see each other move/fight/emote smoothly (interpolated), can party, share quest credit, trade, duel, and chat; state survives server restart.
+2. The server is fully authoritative: a modified client cannot teleport, speed-hack, spawn items, or cast off-cooldown (verified by scripted hostile client).
+3. Load test: 200 concurrent simulated players across the continent with server tick ≤ 50 ms p95 and client experience acceptable in the busiest hub.
+4. Full ops runbook works: cold VPS → deployed game in documented steps; nightly DB backups restore-tested; TLS/wss everywhere.
+5. Soft-launch checklist complete: accounts flow, password reset, character import, world boss fired successfully with a real group — **Pathlands 1.0 live**.
+
+---
+
+## Post-Launch Backlog (explicitly out of scope for 1.0)
+
+Ideas parked so phases stay honest: battlegrounds/arena PvP, auction house (needs population), player housing, new zones/level-cap raises, pets/companions, cooking profession, seasonal events, mobile touch controls, localization.
