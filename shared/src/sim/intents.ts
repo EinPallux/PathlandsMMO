@@ -14,8 +14,48 @@ export interface MoveIntent {
   yaw: number;
 }
 
-/** Placeholder for the intents that arrive in later phases (cast, loot, interact…). */
-export type Intent = MoveIntent;
+/** Acquire (or clear) the current target. */
+export interface SetTargetIntent {
+  type: 'SetTarget';
+  /** Entity id to target, or null to clear. */
+  targetId: string | null;
+}
+
+/** Cast a skill at the current (or given) target. */
+export interface CastSkillIntent {
+  type: 'CastSkill';
+  skillId: string;
+  /** Override target; omitted ⇒ use the caster's current target. */
+  targetId?: string | null;
+  /** For ground-targeted skills, the world point. */
+  groundX?: number;
+  groundZ?: number;
+}
+
+/** Toggle the auto-attack on/off (melee swing / ranged shot on weapon timer). */
+export interface ToggleAutoAttackIntent {
+  type: 'ToggleAutoAttack';
+  on: boolean;
+}
+
+/** Interact with a nearby world entity (NPC, Waystone, node, loot). */
+export interface InteractIntent {
+  type: 'Interact';
+  targetId: string;
+}
+
+/** Release spirit after death → respawn at the last Waystone. */
+export interface ReleaseSpiritIntent {
+  type: 'ReleaseSpirit';
+}
+
+export type Intent =
+  | MoveIntent
+  | SetTargetIntent
+  | CastSkillIntent
+  | ToggleAutoAttackIntent
+  | InteractIntent
+  | ReleaseSpiritIntent;
 
 export function makeMoveIntent(
   wishX: number,
