@@ -123,10 +123,11 @@ export class ChunkManager {
       }
     }
 
-    // Rebuild the queue nearest-first.
+    // Rebuild the queue nearest-first from every not-yet-loaded entry within the
+    // keep radius (not just the desired ring) so a chunk that was requeued after
+    // a worker error while sitting in the keep shell is never orphaned.
     this.queue = [];
-    for (const key of this.desired) {
-      const entry = this.entries.get(key)!;
+    for (const entry of this.entries.values()) {
       if (entry.state === 'queued') this.queue.push(entry);
     }
     this.queue.sort(
@@ -157,7 +158,10 @@ export class ChunkManager {
     this.busy.delete(worker);
     if (key !== undefined) {
       const entry = this.entries.get(key);
-      if (entry && entry.state === 'loading' && this.desired.has(key)) {
+      // Requeue whether or not the chunk is still in the desired ring: a
+      // kept-but-not-desired entry must not stall in 'loading' forever (update()
+      // disposes it only once it leaves the keep radius). Mirrors onWorkerMessage.
+      if (entry && entry.state === 'loading') {
         entry.state = 'queued';
         this.queue.push(entry);
       }
