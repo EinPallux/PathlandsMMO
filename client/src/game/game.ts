@@ -117,6 +117,10 @@ export class Game {
       setDayNightSpeed: (speed) => {
         this.env.speed = speed;
       },
+      setWeather: (w) => {
+        this.env.setWeather(w);
+        useStore.getState().setSnapshot({ weather: w });
+      },
       respawn: () => commands.teleport(SPAWN_X, SPAWN_Z),
     };
     useStore.getState().setCommands(commands);

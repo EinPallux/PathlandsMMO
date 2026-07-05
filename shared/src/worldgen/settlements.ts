@@ -152,6 +152,25 @@ export const WILD_WAYSTONES: readonly WildWaystone[] = [
   { id: 'cryptwatch', name: 'Cryptwatch', x: 1500, z: 2820 },
 ];
 
+/** The five open-world dungeons ("Hollows"). Phase 2 carves entrances only. */
+export type HollowTheme = 'goblin' | 'gnoll' | 'crystal' | 'iron' | 'crypt';
+
+export interface Hollow {
+  id: string;
+  name: string;
+  x: number;
+  z: number;
+  theme: HollowTheme;
+}
+
+export const HOLLOWS: readonly Hollow[] = [
+  { id: 'briarhollow', name: 'Briarhollow Warrens', x: 2300, z: 1560, theme: 'goblin' },
+  { id: 'gloomroot', name: 'Gloomroot Cavern', x: 700, z: 1400, theme: 'gnoll' },
+  { id: 'crystalDeeps', name: 'The Crystal Deeps', x: 770, z: 780, theme: 'crystal' },
+  { id: 'ironvein', name: 'Ironvein Halls', x: 1400, z: 640, theme: 'iron' },
+  { id: 'sunkenCrypt', name: 'The Sunken Crypt', x: 1500, z: 2740, theme: 'crypt' },
+];
+
 /** Roads: ordered settlement/waypoint chains forming the Old Road network. */
 export interface Road {
   nodes: Array<{ x: number; z: number }>;

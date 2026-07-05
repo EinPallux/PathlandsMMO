@@ -18,12 +18,15 @@ export interface DialogueState {
   index: number;
 }
 
+export type WeatherKind = 'clear' | 'overcast' | 'rain';
+
 export interface GameCommands {
   teleport(x: number, z: number): void;
   setClass(cls: CharacterClass): void;
   setViewDistance(chunks: number): void;
   toggleFreeFly(): void;
   setDayNightSpeed(speed: number): void;
+  setWeather(w: WeatherKind): void;
   respawn(): void;
 }
 
@@ -55,6 +58,7 @@ export interface UiState {
   showMap: boolean;
   showDev: boolean;
   viewDistance: number;
+  weather: WeatherKind;
   selectedClass: CharacterClass;
 
   commands: GameCommands | null;
@@ -100,6 +104,7 @@ export const useStore = create<UiState>((set) => ({
   showMap: false,
   showDev: true,
   viewDistance: 7,
+  weather: 'clear',
   selectedClass: CharacterClass.Warrior,
 
   commands: null,

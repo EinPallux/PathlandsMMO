@@ -36,7 +36,7 @@ export function Minimap(): JSX.Element {
         const sx = (gx - (pxMap - srcW / 2)) * scale;
         const sy = (gz - (pzMap - srcW / 2)) * scale;
         if (sx < 0 || sy < 0 || sx > SIZE || sy > SIZE) continue;
-        ctx.fillStyle = p.kind === 'town' ? '#e2c463' : '#8fe6f0';
+        ctx.fillStyle = p.kind === 'town' ? '#e2c463' : p.kind === 'hollow' ? '#c66' : '#8fe6f0';
         ctx.beginPath();
         ctx.arc(sx, sy, p.kind === 'town' ? 3 : 2.4, 0, Math.PI * 2);
         ctx.fill();

@@ -14,6 +14,7 @@ import {
   shade,
   SETTLEMENTS,
   WILD_WAYSTONES,
+  HOLLOWS,
   ROADS,
 } from '@pathlands/shared';
 
@@ -71,7 +72,7 @@ export interface Poi {
   /** Normalised [0,1] map coords. */
   nx: number;
   nz: number;
-  kind: 'town' | 'waystone';
+  kind: 'town' | 'waystone' | 'hollow';
 }
 
 export function mapPois(): Poi[] {
@@ -81,6 +82,9 @@ export function mapPois(): Poi[] {
   }
   for (const w of WILD_WAYSTONES) {
     out.push({ name: w.name, nx: w.x / WORLD_SIZE_X, nz: w.z / WORLD_SIZE_Z, kind: 'waystone' });
+  }
+  for (const h of HOLLOWS) {
+    out.push({ name: h.name, nx: h.x / WORLD_SIZE_X, nz: h.z / WORLD_SIZE_Z, kind: 'hollow' });
   }
   return out;
 }

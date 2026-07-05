@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useStore } from '../game/store.js';
-import { CharacterClass, CLASS_INFO } from '@pathlands/shared';
+import { CharacterClass, CLASS_INFO, HOLLOWS } from '@pathlands/shared';
 import { panel, button, buttonActive, colors } from './theme.js';
 
 const ZONES: Array<{ name: string; x: number; z: number }> = [
@@ -104,6 +104,26 @@ export function DevOverlay(): JSX.Element {
         ].map((o) => (
           <button key={o.label} style={button} onClick={() => cmd?.setDayNightSpeed(o.v)}>
             {o.label}
+          </button>
+        ))}
+      </Row>
+
+      <Row label="Hollows">
+        {HOLLOWS.map((h) => (
+          <button key={h.id} style={button} onClick={() => cmd?.teleport(h.x, h.z)}>
+            {h.name.replace('The ', '').split(' ')[0]}
+          </button>
+        ))}
+      </Row>
+
+      <Row label="Weather">
+        {(['clear', 'overcast', 'rain'] as const).map((wk) => (
+          <button
+            key={wk}
+            style={s.weather === wk ? buttonActive : button}
+            onClick={() => cmd?.setWeather(wk)}
+          >
+            {wk}
           </button>
         ))}
       </Row>

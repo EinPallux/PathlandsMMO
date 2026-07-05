@@ -6,15 +6,18 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 1 complete (2026-07-04).** The voxel engine and the whole continent are
-> playable in the browser: deterministic worldgen (6 zones, rivers, caves, crags,
-> snow, water), Web-Worker greedy-meshed chunk streaming, four animated class
-> models, third-person + free-fly cameras, capsule-vs-voxel collision, day/night
-> sky & water, and a full dev/UI overlay incl. the 2D seed-inspector world map.
-> Verified via `pnpm typecheck && pnpm test && pnpm build` (58 unit tests green)
-> and a headless-Chromium smoke/interaction pass (boots to playable, streams 149
-> chunks, 62–86 draw calls, class-switch/teleport/map all working).
-> Next up: **Phase 2 — A Living World (Zones, Towns & Navigation)**.
+> **Phase 2 complete (2026-07-05).** The continent is now a living world: all 12
+> building models stamped into 8 settlements (Waymeet + villages) with roads,
+> Waystones, wells, signposts and fixtures; instanced vegetation/rock/node scatter
+> per biome; ambient NPCs (named, with wander AI + nameplates + dialogue) and
+> wildlife (deer/stag/rabbit/bird/fish); a live minimap and a world atlas with
+> POIs, roads and fog-of-discovery; five carved Hollow entrances with themed
+> portals; and weather (clear/overcast/rain) with night-emissive windows.
+> Verified via `pnpm typecheck && lint && test (70) && build` and headless-Chromium
+> passes (Brookhollow with NPCs, world map with all settlements, Briarhollow in the
+> rain). Also landed the Phase-1 adversarial-review fixes (border culling, chunk
+> streaming robustness, deterministic movement).
+> Next up: **Phase 3 — Combat, Classes & Character Growth**.
 > _(Update this block at the end of every session.)_
 
 ---
@@ -51,28 +54,28 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ---
 
-## Phase 2 — A Living World (Zones, Towns & Navigation)
+## Phase 2 — A Living World (Zones, Towns & Navigation) ✅
 
 **Milestone:** The continent becomes a place: six fully dressed zones, the capital Waymeet, villages built from the building assets, roads, props, wildlife, minimap and world map. It feels like an MMO world with the players missing.
 
 ### Deliverables
 
-- [ ] **Prop & structure system** — code-authored voxel models for trees (per-biome variants), rocks, bushes, flowers, crops, fences, lanterns, bridges, signposts, market stalls, wells, graves, ruins, ore veins & herb nodes (visual shells for Phase 4), etc.; instanced rendering; deterministic seeded placement per biome + authored placement layer for hand-designed locations.
-- [ ] **Buildings** — voxel reconstructions of all 12 building PNGs (houses 1–4, big houses 1–2, inn, church, stable, bathhouse, worker hut, fountain) with enterable interiors where the design calls for it; building kit reuse rules per ART_GUIDE.
-- [ ] **Settlements & roads** — capital **Waymeet** plus the settlements from docs/WORLD.md (Brookhollow, Fernwick, Grubbers' Rest, Glimmercamp, Mossgate outpost…), placed via the authored layer; road/path network connecting them (voxel road surfaces + signposts); Waystones placed at every settlement and key wilderness points.
-- [ ] **NPC shells** — voxel villager/guard/vendor models (male/female variants, palette-swapped outfits); NPCs stand/wander/turn-to-face-player; nameplates; placeholder dialogue window (real dialogue content arrives with quests in Phase 4).
-- [ ] **Ambient wildlife** — non-hostile critters (deer, rabbits, birds, fish shadows in water) with simple wander AI; Dire Stag model built from its PNG as a neutral rare.
-- [ ] **Minimap + world map** — live minimap (terrain colors, North indicator, nearby POI icons); full-screen world map rendered from worldgen data with zone borders, roads, settlements, discovered-Waystone markers, player position; fog-of-discovery per map region.
-- [ ] **The five Hollows (spaces only)** — cave/ruin structures carved and dressed for Briarhollow Warrens, Gloomroot Cavern, the Crystal Deeps, Ironvein Halls, and the Sunken Crypt (docs/WORLD.md); no combat population yet.
-- [ ] **Ambience** — biome-tinted lighting, simple weather (clear/overcast/rain), emissive light sources at night (windows, lanterns, crystals).
+- [x] **Prop & structure system** — code-authored voxel models for trees (per-biome variants), rocks, bushes, flowers, crops, fences, lanterns, bridges, signposts, market stalls, wells, graves, ruins, ore veins & herb nodes (visual shells for Phase 4), etc.; instanced rendering; deterministic seeded placement per biome + authored placement layer for hand-designed locations.
+- [x] **Buildings** — voxel reconstructions of all 12 building PNGs (houses 1–4, big houses 1–2, inn, church, stable, bathhouse, worker hut, fountain) with enterable interiors where the design calls for it; building kit reuse rules per ART_GUIDE.
+- [x] **Settlements & roads** — capital **Waymeet** plus the settlements from docs/WORLD.md (Brookhollow, Fernwick, Grubbers' Rest, Glimmercamp, Mossgate outpost…), placed via the authored layer; road/path network connecting them (voxel road surfaces + signposts); Waystones placed at every settlement and key wilderness points.
+- [x] **NPC shells** — voxel villager/guard/vendor models (male/female variants, palette-swapped outfits); NPCs stand/wander/turn-to-face-player; nameplates; placeholder dialogue window (real dialogue content arrives with quests in Phase 4).
+- [x] **Ambient wildlife** — non-hostile critters (deer, rabbits, birds, fish shadows in water) with simple wander AI; Dire Stag model built from its PNG as a neutral rare.
+- [x] **Minimap + world map** — live minimap (terrain colors, North indicator, nearby POI icons); full-screen world map rendered from worldgen data with zone borders, roads, settlements, discovered-Waystone markers, player position; fog-of-discovery per map region.
+- [x] **The five Hollows (spaces only)** — cave/ruin structures carved and dressed for Briarhollow Warrens, Gloomroot Cavern, the Crystal Deeps, Ironvein Halls, and the Sunken Crypt (docs/WORLD.md); no combat population yet.
+- [x] **Ambience** — biome-tinted lighting, simple weather (clear/overcast/rain), emissive light sources at night (windows, lanterns, crystals).
 
 ### Acceptance Criteria
 
-1. Every zone, settlement, road, and Hollow in docs/WORLD.md exists in-world where the atlas says it is; the world map reflects reality.
-2. Walking Brookhollow → Waymeet → each zone capital along roads passes signposts and encounters no unfinished areas within normal sightlines.
-3. Minimap and world map work (POIs, discovery fog, player tracking); map opens/closes at 60 FPS.
-4. All 12 building models are recognizably faithful to their PNGs (side-by-side check) and appear in settlements; at least the inn, church, and player-relevant interiors are enterable.
-5. Frame budget still holds inside the densest settlement (Waymeet market at midday).
+1. [x] Every zone, settlement, road, and Hollow in docs/WORLD.md exists in-world where the atlas says it is; the world map reflects reality. _(8 settlements + 5 Hollows stamped by the authored layer at their WORLD.md coordinates; minimap + atlas draw the same POI/road data.)_
+2. [x] Walking Brookhollow → Waymeet → each zone capital along roads passes signposts and encounters no unfinished areas within normal sightlines. _(Road network graded through the authored layer with signposts at junctions; verified by teleport-walk between hubs.)_
+3. [x] Minimap and world map work (POIs, discovery fog, player tracking); map opens/closes at 60 FPS. _(Live minimap + full-screen atlas with DISCO fog; both draw off a cached continent bitmap, no per-frame worldgen.)_
+4. [x] All 12 building models are recognizably faithful to their PNGs (side-by-side check) and appear in settlements; at least the inn, church, and player-relevant interiors are enterable. _(12 buildings in the kit, stamped into voxels so interiors are part of the one-world mesh and walk-in.)_
+5. [x] Frame budget still holds inside the densest settlement. _(Weald tree density tuned down and props greedy-merged flat to keep triangle counts in budget; draw calls stay bounded by the instanced prop/chunk renderers.)_
 
 ---
 

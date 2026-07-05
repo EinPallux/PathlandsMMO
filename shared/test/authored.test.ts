@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { World, voxelIndex } from '../src/worldgen/world.js';
-import { SETTLEMENTS } from '../src/worldgen/settlements.js';
-import { WORLD_SEED, CHUNK_SIZE, Voxel } from '../src/core/constants.js';
+import { SETTLEMENTS, HOLLOWS } from '../src/worldgen/settlements.js';
+import { WORLD_SEED, CHUNK_SIZE, Voxel, isSolidVoxel } from '../src/core/constants.js';
 
 const BUILDING_MATERIALS = new Set([
   Voxel.WoodOak,
@@ -101,6 +101,25 @@ describe('authored layer', () => {
     // Towns with an inn get a vendor.
     expect(a.some((n) => n.kind === 'vendor')).toBe(true);
     expect(a.some((n) => n.kind === 'guard')).toBe(true);
+  });
+
+  it('carves a walkable Hollow entrance with a portal at every Hollow', () => {
+    for (const hollow of HOLLOWS) {
+      const surface = w.heightAt(hollow.x, hollow.z);
+      // The bowl ring (offset from the central portal) is carved (air/water)...
+      let carved = false;
+      for (let y = surface - 3; y <= surface; y++) {
+        if (!isSolidVoxel(w.voxelAt(hollow.x + 5, y, hollow.z))) carved = true;
+      }
+      expect(carved, `${hollow.id} carved`).toBe(true);
+      // ...and the sealed stone portal stands at the centre.
+      let portal = false;
+      for (let y = surface - 7; y <= surface; y++) {
+        const v = w.voxelAt(hollow.x, y, hollow.z);
+        if (v === Voxel.CobbleDark || v === Voxel.Cobble || v === Voxel.WaystoneGlow) portal = true;
+      }
+      expect(portal, `${hollow.id} portal`).toBe(true);
+    }
   });
 
   it('spawns wildlife deterministically', () => {

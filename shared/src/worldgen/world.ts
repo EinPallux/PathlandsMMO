@@ -248,11 +248,16 @@ export class World {
   voxelAt(x: number, y: number, z: number): Voxel {
     if (y < 0) return Voxel.Stone;
     if (y >= WORLD_HEIGHT) return Voxel.Air;
-    // Stamped structures (buildings, Waystones…) override the terrain.
+    // Stamped structures (buildings, Waystones, Hollow portals…) override terrain.
     const st = this.authored.structureVoxelAt(x, y, z);
     if (st !== Voxel.Air) return st;
     const s = this.sampleColumn(x, z);
     const h = s.height;
+    // Hollow bowls carve the terrain into a pit (flooded at/below sea level).
+    const bf = this.authored.bowlFloorAt(x, z);
+    if (bf !== null && y > bf && y <= h) {
+      return y <= SEA_LEVEL ? Voxel.Water : Voxel.Air;
+    }
     if (y <= h) {
       if (BIOMES[s.biome].caves && this.caveCarved(x, y, z, h)) return Voxel.Air;
       if (y === h) return s.surface;
@@ -304,6 +309,15 @@ export class World {
             }
           }
           voxels[voxelIndex(lx, y, lz)] = v;
+        }
+
+        // Carve Hollow bowls (a pit down to the sealed portal), flooding any
+        // carved space at/below sea level (the Sunken Crypt).
+        const bf = this.authored.bowlFloorAt(wx, wz);
+        if (bf !== null) {
+          for (let y = bf + 1; y <= h && y < WORLD_HEIGHT; y++) {
+            voxels[voxelIndex(lx, y, lz)] = y <= SEA_LEVEL ? Voxel.Water : Voxel.Air;
+          }
         }
 
         // Water fill above terrain up to sea level (oceans, rivers, lakes).
@@ -435,11 +449,11 @@ export class World {
 // --- scatter helpers --------------------------------------------------------
 
 const TREE_DENSITY: Record<Biome, number> = {
-  [Biome.Vale]: 0.02,
-  [Biome.Weald]: 0.06,
+  [Biome.Vale]: 0.018,
+  [Biome.Weald]: 0.042,
   [Biome.Foothills]: 0.012,
   [Biome.Peaks]: 0.0,
-  [Biome.Trollmoor]: 0.012,
+  [Biome.Trollmoor]: 0.011,
   [Biome.Coast]: 0.008,
 };
 

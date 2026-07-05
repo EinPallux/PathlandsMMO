@@ -53,6 +53,17 @@ export function DebugMap(): JSX.Element {
         ctx.fillStyle = '#fff';
         ctx.font = '11px system-ui';
         ctx.fillText(p.name, x + 7, y + 3);
+      } else if (p.kind === 'hollow') {
+        ctx.fillStyle = '#9c3b32';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#e0b0a0';
+        ctx.font = 'italic 10px system-ui';
+        ctx.fillText(p.name, x + 7, y + 3);
       } else {
         ctx.fillStyle = '#8fe6f0';
         ctx.strokeStyle = '#000';
@@ -139,6 +150,7 @@ export function DebugMap(): JSX.Element {
           <span>North ▲ up</span>
           <span style={{ color: '#e2c463' }}>● towns</span>
           <span style={{ color: '#8fe6f0' }}>◆ Waystones</span>
+          <span style={{ color: '#c66' }}>● Hollows</span>
           <span style={{ color: colors.accent }}>● you</span>
           <span>dark = undiscovered</span>
         </div>

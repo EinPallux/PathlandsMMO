@@ -105,3 +105,24 @@ At least two per zone, wandering, 2–6 h respawn, unique-drop tables: Old Thorn
 - Hollows: Briarhollow Warrens, Gloomroot Cavern, Crystal Deeps, Ironvein Halls, Sunken Crypt = **5** ✔
 - Level bands cover 1–30 with intentional overlap; Waymeet visitable from ~level 5 (road is safe, fields aren't).
 - Asset enemies all placed ✔ · new enemy models required: ~14 rigs + recolors (slime, rat, spider, bandit ×3, bat, rock elemental, wisp, harpy ×2, golem, wraith, bog drake, crab, drowned ×2, crypt sentinel) — tracked in ART_GUIDE §Wishlist.
+
+## 6. Build Status (as of Phase 2)
+
+The atlas is **spatially realised** — every place below exists in-world at its listed
+coordinates, stamped by the authored layer (`shared/worldgen/placement.ts` +
+`settlements.ts`) into the one continuous continent (no instancing, walk-in interiors).
+Combat population, quests, vendors, and gathering nodes are **Phase 3/4** and are not
+present yet.
+
+- **Settlements (8 built):** Waymeet (capital), Brookhollow, Millstead, Fernwick, Mossgate,
+  Grubbers' Rest, Glimmercamp, Cairnwick — flattened platforms, building kit, wells,
+  signposts, market stalls, Waystones.
+- **Waystones:** one per settlement + **7 wild Waystones** on the road network (activation
+  network + fast travel is Phase 3).
+- **Roads:** the Old Road network graded between hubs with signposted junctions.
+- **Hollows (5 spaces built):** Briarhollow Warrens, Gloomroot Cavern, Crystal Deeps,
+  Ironvein Halls, Sunken Crypt — carved bowls with themed entrance portals; unpopulated.
+- **Ambient life:** named wandering NPCs (villager/guard/vendor) with placeholder dialogue,
+  and non-hostile wildlife (deer, Dire Stag, rabbit, bird, fish).
+- **Navigation:** live minimap + full-screen atlas draw the same POI/road data with
+  fog-of-discovery.

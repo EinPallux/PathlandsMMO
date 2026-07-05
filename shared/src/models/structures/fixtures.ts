@@ -106,6 +106,34 @@ function buildFence(): Building {
   return makeBuilding('fence', s, { x: 0, z: 0 });
 }
 
+/** A themed stone archway over a sealed passage — a Hollow entrance (Phase 2). */
+export function buildHollowEntrance(theme: string): Building {
+  const s = new VoxelSet();
+  const accent =
+    theme === 'goblin'
+      ? Voxel.BlightMoss
+      : theme === 'crystal'
+        ? Voxel.WaystoneGlow
+        : theme === 'crypt'
+          ? Voxel.WaystoneGlow
+          : theme === 'iron'
+            ? Voxel.IronDark
+            : Voxel.Thatch;
+  // Arch pillars + lintel.
+  s.box(-3, 0, 0, 2, 6, 2, Voxel.Cobble);
+  s.box(2, 0, 0, 2, 6, 2, Voxel.Cobble);
+  s.box(-3, 6, 0, 7, 2, 2, Voxel.Cobble);
+  s.set(-3, 5, 1, accent);
+  s.set(3, 5, 1, accent);
+  s.box(-1, 7, 0, 3, 1, 1, accent);
+  // Sealed door of dark stone (opens in Phase 3 when the Hollow is populated).
+  s.box(-2, 0, 1, 5, 6, 1, Voxel.CobbleDark);
+  s.set(0, 3, 1, accent);
+  // Rubble steps in front.
+  s.box(-3, -1, 2, 7, 1, 2, Voxel.Cobble);
+  return makeBuilding('hollow', s, { x: 0, z: 0 });
+}
+
 let cache: Map<FixtureId, Building> | null = null;
 
 function buildAll(): Map<FixtureId, Building> {

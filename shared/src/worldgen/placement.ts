@@ -10,10 +10,14 @@ import { Voxel } from '../core/constants.js';
 import { clamp, lerp, smoothstep } from '../core/math.js';
 import { makeRng } from '../core/rng.js';
 import { getBuilding, type BuildingId } from '../models/structures/buildings.js';
-import { getFixture } from '../models/structures/fixtures.js';
+import { getFixture, buildHollowEntrance } from '../models/structures/fixtures.js';
 import type { Building } from '../models/structures/kit.js';
 import type { NpcKind } from '../models/characters/npcs.js';
-import { SETTLEMENTS, ROADS, WILD_WAYSTONES, type Settlement } from './settlements.js';
+import { SETTLEMENTS, ROADS, WILD_WAYSTONES, HOLLOWS, type Settlement } from './settlements.js';
+
+const HOLLOW_R = 11; // bowl radius
+const HOLLOW_DEPTH = 7; // bowl depth at centre
+const HOLLOW_FLATTEN_R = 16;
 
 export interface NpcSpawn {
   id: string;
@@ -186,6 +190,31 @@ export class AuthoredLayer {
     this.roadSegments = segs;
   }
 
+  /** Base terrain height at a Hollow's mouth (cached). */
+  private hollowPlatformY(id: string, x: number, z: number): number {
+    const key = `hollow-${id}`;
+    const cached = this.platformCache.get(key);
+    if (cached !== undefined) return cached;
+    const h = Math.round(this.baseHeightAt(x, z));
+    this.platformCache.set(key, h);
+    return h;
+  }
+
+  /**
+   * If (x,z) is inside a Hollow bowl, the carved ground height there (a shallow
+   * pit descending to a sealed portal); otherwise null.
+   */
+  bowlFloorAt(x: number, z: number): number | null {
+    for (const hollow of HOLLOWS) {
+      const d = Math.hypot(x - hollow.x, z - hollow.z);
+      if (d < HOLLOW_R) {
+        const h0 = this.hollowPlatformY(hollow.id, hollow.x, hollow.z);
+        return h0 - Math.round(HOLLOW_DEPTH * (1 - d / HOLLOW_R));
+      }
+    }
+    return null;
+  }
+
   /** Apply settlement flattening and road grading to a base height. */
   flatten(x: number, z: number, baseH: number): number {
     let h = baseH;
@@ -195,6 +224,14 @@ export class AuthoredLayer {
       if (d < s.radius) {
         const t = smoothstep(s.radius, s.radius * 0.55, d);
         h = lerp(h, this.platformY(s), t);
+      }
+    }
+    // Hollow entrance aprons (flat rim around each pit).
+    for (const hollow of HOLLOWS) {
+      const d = Math.hypot(x - hollow.x, z - hollow.z);
+      if (d < HOLLOW_FLATTEN_R) {
+        const t = smoothstep(HOLLOW_FLATTEN_R, HOLLOW_FLATTEN_R * 0.5, d);
+        h = lerp(h, this.hollowPlatformY(hollow.id, hollow.x, hollow.z), t);
       }
     }
     // Road grading.
@@ -331,6 +368,12 @@ export class AuthoredLayer {
     for (const w of WILD_WAYSTONES) {
       const py = this.baseHeightAt(w.x, w.z);
       this.stamp(out, map, getFixture('waystone'), w.x, w.z, py, 0);
+    }
+
+    // Hollow entrance portals sit at the bottom of their carved bowls.
+    for (const hollow of HOLLOWS) {
+      const py = this.hollowPlatformY(hollow.id, hollow.x, hollow.z) - HOLLOW_DEPTH;
+      this.stamp(out, map, buildHollowEntrance(hollow.theme), hollow.x, hollow.z, py, 0);
     }
 
     this.placed = out;

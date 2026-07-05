@@ -65,7 +65,7 @@ Access via a typed manifest module (`client/src/platform/assetManifest.ts`) so t
 ## 6. New-Asset Wishlist (authored in code, per phase)
 
 - **Phase 1:** ✅ 4 class models (Warrior/Ranger/Priest reconstructed, Mage authored) via the shared parametric humanoid builder + weapon/hat/hood helpers; terrain palettes + `terrainColor(voxel, biome)`; `VoxelSet` authoring helpers and the runtime greedy model mesher (self-AO + shade jitter). Mage 2D portrait is rendered live from the in-game model on the class-select card (no source PNG).
-- **Phase 2 (bulk):** trees ×~8 (oak/birch/mosswood/pine/crystal-pine/palm/dead/blighted), rocks ×4, bushes/flowers/crops ×~10, fences/signposts/lanterns/bridge/well/market stall/grave/ruin kit, ore-vein + herb-node + fishing-spot shells ×4 tiers, villager m/f ×3 outfits, guard, vendor stalls, critters (deer/rabbit/bird/fish) + Dire Stag.
+- **Phase 2 (bulk):** ✅ trees (oak/birch/mosswood/pine/crystal-pine/palm/dead/blighted), rocks, bushes/flowers/crops, fences/signposts/lanterns/bridge/well/market stall/grave/ruin kit, ore-vein + herb-node + node shells, villager m/f ×3 outfits, guard, vendor, critters (deer/rabbit/bird/fish) + Dire Stag, **all 12 building models** (kit in `shared/models/structures/`), and themed Hollow-entrance portals (goblin/gnoll/crystal/iron/crypt). Emissive keys (windows/lanterns/blight/crystal) glow at night via the opaque+emissive mesher split.
 - **Phase 3:** ~14 new enemy rigs + recolors (list in WORLD.md §5), named-rare dressings, weapon models per class ×4 visual tiers.
 - **Phase 4:** wolf mount + 3 skins, gathering tools, potion/ingredient icons (2D, drawn as mini voxel renders), quest-item props.
 - **Phase 5:** VFX sprites, UI kit final pass.
