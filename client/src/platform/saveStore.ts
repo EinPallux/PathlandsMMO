@@ -6,6 +6,7 @@ import {
   createNewSave,
   migrate,
   normalizeSave,
+  type AccountSave,
   type CharacterSave,
   type SaveGame,
 } from '@pathlands/shared';
@@ -78,5 +79,28 @@ export async function upsertCharacter(c: CharacterSave): Promise<void> {
   const i = save.characters.findIndex((x) => x.id === c.id);
   if (i >= 0) save.characters[i] = c;
   else save.characters.push(c);
+  await persistSave(save);
+}
+
+/** Replace the account block (shared Path Points + perks), then persist. */
+export async function upsertAccount(account: AccountSave): Promise<void> {
+  const save = await loadSave();
+  save.account = account;
+  await persistSave(save);
+}
+
+/**
+ * Persist a character and the account together in one read-modify-write, so an
+ * autosave never races the two into different `loadSave()` snapshots.
+ */
+export async function upsertCharacterAndAccount(
+  c: CharacterSave,
+  account: AccountSave,
+): Promise<void> {
+  const save = await loadSave();
+  const i = save.characters.findIndex((x) => x.id === c.id);
+  if (i >= 0) save.characters[i] = c;
+  else save.characters.push(c);
+  save.account = account;
   await persistSave(save);
 }

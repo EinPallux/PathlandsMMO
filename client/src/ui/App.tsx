@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CharacterSave } from '@pathlands/shared';
+import type { AccountSave, CharacterSave } from '@pathlands/shared';
 import { Game } from '../game/game.js';
 import { useStore } from '../game/store.js';
-import { upsertCharacter } from '../platform/saveStore.js';
+import { upsertCharacterAndAccount } from '../platform/saveStore.js';
 import { LoadingScreen } from './LoadingScreen.js';
 import { Hud } from './Hud.js';
 import { DevOverlay } from './DevOverlay.js';
@@ -29,19 +29,22 @@ import { Onboarding } from './Onboarding.js';
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
-  const [character, setCharacter] = useState<CharacterSave | null>(null);
+  const [entry, setEntry] = useState<{ character: CharacterSave; account: AccountSave } | null>(
+    null,
+  );
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
 
   useEffect(() => {
-    if (!character || !canvasRef.current || gameRef.current) return;
-    const game = new Game(canvasRef.current, character);
+    if (!entry || !canvasRef.current || gameRef.current) return;
+    const game = new Game(canvasRef.current, entry.character, entry.account);
     gameRef.current = game;
 
     const save = (): void => {
       const snap = game.snapshotCharacter();
-      if (snap) void upsertCharacter(snap);
+      // Character + account persist together (Path Points/perks are account-wide).
+      if (snap) void upsertCharacterAndAccount(snap, game.snapshotAccount());
     };
     const autosave = window.setInterval(save, 30_000);
     window.addEventListener('beforeunload', save);
@@ -53,10 +56,10 @@ export function App(): JSX.Element {
       game.dispose();
       gameRef.current = null;
     };
-  }, [character]);
+  }, [entry]);
 
-  if (!character) {
-    return <Onboarding onEnter={setCharacter} />;
+  if (!entry) {
+    return <Onboarding onEnter={(character, account) => setEntry({ character, account })} />;
   }
 
   return (

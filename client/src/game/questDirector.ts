@@ -18,13 +18,21 @@ import {
   questById,
   QUEST_DROP_TAGS,
   QUEST_GIVERS,
+  settlementById,
   type QuestLogState,
   type QuestDef,
   type QuestReward,
   type GeneratedItemSpec,
 } from '@pathlands/shared';
 import type { CombatDirector } from './combatDirector.js';
-import { useStore, type QuestEntryUi, type QuestDialogUi } from './store.js';
+import { useStore, type QuestEntryUi, type QuestDialogUi, type QuestMarker } from './store.js';
+
+/** World position of each quest-giver = its settlement plaza centre + its offset. */
+const GIVER_POS: Record<string, { x: number; z: number }> = {};
+for (const g of QUEST_GIVERS) {
+  const s = settlementById(g.settlement);
+  if (s) GIVER_POS[g.id] = { x: s.cx + g.dx, z: s.cz + g.dz };
+}
 
 const SLOT_LABEL: Record<string, string> = {
   mainHand: 'Weapon',
@@ -237,6 +245,28 @@ export class QuestDirector {
     useStore.getState().setQuestLog(entries);
     useStore.getState().setQuestTracker(entries.filter((e) => e.pinned));
     this.refreshIndicators();
+    this.refreshMarkers();
+  }
+
+  /** Build the world-map / minimap quest markers from indicators + active objectives. */
+  private refreshMarkers(): void {
+    const markers: QuestMarker[] = [];
+    for (const [giverId, kind] of Object.entries(this.indicators)) {
+      const pos = GIVER_POS[giverId];
+      if (pos) markers.push({ x: pos.x, z: pos.z, kind });
+    }
+    // Active, uncompleted explore objectives get a marker at the area to reach.
+    for (const p of this.log.active) {
+      const def = questById(p.id);
+      if (!def) continue;
+      def.objectives.forEach((o, i) => {
+        const done = (p.counts[i] ?? 0) >= Math.max(1, o.count ?? 1);
+        if (o.kind === 'explore' && !done && typeof o.x === 'number' && typeof o.z === 'number') {
+          markers.push({ x: o.x, z: o.z, kind: 'objective', label: o.label });
+        }
+      });
+    }
+    useStore.getState().setQuestMarkers(markers);
   }
 
   /** Recompute per-giver "!/?" indicators for the world nameplates. */

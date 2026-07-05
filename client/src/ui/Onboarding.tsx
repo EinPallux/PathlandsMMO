@@ -45,7 +45,11 @@ const shell: React.CSSProperties = {
   pointerEvents: 'auto',
 };
 
-export function Onboarding({ onEnter }: { onEnter: (c: CharacterSave) => void }): JSX.Element {
+export function Onboarding({
+  onEnter,
+}: {
+  onEnter: (c: CharacterSave, account: SaveGame['account']) => void;
+}): JSX.Element {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [screen, setScreen] = useState<'title' | 'select' | 'create'>('title');
 
@@ -85,7 +89,9 @@ export function Onboarding({ onEnter }: { onEnter: (c: CharacterSave) => void })
       <CreateScreen
         onCancel={() => setScreen('select')}
         onCreate={(c) => {
-          void commit({ ...save, characters: [...save.characters, c] }).then(() => onEnter(c));
+          void commit({ ...save, characters: [...save.characters, c] }).then(() =>
+            onEnter(c, save.account),
+          );
         }}
       />
     );
@@ -109,7 +115,7 @@ export function Onboarding({ onEnter }: { onEnter: (c: CharacterSave) => void })
                 Level {c.level} {CLASS_INFO[c.class as CharacterClass]?.name ?? c.class}
               </div>
             </div>
-            <button style={smallBtn} onClick={() => onEnter(c)}>
+            <button style={smallBtn} onClick={() => onEnter(c, save.account)}>
               Enter
             </button>
             <button

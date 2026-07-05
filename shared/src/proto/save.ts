@@ -14,6 +14,8 @@
 // v6 → v7 (Phase 4): characters gained owned mounts + the active mount skin.
 // v7 → v8 (Phase 4): characters gained the Waymeet bank vault + a mail inbox.
 // v8 → v9 (Phase 4): characters gained the daily-bounty log (day + active + done).
+// v9 → v10 (Phase 4): Path Points + perks moved from the character to the ACCOUNT
+// (shared across all local characters); per-character meta is folded in on upgrade.
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
@@ -22,7 +24,7 @@ import { starterInbox } from '../data/mail.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 10;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -110,24 +112,38 @@ export interface CharacterSaveV9 extends CharacterSaveV8 {
   bounties: BountyLogSave;
 }
 
+/**
+ * v10 moved Path Points + perks off the character and onto the account, so they
+ * apply across all local characters (GDD §10). Deeds stay per-character (each
+ * earns its own), but the Points they award — and the perks bought with them —
+ * are shared.
+ */
+export type CharacterSaveV10 = Omit<CharacterSaveV9, 'pathPoints' | 'perks'>;
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
 }
 
-export interface SaveGameV9 {
-  version: 9;
+export interface AccountSaveV3 extends AccountSaveV2 {
+  /** Account-wide Path perks: rank by perk id (shared across all characters). */
+  perks: Record<string, number>;
+}
+
+export interface SaveGameV10 {
+  version: 10;
   worldSeed: number;
-  account: AccountSaveV2;
-  characters: CharacterSaveV9[];
+  account: AccountSaveV3;
+  characters: CharacterSaveV10[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV9;
-export type CharacterSave = CharacterSaveV9;
+export type SaveGame = SaveGameV10;
+export type CharacterSave = CharacterSaveV10;
+export type AccountSave = AccountSaveV3;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -146,7 +162,7 @@ export function createNewSave(): SaveGame {
   return {
     version: SAVE_VERSION,
     worldSeed: WORLD_SEED,
-    account: { pathPoints: 0 },
+    account: { pathPoints: 0, perks: {} },
     characters: [],
     settings: { ...DEFAULT_SETTINGS },
     updatedAtTick: 0,
@@ -259,9 +275,11 @@ function deedState(v: unknown): DeedState {
   return { progress, completed: strArray(v.completed) };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV9 | null {
+function migrateCharacter(v: unknown): CharacterSaveV10 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
+  // Note: pathPoints/perks are intentionally NOT read here — since v10 they live on
+  // the account (folded in by migrate() below), not the character.
   return {
     id: str(v.id, ''),
     name: str(v.name, 'Wayfarer'),
@@ -282,14 +300,30 @@ function migrateCharacter(v: unknown): CharacterSaveV9 | null {
     materials: materialMap(v.materials),
     consumables: materialMap(v.consumables),
     deeds: deedState(v.deeds),
-    pathPoints: Math.max(0, Math.floor(num(v.pathPoints, 0))),
-    perks: materialMap(v.perks),
     mounts: strArray(v.mounts),
     activeMount: typeof v.activeMount === 'string' ? v.activeMount : null,
     bank: itemStacks(v.bank),
     mail: mailInbox(v.mail),
     bounties: bountyLog(v.bounties),
   };
+}
+
+/**
+ * The account Path-Point/perk pool, folding any pre-v10 per-character meta into
+ * it: the highest Path-Point pool and the union (max rank) of perks bought on any
+ * character become the shared account state, so no progress is lost on upgrade.
+ */
+function accountMeta(account: Record<string, unknown>, rawChars: unknown[]): AccountSaveV3 {
+  let pathPoints = Math.max(0, Math.floor(num(account.pathPoints, 0)));
+  const perks = materialMap(account.perks);
+  for (const rc of rawChars) {
+    if (!isRecord(rc)) continue;
+    pathPoints = Math.max(pathPoints, Math.floor(num(rc.pathPoints, 0)));
+    for (const [id, rank] of Object.entries(materialMap(rc.perks))) {
+      perks[id] = Math.max(perks[id] ?? 0, rank);
+    }
+  }
+  return { pathPoints, perks };
 }
 
 /**
@@ -309,8 +343,8 @@ export function migrate(raw: unknown): SaveGame {
   return {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
-    account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV9 => c !== null),
+    account: accountMeta(account, chars),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV10 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -333,7 +367,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV9 {
+): CharacterSaveV10 {
   return {
     id,
     name,
@@ -354,8 +388,6 @@ export function createCharacter(
     materials: {},
     consumables: {},
     deeds: { progress: {}, completed: [] },
-    pathPoints: 0,
-    perks: {},
     mounts: [],
     activeMount: null,
     bank: [],

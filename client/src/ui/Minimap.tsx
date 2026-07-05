@@ -45,6 +45,32 @@ export function Minimap(): JSX.Element {
         ctx.stroke();
       }
 
+      // Quest markers within the window ("!" new / "?" turn-in / ○ objective).
+      for (const m of useStore.getState().questMarkers) {
+        const gx = (m.x / WORLD_SIZE_X) * MAP_RES;
+        const gz = (m.z / WORLD_SIZE_Z) * MAP_RES;
+        const sx = (gx - (pxMap - srcW / 2)) * scale;
+        const sy = (gz - (pzMap - srcW / 2)) * scale;
+        if (sx < 0 || sy < 0 || sx > SIZE || sy > SIZE) continue;
+        if (m.kind === 'objective') {
+          ctx.strokeStyle = '#f4d774';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+          ctx.stroke();
+        } else if (m.kind === 'available' || m.kind === 'turnin') {
+          ctx.font = 'bold 12px system-ui';
+          ctx.textAlign = 'center';
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = '#000';
+          const glyph = m.kind === 'available' ? '!' : '?';
+          ctx.strokeText(glyph, sx, sy - 4);
+          ctx.fillStyle = '#f4d774';
+          ctx.fillText(glyph, sx, sy - 4);
+          ctx.textAlign = 'left';
+        }
+      }
+
       // Player arrow at centre, pointing along facing (x right, z down).
       const dirX = Math.sin(live.yaw);
       const dirZ = Math.cos(live.yaw);

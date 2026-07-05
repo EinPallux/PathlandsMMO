@@ -136,6 +136,15 @@ export interface QuestEntryUi {
   objectives: QuestObjectiveUi[];
 }
 
+/** A quest marker to draw on the world map + minimap (world coords). */
+export interface QuestMarker {
+  x: number;
+  z: number;
+  /** Giver has a new quest (!), a turn-in (?), an in-progress quest, or an objective area. */
+  kind: 'available' | 'turnin' | 'progress' | 'objective';
+  label?: string;
+}
+
 export interface QuestDialogUi {
   giver: string;
   giverId: string;
@@ -357,6 +366,7 @@ export interface UiState {
   questTracker: QuestEntryUi[];
   questDialog: QuestDialogUi | null;
   questToasts: QuestToast[];
+  questMarkers: QuestMarker[];
   showQuestLog: boolean;
 
   nearbyNode: { label: string; kind: string } | null;
@@ -392,6 +402,7 @@ export interface UiState {
   setQuestTracker: (q: QuestEntryUi[]) => void;
   setQuestDialog: (q: QuestDialogUi | null) => void;
   setQuestToasts: (t: QuestToast[]) => void;
+  setQuestMarkers: (m: QuestMarker[]) => void;
   toggleQuestLog: () => void;
   setNearbyNode: (n: { label: string; kind: string } | null) => void;
   setGatherStatus: (g: GatherStatus | null) => void;
@@ -461,6 +472,7 @@ export const useStore = create<UiState>((set) => ({
   questTracker: [],
   questDialog: null,
   questToasts: [],
+  questMarkers: [],
   showQuestLog: false,
 
   nearbyNode: null,
@@ -496,6 +508,7 @@ export const useStore = create<UiState>((set) => ({
   setQuestTracker: (questTracker) => set({ questTracker }),
   setQuestDialog: (questDialog) => set({ questDialog }),
   setQuestToasts: (questToasts) => set({ questToasts }),
+  setQuestMarkers: (questMarkers) => set({ questMarkers }),
   toggleQuestLog: () => set((st) => ({ showQuestLog: !st.showQuestLog })),
   setNearbyNode: (nearbyNode) => set({ nearbyNode }),
   setGatherStatus: (gatherStatus) => set({ gatherStatus }),

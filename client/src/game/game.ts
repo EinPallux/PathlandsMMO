@@ -13,6 +13,7 @@ import {
   CHARACTER_CLASSES,
   CharacterClass,
   type CharacterSave,
+  type AccountSave,
   type VoxelSampler,
 } from '@pathlands/shared';
 import { ChunkManager } from '../engine/chunkManager.js';
@@ -64,6 +65,7 @@ export class Game {
   private readonly mount: MountController;
   private readonly bounties: BountyDirector;
   private readonly character: CharacterSave | null;
+  private readonly account: AccountSave;
   private lastGx = 0;
   private lastGz = 0;
 
@@ -75,7 +77,12 @@ export class Game {
   private running = true;
   private started = false;
 
-  constructor(canvas: HTMLCanvasElement, character: CharacterSave | null = null) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    character: CharacterSave | null = null,
+    account: AccountSave = { pathPoints: 0, perks: {} },
+  ) {
+    this.account = { pathPoints: account.pathPoints, perks: { ...account.perks } };
     this.canvas = canvas;
     this.character = character;
     this.renderer = new THREE.WebGLRenderer({
@@ -150,11 +157,13 @@ export class Game {
       character?.materials,
       character?.consumables,
     );
+    // Deeds are per-character; the Path Points they award and the perks bought are
+    // account-wide (GDD §10), so they come from the shared account block.
     this.meta = new MetaDirector(
       this.combat,
       character?.deeds,
-      character?.pathPoints,
-      character?.perks,
+      this.account.pathPoints,
+      this.account.perks,
     );
     this.mount = new MountController(
       this.scene,
@@ -522,8 +531,6 @@ export class Game {
       materials: this.gather.state.materials,
       consumables: this.gather.state.consumables,
       deeds: this.meta.state.deeds,
-      pathPoints: this.meta.state.pathPoints,
-      perks: this.meta.state.perks,
       mounts: this.mount.state.mounts,
       activeMount: this.mount.state.activeMount,
       bank: this.combat.characterBank,
@@ -534,6 +541,11 @@ export class Game {
       z: ph.z,
       yaw: ph.yaw,
     };
+  }
+
+  /** Account-wide Path Points + perks for autosave (shared across characters). */
+  snapshotAccount(): AccountSave {
+    return { pathPoints: this.meta.state.pathPoints, perks: { ...this.meta.state.perks } };
   }
 
   dispose(): void {

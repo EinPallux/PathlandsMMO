@@ -18,9 +18,9 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 9,
+      version: 10,
       worldSeed: WORLD_SEED,
-      account: { pathPoints: 3 },
+      account: { pathPoints: 3, perks: { deepPockets: 2 } },
       characters: [
         {
           id: 'c1',
@@ -51,8 +51,6 @@ describe('save schema', () => {
           materials: { copperOre: 14, meadowbloom: 5 },
           consumables: { lesserHealthPotion: 3 },
           deeds: { progress: { d_first_blood: 4 }, completed: ['d_wayfarer'] },
-          pathPoints: 1,
-          perks: { deepPockets: 2 },
           mounts: ['wolf', 'frostWolf'],
           activeMount: 'frostWolf',
           bank: [{ item: { id: 'stored', name: 'Stored Blade' } as never, qty: 1 }],
@@ -122,16 +120,35 @@ describe('save schema', () => {
     expect(c.activeMount).toBeNull();
   });
 
-  it('migrates a v5 (pre-deeds) save, defaulting deed state + perks', () => {
+  it('migrates a v5 (pre-deeds) save, defaulting deed state; keeps account Path Points', () => {
     const v5 = {
       version: 5,
       account: { pathPoints: 4 },
       characters: [{ name: 'Deedless', class: 'priest', consumables: { healthPotion: 1 } }],
     };
-    const c = migrate(v5).characters[0]!;
-    expect(c.deeds).toEqual({ progress: {}, completed: [] });
-    expect(c.pathPoints).toBe(0);
-    expect(c.perks).toEqual({});
+    const migrated = migrate(v5);
+    expect(migrated.characters[0]!.deeds).toEqual({ progress: {}, completed: [] });
+    // Path Points now live on the account (v10); the existing account pool survives.
+    expect(migrated.account.pathPoints).toBe(4);
+    expect(migrated.account.perks).toEqual({});
+  });
+
+  it('migrates a v9 save by folding per-character Path Points + perks into the account', () => {
+    const v9 = {
+      version: 9,
+      account: { pathPoints: 0 },
+      characters: [
+        { name: 'A', class: 'warrior', pathPoints: 2, perks: { deepPockets: 3, waywise: 1 } },
+        { name: 'B', class: 'mage', pathPoints: 5, perks: { deepPockets: 1, trailblazer: 1 } },
+      ],
+    };
+    const migrated = migrate(v9);
+    // Highest Path-Point pool + the union (max rank) of perks become account-wide.
+    expect(migrated.account.pathPoints).toBe(5);
+    expect(migrated.account.perks).toEqual({ deepPockets: 3, waywise: 1, trailblazer: 1 });
+    // Characters no longer carry per-character meta.
+    expect('pathPoints' in migrated.characters[0]!).toBe(false);
+    expect('perks' in migrated.characters[1]!).toBe(false);
   });
 
   it('migrates a v4 (pre-crafting) save, defaulting an empty consumables stash', () => {

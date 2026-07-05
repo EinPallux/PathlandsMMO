@@ -4,6 +4,21 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 11 — closing the acceptance gaps (2026-07-05)
+
+- **Account-wide Path Points + perks (save v10).** Moved `pathPoints`/`perks` off the
+  character and onto the account (`AccountSaveV3`), so perks bought on one character apply to
+  all local characters (GDD §10, criterion #4). `migrate()` folds any pre-v10 per-character
+  meta into the account — the highest Path-Point pool and the max-rank union of perks — so no
+  progress is lost. Threaded the account through Onboarding → App → Game → MetaDirector;
+  character + account persist together in one read-modify-write (`upsertCharacterAndAccount`).
+  Deeds stay per-character. Added save v9→v10 fold + round-trip tests.
+- **Quest markers on the world map + minimap (criterion #3).** The `QuestDirector` publishes a
+  marker slice: giver positions (settlement centre + offset) tagged `!` (new) / `?` (turn-in) /
+  in-progress, and `○` rings at active explore-objective areas. `DebugMap` (world atlas, M) and
+  `Minimap` draw them, with a quest entry in the map legend.
+- **Tests** — +1 (save v9→v10 account fold); 244 total.
+
 ### Part 10 — acceptance pass: review + fixes (2026-07-05)
 
 #### Fixed
