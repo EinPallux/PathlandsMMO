@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 5,
+      version: 6,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -50,12 +50,27 @@ describe('save schema', () => {
           },
           materials: { copperOre: 14, meadowbloom: 5 },
           consumables: { lesserHealthPotion: 3 },
+          deeds: { progress: { d_first_blood: 4 }, completed: ['d_wayfarer'] },
+          pathPoints: 1,
+          perks: { deepPockets: 2 },
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v5 (pre-deeds) save, defaulting deed state + perks', () => {
+    const v5 = {
+      version: 5,
+      account: { pathPoints: 4 },
+      characters: [{ name: 'Deedless', class: 'priest', consumables: { healthPotion: 1 } }],
+    };
+    const c = migrate(v5).characters[0]!;
+    expect(c.deeds).toEqual({ progress: {}, completed: [] });
+    expect(c.pathPoints).toBe(0);
+    expect(c.perks).toEqual({});
   });
 
   it('migrates a v4 (pre-crafting) save, defaulting an empty consumables stash', () => {

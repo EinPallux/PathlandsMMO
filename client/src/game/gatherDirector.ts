@@ -78,6 +78,10 @@ export class GatherDirector {
   private actionSeq = 1;
   private nearby: { label: string; kind: string } | null = null;
 
+  /** Meta hooks (set by the game): a craft finished / a gathering skill increased. */
+  onCraft?: () => void;
+  onGatherSkill?: (skill: number) => void;
+
   constructor(
     world: World,
     combat: CombatDirector,
@@ -124,6 +128,7 @@ export class GatherDirector {
     }
     this.skills[recipe.profession] = res.newSkill;
     this.applyOutput(res.output);
+    this.onCraft?.();
     this.publishProfessions();
     this.publishCrafting();
   }
@@ -271,7 +276,10 @@ export class GatherDirector {
     }
     this.skills[prof] = newSkill;
     let msg = names.join(', ');
-    if (newSkill > oldSkill) msg += `  (${PROFESSION_NAME[prof]} ${newSkill})`;
+    if (newSkill > oldSkill) {
+      msg += `  (${PROFESSION_NAME[prof]} ${newSkill})`;
+      this.onGatherSkill?.(newSkill); // Deed progress (gathering milestones)
+    }
     this.toast(msg);
     this.publishProfessions();
     this.publishCrafting(); // new materials may unlock recipes

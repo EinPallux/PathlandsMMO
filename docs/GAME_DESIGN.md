@@ -216,6 +216,25 @@ Each character learns **all five** (no pick restrictions — indie population is
 - **Titles** from milestone Deeds render on the nameplate ("the Wayfinder", "Hollow-Delver", "Master Angler").
 - Deed toasts + a journal UI ("Wayfarer's Journal") tabbed: Deeds / Titles / Path Perks / Statistics.
 
+> **Implementation (Phase 4 Part 5).** The Deed/perk rules are pure and data-driven
+> (`shared/data/deeds.ts`, `shared/data/perks.ts`, engine in `shared/meta`). The launch
+> catalog opens with **9 Deeds** (a representative slice of the ~120-at-launch target,
+> filled out alongside the remaining quest/endgame content): Wayfarer/Pathfinder
+> (attune 3/8 Waystones), First Blood/Slayer (slay 10/150 foes), Hollow-Delver/Hollow-Master
+> (defeat 1/3 Hollow bosses), Helping Hand/The Waymaker's Path (complete 5/15 quests),
+> Apprentice/Artisan (reach 25 gathering skill / craft 10 items). Tiered Deeds share one
+> metric so a single event advances every tier at once. **4 Path Perks** ship: Wanderer's
+> Rest (rested cap +½ lvl ×3), Deep Pockets (+2 bag slots ×4), Waywise (−15% Waystone
+> travel fee ×2), Trailblazer (+5% out-of-combat speed ×1). Two provisional deviations
+> from the bullets above, to revisit as the system fills out: **(1)** Path Points and
+> perks are stored **per-character** (save v6), not yet account-wide — account-scoping,
+> heirloom perks (Old Friends), mount-discount (Beast Tamer), and the 5th slot land with
+> mounts / the endgame loop / Phase-6 accounts; **(2)** Deep Pockets grants +2 bag
+> slots/rank (was +1) and Waywise −15%/rank (was −20%) for round numbers against the
+> 16→40 bag range and the current travel-fee curve. Titles and the journal's
+> Titles/Statistics tabs are stubbed for a later part; the Journal (J) currently shows
+> Deeds + Path Perks.
+
 ## 11. Endgame at Cap (30)
 
 Solo-viable loop, weekly cadence:

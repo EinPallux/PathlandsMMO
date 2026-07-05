@@ -186,6 +186,29 @@ export interface CraftingUi {
   recipes: CraftRecipeUi[];
 }
 
+export interface JournalUi {
+  pathPoints: number;
+  deeds: Array<{
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    progress: number;
+    threshold: number;
+    complete: boolean;
+    pathPoints: number;
+  }>;
+  perks: Array<{
+    id: string;
+    name: string;
+    description: string;
+    rank: number;
+    maxRank: number;
+    cost: number;
+    canBuy: boolean;
+  }>;
+}
+
 export type WeatherKind = 'clear' | 'overcast' | 'rain';
 
 export interface GameCommands {
@@ -212,6 +235,8 @@ export interface GameCommands {
   /** Professions: craft a recipe, drink a consumable. */
   craftRecipe(id: string): void;
   useConsumable(id: string): void;
+  /** Meta: buy a rank of a Path perk. */
+  buyPerk(id: string): void;
   /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
   acceptQuest(id: string): void;
   turnInQuest(id: string, choiceIndex: number): void;
@@ -281,6 +306,8 @@ export interface UiState {
   showProfessions: boolean;
   crafting: CraftingUi | null;
   showCrafting: boolean;
+  journal: JournalUi | null;
+  showJournal: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -307,6 +334,8 @@ export interface UiState {
   toggleProfessions: () => void;
   setCrafting: (c: CraftingUi) => void;
   toggleCrafting: () => void;
+  setJournal: (j: JournalUi) => void;
+  toggleJournal: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -369,6 +398,8 @@ export const useStore = create<UiState>((set) => ({
   showProfessions: false,
   crafting: null,
   showCrafting: false,
+  journal: null,
+  showJournal: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -395,6 +426,8 @@ export const useStore = create<UiState>((set) => ({
   toggleProfessions: () => set((st) => ({ showProfessions: !st.showProfessions })),
   setCrafting: (crafting) => set({ crafting }),
   toggleCrafting: () => set((st) => ({ showCrafting: !st.showCrafting })),
+  setJournal: (journal) => set({ journal }),
+  toggleJournal: () => set((st) => ({ showJournal: !st.showJournal })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

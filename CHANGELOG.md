@@ -4,6 +4,34 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 5 — meta progression: Deeds & Path Points (2026-07-05)
+
+- **`shared/data/deeds` / `shared/data/perks`** — **9 Deeds** across four categories
+  (exploration: Wayfarer/Pathfinder; combat: First Blood/Slayer/Hollow-Delver/Hollow-Master;
+  quests: Helping Hand/The Waymaker's Path; professions: Apprentice/Artisan), each with a
+  category, metric, threshold, and Path-Point award; tiered Deeds share one metric (a single
+  `waystone`/`kill`/`boss`/`quest`/`craft`/`gatherSkill25` counter feeds every tier). **4
+  Path Perks** with per-rank magnitudes: Deep Pockets (+2 bag slots/rank, 4 ranks), Waywise
+  (−15% Waystone travel fee/rank, 2 ranks), Trailblazer (+5% out-of-combat move speed, 1
+  rank), Wanderer's Rest (+½ rested-XP cap level/rank, 3 ranks).
+- **`shared/meta`** — a pure engine: `createDeedState`, `applyDeedProgress(state, metric,
+amount?)` (advances every Deed on that metric, clamps to threshold, returns award notices
+  once complete without re-awarding), `earnedPathPoints`, and `buyPerk(perks, points, id)`
+  (affordability + max-rank checked, debits points) / `perkMagnitude` (sums a rank-scaled
+  effect).
+- **Save v6** — characters gained `deeds` (progress + completed), `pathPoints`, and `perks`
+  (rank by id); `migrate()` walks v5 saves forward with empty meta.
+- **`client/game/metaDirector`** — subscribes to the world events the combat/quest/gather
+  directors already emit (kills, Hollow-boss kills, Waystone attunes, quest turn-ins,
+  crafts, gather-skill 25), advances Deeds, awards Path Points with a toast, and applies
+  perk effects live — bag-slot and travel-fee magnitudes flow into the CombatDirector via
+  `setPerks`. `game.ts` fans the events out to it alongside the quest director.
+- **`client/ui`** — a **Wayfarer's Journal (J)** listing Deeds grouped by category (progress
+  / completion) and the four Path Perks with rank, cost, and a buy button gated on Path
+  Points.
+- **Tests** — +10 (Deed progress/award/clamp/no-re-award, Path-Point sums, perk buy/afford/max,
+  content validity) + a save v5→v6 migration check; 214 total.
+
 ### Part 4 — crafting professions (2026-07-05)
 
 - **`shared/data/recipes`** — Blacksmithing (smelt copper/iron/silver ore → bars; forge

@@ -142,6 +142,12 @@ export class CombatDirector {
   /** Quest hooks (set by the game): fired when the player kills an enemy / uses a Waystone. */
   onEnemyKilled?: (enemyId: string) => void;
   onWaystoneUsed?: (waystoneId: string) => void;
+  /** Meta hook: fired only when a Waystone is newly attuned (Deed progress). */
+  onWaystoneAttuned?: (waystoneId: string) => void;
+
+  /** Path-perk effects (set by the meta director): extra bag slots + travel-fee cut. */
+  private bagBonus = 0;
+  private travelFeeMult = 1;
 
   private readonly renders = new Map<string, RenderEnemy>();
   private dying: Dying[] = [];
@@ -244,13 +250,24 @@ export class CombatDirector {
     return [...this.discovered];
   }
 
+  /** Current bag capacity (base + Deep Pockets perk bonus). */
+  private bagCap(): number {
+    return BAG_SIZE + this.bagBonus;
+  }
+
+  /** Apply Path perks: `bagBonus` extra slots, `travelCut` fraction off travel fees. */
+  setPerks(bagBonus: number, travelCut: number): void {
+    this.bagBonus = Math.max(0, Math.round(bagBonus));
+    this.travelFeeMult = Math.max(0, 1 - travelCut);
+  }
+
   setClass(cls: CharacterClass): void {
     if (cls === this.cls) return;
     this.cls = cls;
     // A class change sheds gear the new class can't use — but only when the bag
     // has room, so items are never silently destroyed.
     for (const [slot, item] of Object.entries(this.equipment)) {
-      if (!canEquip(cls, this.level, item) && this.inventory.length < BAG_SIZE) {
+      if (!canEquip(cls, this.level, item) && this.inventory.length < this.bagCap()) {
         delete this.equipment[slot];
         this.inventory.push({ item, qty: 1 });
       }
@@ -312,7 +329,7 @@ export class CombatDirector {
   unequipItem(slot: string): void {
     const item = this.equipment[slot];
     if (!item) return;
-    if (this.inventory.length >= BAG_SIZE) {
+    if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return;
     }
@@ -354,7 +371,7 @@ export class CombatDirector {
     if (!this.activeVendor) return;
     const entry = this.activeVendor.stock[index];
     if (!entry) return;
-    if (this.inventory.length >= BAG_SIZE) {
+    if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return;
     }
@@ -371,7 +388,7 @@ export class CombatDirector {
   buybackItem(index: number): void {
     const entry = this.buyback[index];
     if (!entry) return;
-    if (this.inventory.length >= BAG_SIZE) {
+    if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return;
     }
@@ -482,6 +499,7 @@ export class CombatDirector {
       this.totalXp += bonus;
       this.pushFloater(this.player, `Waystone attuned! +${bonus} XP`, 'xp');
       this.relevelIfNeeded();
+      this.onWaystoneAttuned?.(ws.id); // Deed progress (new attunes only)
     }
     this.onWaystoneUsed?.(ws.id); // quest `use` objectives fire even if re-visited
     useStore.getState().openTravel();
@@ -494,7 +512,7 @@ export class CombatDirector {
     const to = waystoneById(id);
     if (!from || !to || from.id === to.id) return;
     if (!this.discovered.has(id)) return;
-    const fee = travelFee(from, to, this.level);
+    const fee = Math.round(travelFee(from, to, this.level) * this.travelFeeMult);
     if (this.gold < fee) {
       this.pushFloater(this.player, 'Not enough gold', 'miss');
       return;
@@ -531,7 +549,7 @@ export class CombatDirector {
 
   /** Forge a crafted item for the player's class into the bag. Returns success. */
   craftGear(s: GeneratedItemSpec): boolean {
-    if (this.inventory.length >= BAG_SIZE) {
+    if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return false;
     }
@@ -572,7 +590,7 @@ export class CombatDirector {
 
   /** Generate a reward item for the player's class and drop it in the bag. */
   private awardItem(s: GeneratedItemSpec): void {
-    if (this.inventory.length >= BAG_SIZE) {
+    if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return;
     }
@@ -685,7 +703,7 @@ export class CombatDirector {
       this.pushFloater(this.player, `+${result.gold}c`, 'xp');
     }
     for (const stack of result.items) {
-      if (this.inventory.length >= BAG_SIZE) {
+      if (this.inventory.length >= this.bagCap()) {
         this.pushFloater(this.player, 'Bag full', 'miss');
         break;
       }
@@ -863,7 +881,10 @@ export class CombatDirector {
       .map((w) => ({
         id: w.id,
         name: w.name,
-        fee: here && here.id !== w.id ? travelFee(here, w, this.level) : 0,
+        fee:
+          here && here.id !== w.id
+            ? Math.round(travelFee(here, w, this.level) * this.travelFeeMult)
+            : 0,
       }));
     return {
       nearbyName: here ? here.name : null,
@@ -879,7 +900,7 @@ export class CombatDirector {
     return {
       gold: this.gold,
       bag: this.inventory,
-      bagSize: BAG_SIZE,
+      bagSize: this.bagCap(),
       equipment: this.equipment,
       stats: {
         might: primary.might,

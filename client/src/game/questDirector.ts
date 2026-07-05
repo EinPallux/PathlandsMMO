@@ -61,12 +61,18 @@ export class QuestDirector {
   /** Giver id → indicator, read by the EntityManager for the "!/?" markers. */
   readonly indicators: Record<string, 'available' | 'turnin' | 'progress'> = {};
 
+  /** Set by the game: notified when a quest is turned in (for Deed progress). */
+  onQuestTurnedIn?: () => void;
+
   constructor(combat: CombatDirector, log?: QuestLogState) {
     this.combat = combat;
     this.log = log ?? createQuestLog();
-    combat.onEnemyKilled = (enemyId) => this.onKill(enemyId);
-    combat.onWaystoneUsed = (id) => this.emit({ kind: 'use', objectId: id });
     this.publish();
+  }
+
+  /** A Waystone was used — advance any `use` objectives. */
+  handleWaystoneUse(id: string): void {
+    this.emit({ kind: 'use', objectId: id });
   }
 
   /** The current quest log for the character autosave. */
@@ -80,7 +86,8 @@ export class QuestDirector {
 
   // --- event feed ------------------------------------------------------------
 
-  private onKill(enemyId: string): void {
+  /** An enemy was slain — advance kill/boss/collect objectives. */
+  onKill(enemyId: string): void {
     this.emit({ kind: 'kill', enemyId });
     this.emit({ kind: 'boss', enemyId });
     const tag = QUEST_DROP_TAGS[enemyId];
@@ -153,6 +160,7 @@ export class QuestDirector {
     const reward = turnInQuest(this.log, id);
     if (!reward || !def) return;
     this.combat.grantReward(reward, choiceIndex);
+    this.onQuestTurnedIn?.(); // Deed progress
     this.toast(`Quest complete: ${def.name}`, 'complete');
     this.reopenGiver(def.turnIn ?? def.giver);
     this.publish();

@@ -12,3 +12,5 @@ export * from './vendors.js';
 export * from './quests/index.js';
 export * from './professions.js';
 export * from './recipes.js';
+export * from './deeds.js';
+export * from './perks.js';

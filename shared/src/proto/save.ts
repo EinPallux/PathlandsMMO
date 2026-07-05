@@ -10,12 +10,14 @@
 // v3 → v4 (Phase 4): characters gained profession skills (1–100 each) and a
 // material stash (gathered ore/herbs/fish, counted by id).
 // v4 → v5 (Phase 4): characters gained a consumables stash (crafted potions/elixirs).
+// v5 → v6 (Phase 4): characters gained Deed progress; the account gained Path perks.
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
 import type { QuestLogState } from '../quests/log.js';
+import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -66,24 +68,33 @@ export interface CharacterSaveV5 extends CharacterSaveV4 {
   consumables: Record<string, number>;
 }
 
+export interface CharacterSaveV6 extends CharacterSaveV5 {
+  /** Deed progress + completed deed ids (GDD §10). */
+  deeds: DeedState;
+  /** Path Points earned from Deeds (account-wide in Phase 6; per-character now). */
+  pathPoints: number;
+  /** Purchased Path perks: rank by perk id. */
+  perks: Record<string, number>;
+}
+
 export interface AccountSaveV2 {
-  /** Account-wide Path Points (GDD §10). */
+  /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
 }
 
-export interface SaveGameV5 {
-  version: 5;
+export interface SaveGameV6 {
+  version: 6;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV5[];
+  characters: CharacterSaveV6[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV5;
-export type CharacterSave = CharacterSaveV5;
+export type SaveGame = SaveGameV6;
+export type CharacterSave = CharacterSaveV6;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -179,7 +190,19 @@ function materialMap(v: unknown): Record<string, number> {
   return out;
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV5 | null {
+function deedState(v: unknown): DeedState {
+  if (!isRecord(v)) return { progress: {}, completed: [] };
+  const progress: Record<string, number> = {};
+  if (isRecord(v.progress)) {
+    for (const [k, val] of Object.entries(v.progress)) {
+      const n = Math.floor(num(val, 0));
+      if (n > 0) progress[k] = n;
+    }
+  }
+  return { progress, completed: strArray(v.completed) };
+}
+
+function migrateCharacter(v: unknown): CharacterSaveV6 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -201,6 +224,9 @@ function migrateCharacter(v: unknown): CharacterSaveV5 | null {
     professions: skillMap(v.professions),
     materials: materialMap(v.materials),
     consumables: materialMap(v.consumables),
+    deeds: deedState(v.deeds),
+    pathPoints: Math.max(0, Math.floor(num(v.pathPoints, 0))),
+    perks: materialMap(v.perks),
   };
 }
 
@@ -222,7 +248,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV5 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV6 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -245,7 +271,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV5 {
+): CharacterSaveV6 {
   return {
     id,
     name,
@@ -265,5 +291,8 @@ export function createCharacter(
     professions: DEFAULT_SKILLS(),
     materials: {},
     consumables: {},
+    deeds: { progress: {}, completed: [] },
+    pathPoints: 0,
+    perks: {},
   };
 }

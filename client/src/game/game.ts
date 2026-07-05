@@ -27,6 +27,7 @@ import { Discovery } from './discovery.js';
 import { CombatDirector } from './combatDirector.js';
 import { QuestDirector } from './questDirector.js';
 import { GatherDirector } from './gatherDirector.js';
+import { MetaDirector } from './metaDirector.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
@@ -55,6 +56,7 @@ export class Game {
   private readonly combat: CombatDirector;
   private readonly quests: QuestDirector;
   private readonly gather: GatherDirector;
+  private readonly meta: MetaDirector;
   private readonly character: CharacterSave | null;
   private lastGx = 0;
   private lastGz = 0;
@@ -140,6 +142,23 @@ export class Game {
       character?.materials,
       character?.consumables,
     );
+    this.meta = new MetaDirector(
+      this.combat,
+      character?.deeds,
+      character?.pathPoints,
+      character?.perks,
+    );
+
+    // Fan world events out to the quest + meta systems (Deeds track the same events).
+    this.combat.onEnemyKilled = (id) => {
+      this.quests.onKill(id);
+      this.meta.handleKill(id);
+    };
+    this.combat.onWaystoneUsed = (id) => this.quests.handleWaystoneUse(id);
+    this.combat.onWaystoneAttuned = () => this.meta.handleWaystone();
+    this.quests.onQuestTurnedIn = () => this.meta.handleQuest();
+    this.gather.onCraft = () => this.meta.handleCraft();
+    this.gather.onGatherSkill = (s) => this.meta.handleGatherSkill(s);
 
     this.registerCommands();
     window.addEventListener('resize', this.onResize);
@@ -196,6 +215,7 @@ export class Game {
       closeQuestDialog: () => this.quests.closeDialog(),
       craftRecipe: (id) => this.gather.craftRecipe(id),
       useConsumable: (id) => this.gather.useConsumable(id),
+      buyPerk: (id) => this.meta.buyPerk(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -244,6 +264,7 @@ export class Game {
     if (this.input.wasTapped('KeyL')) useStore.getState().toggleQuestLog();
     if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
     if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
+    if (this.input.wasTapped('KeyJ')) useStore.getState().toggleJournal();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
     // Enter releases spirit on death.
@@ -445,6 +466,9 @@ export class Game {
       professions: this.gather.state.professions,
       materials: this.gather.state.materials,
       consumables: this.gather.state.consumables,
+      deeds: this.meta.state.deeds,
+      pathPoints: this.meta.state.pathPoints,
+      perks: this.meta.state.perks,
       x: ph.x,
       y: ph.y,
       z: ph.z,

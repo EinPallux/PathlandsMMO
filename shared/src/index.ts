@@ -12,4 +12,5 @@ export * from './combat/index.js';
 export * from './sim/index.js';
 export * from './quests/index.js';
 export * from './professions/index.js';
+export * from './meta/index.js';
 export * from './proto/index.js';

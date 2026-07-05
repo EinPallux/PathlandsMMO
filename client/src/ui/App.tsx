@@ -21,6 +21,7 @@ import { QuestToasts } from './QuestToasts.js';
 import { GatherPrompt } from './GatherPrompt.js';
 import { ProfessionsPanel } from './ProfessionsPanel.js';
 import { CraftingPanel } from './CraftingPanel.js';
+import { Journal } from './Journal.js';
 import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
@@ -74,6 +75,7 @@ export function App(): JSX.Element {
         {ready && <GatherPrompt />}
         {ready && <ProfessionsPanel />}
         {ready && <CraftingPanel />}
+        {ready && <Journal />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}

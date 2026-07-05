@@ -6,22 +6,28 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 1: the quest system.** Pathlands now has
-> quests. A pure, data-driven quest engine lives in `shared/quests` (state machine:
-> accept → advance-on-event → turn-in, all eight objective kinds, chains, prereqs, a
-> 25-quest log + 5-pin tracker) over typed definitions in `shared/data/quests`. Named
-> quest-giver NPCs stand at the settlements with `!` (available) / `?` (turn-in) / `?`
-> grey (in-progress) indicators; pressing **E** opens a giver dialogue to accept a
-> quest or hand one in for XP/gold/an item (with class-filtered reward choices) or a
-> Waystone unlock. Objectives advance from world events the client feeds the engine —
-> kills, exploration, talking, Waystone use — with toasts, a quest log panel (**L**),
-> and a tracker HUD. Quest state persists in **save v3**. A starter arc proves it end
-> to end: the Brookhollow tutorial (walk to the fountain / cull boars / gather rat
-> tails), main-story chapter 1 ("Light the Way" — attune the Waystone), and the
-> Millstead chain leading to the Briarhollow boss — covering every objective kind. **184
-> tests green** (13 quest-engine + save-migration); `pnpm typecheck && lint && build`
-> clean; in-browser the quest log renders over Brookhollow with zero console errors.
-> Next: the bulk quest content, then professions, meta progression, mounts, and endgame.
+> **Phase 4 in progress (2026-07-05) — Part 5: meta progression (Deeds & Path Points).**
+> Pathlands now rewards the long game. A pure Deed/perk engine (`shared/meta` +
+> `shared/data/deeds.ts`/`perks.ts`) tracks **9 Deeds** across four categories
+> (exploration, combat, quests, professions) over shared, tiered metrics — attuning
+> Waystones feeds Wayfarer (3) and Pathfinder (8); slaying foes feeds First Blood (10)
+> and Slayer (150); Hollow bosses, quest turn-ins, and crafts each have their own — and
+> awards **Path Points** on completion. Points buy **4 rank-based Path Perks** (Deep
+> Pockets → +2 bag slots/rank, Waywise → −15% Waystone travel fee/rank, Trailblazer →
+> +5% out-of-combat move speed, Wanderer's Rest → +½ rested-XP cap level/rank). A client
+> `MetaDirector` subscribes to the same world events the quest/combat systems emit,
+> advances Deeds, awards Path Points, and applies perk effects live (bag cap + travel fee
+> flow into the CombatDirector). A **Wayfarer's Journal (J)** lists Deeds by category with
+> progress and buyable perks. Meta persists in **save v6**. **214 tests green** (10
+> meta-engine + save v5→v6 migration); `pnpm typecheck && lint && build` clean; in-browser
+> the Journal renders all 9 Deeds + 4 perks over Heartmead Vale with zero console errors.
+> Next: mounts, the endgame loop, and the remaining quest content.
+>
+> Earlier Phase-4 parts: **Part 1** the quest system (pure engine + starter arc, save v3),
+> **Part 2** the early-zone questing spine (~21 quests, 8 givers, levels 1–14), **Part 3**
+> gathering professions (Mining/Herbalism/Fishing, save v4), **Part 4** crafting
+> professions (Blacksmithing/Alchemy + consumables, save v5). See the per-part notes under
+> **Phase 4** below.
 >
 > ---
 >
@@ -166,6 +172,21 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 5 done (2026-07-05):** **meta progression** — Deeds & Path Points. A pure
+> Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`): **9 Deeds** across
+> four categories (exploration, combat, quests, professions) driven by shared, tiered
+> metrics (e.g. Waystone attunements feed both Wayfarer 3 and Pathfinder 8), each awarding
+> **Path Points** once complete; and **4 rank-based Path Perks** (Deep Pockets → bag slots,
+> Waywise → Waystone travel-fee cut, Trailblazer → out-of-combat move speed, Wanderer's
+> Rest → rested-XP cap). A client `MetaDirector` subscribes to world events (kills, Hollow
+> bosses, Waystone attunes, quest turn-ins, crafts, gather-skill 25) → advances Deeds →
+> awards Path Points → applies perk effects live (bag cap + travel fee flow into the
+> CombatDirector). New UI: a **Wayfarer's Journal (J)** listing Deeds by category with
+> progress and buyable perks. Save **v6** persists deeds/pathPoints/perks on the character.
+> 214 tests green (10 meta-engine + save v5→v6 migration); in-browser the Journal renders
+> all 9 Deeds + 4 perks with zero console errors. **Next:** mounts, the endgame loop, and
+> the remaining quest content.
+>
 > **Part 4 done (2026-07-05):** **crafting professions** (Blacksmithing + Alchemy),
 > closing the gather→craft→use loop. A pure craft engine (`shared/professions/craft.ts`)
 > validates a recipe against the material stash + skill, consumes the inputs, and yields
@@ -177,8 +198,6 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > aura system (a first step toward the Phase-5 boss re-tuning). Save **v5** persists the
 > consumables stash. 204 tests green (8 craft-engine + save v4→v5 migration); in-browser
 > the crafting panel renders both professions' recipes with zero console errors.
-> **Next:** meta progression (Deeds & Path Points), mounts, the endgame loop, and the
-> remaining quest content.
 >
 > **Part 3 done (2026-07-05):** **gathering professions** (Mining, Herbalism, Fishing).
 > A pure skill/gather engine (`shared/professions` + `shared/data/professions`): skill
@@ -209,7 +228,7 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 - [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Part 2 done: the early-zone spine — main-story chapters 1–3 + Vale/Weald/Foothills side arcs, ~21 quests across 8 givers, levels 1–14. Remaining zones, professions intros, and dailies fill in later parts.)_
 - [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
-- [ ] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on account-wide perks (rested-XP bonus, bag slot, mount discount, Waystone fee reduction, starter-gear upgrades for alts) per GDD §Meta; titles displayed at nameplate.
+- [~] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10. _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [ ] **Mounts** — Wolf mount from its PNG (+60% speed, level 20, gold sink), mount/dismount rules, 2–3 palette-variant skins as Deed/endgame rewards.
 - [ ] **Endgame loop v1** — daily bounties, named rare-elite hunt targets with Deed tracking, Hollow boss loot tables worth re-running, profession masteries, a repeatable "restore the final Waystone" world event stub (full multiplayer version in Phase 6).
 - [ ] **Supporting systems** — bank storage in Waymeet, mailbox stub (letters from quest NPCs; player mail comes with Phase 6), improved settings, keybind remapping.
