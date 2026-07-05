@@ -4,6 +4,26 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 8 — endgame loop v1: daily bounties (2026-07-05)
+
+- **`shared/data/bounties`** — a data-driven bounty pool (16 across four hub towns:
+  Brookhollow / Waymeet / Fernwick / Mossgate), each a kill (an enemy family or id) or
+  gather (a material) task with gold + XP. `dailyBountyIds(seed, day, hub)` posts a
+  deterministic daily slice, and `bountyById` / `hubPool` helpers. A **Taskmaster** Deed
+  ("complete 10 bounties", `bounty` metric) added to `shared/data/deeds`.
+- **Save v9** — characters gained a bounty log (`day` + accepted `active` + today's
+  `completed`); `migrate()` walks v8 forward with an empty log, and the client resets it
+  when the stored day is stale.
+- **`client/game/bountyDirector`** — posts the board for the hub nearest the player,
+  tracks kill events (`onKill`, matching by enemy family or id) and gather events
+  (`onGather`, wired from a new `GatherDirector.onMaterialGained` hook), and on turn-in pays
+  the reward through `CombatDirector.grantReward` (gold + XP) and advances the Taskmaster
+  Deed via `MetaDirector.handleBounty`. The day index is taken once at bootstrap.
+- **`client/ui`** — a **BountyBoard** panel (`O`) listing the hub's postings with slay/gather
+  targets, live progress, rewards, and an Accept / Turn in / Done button per bounty.
+- **Tests** — +7 (bounty content validity + daily-rotation determinism, save v8→v9
+  migration); 235 total.
+
 ### Part 7 — supporting systems: Bank & Mailbox (2026-07-05)
 
 - **`shared/data/mail`** — the mailbox stub: a `MailLetter` schema, the `STARTER_MAIL`

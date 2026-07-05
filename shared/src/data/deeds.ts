@@ -99,6 +99,15 @@ export const DEEDS: readonly DeedDef[] = [
     threshold: 15,
     pathPoints: 3,
   },
+  {
+    id: 'd_taskmaster',
+    name: 'Taskmaster',
+    description: 'Complete 10 daily bounties.',
+    category: DeedCategory.Quests,
+    metric: 'bounty',
+    threshold: 10,
+    pathPoints: 2,
+  },
   // --- Professions ---
   {
     id: 'd_apprentice',

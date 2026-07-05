@@ -214,6 +214,22 @@ export interface BankUi {
   items: ItemStackSave[];
 }
 
+export interface BountyUi {
+  hub: string;
+  day: number;
+  board: Array<{
+    id: string;
+    title: string;
+    kind: 'kill' | 'gather';
+    progress: number;
+    count: number;
+    gold: number;
+    xp: number;
+    state: 'available' | 'active' | 'ready' | 'done';
+  }>;
+  activeCount: number;
+}
+
 export interface MailUi {
   letters: Array<{
     id: string;
@@ -277,6 +293,9 @@ export interface GameCommands {
   depositItem(index: number): void;
   withdrawItem(index: number): void;
   claimMail(id: string): void;
+  /** Bounties: accept a posted bounty, turn a completed one in. */
+  acceptBounty(id: string): void;
+  turnInBounty(id: string): void;
   /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
   acceptQuest(id: string): void;
   turnInQuest(id: string, choiceIndex: number): void;
@@ -352,6 +371,8 @@ export interface UiState {
   bank: BankUi | null;
   mail: MailUi | null;
   showBank: boolean;
+  bounties: BountyUi | null;
+  showBounties: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -384,6 +405,8 @@ export interface UiState {
   setBank: (b: BankUi) => void;
   setMail: (m: MailUi) => void;
   toggleBank: () => void;
+  setBounties: (b: BountyUi) => void;
+  toggleBounties: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -452,6 +475,8 @@ export const useStore = create<UiState>((set) => ({
   bank: null,
   mail: null,
   showBank: false,
+  bounties: null,
+  showBounties: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -484,6 +509,8 @@ export const useStore = create<UiState>((set) => ({
   setBank: (bank) => set({ bank }),
   setMail: (mail) => set({ mail }),
   toggleBank: () => set((st) => ({ showBank: !st.showBank })),
+  setBounties: (bounties) => set({ bounties }),
+  toggleBounties: () => set((st) => ({ showBounties: !st.showBounties })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

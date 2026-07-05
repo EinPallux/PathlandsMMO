@@ -13,6 +13,7 @@
 // v5 → v6 (Phase 4): characters gained Deed progress; the account gained Path perks.
 // v6 → v7 (Phase 4): characters gained owned mounts + the active mount skin.
 // v7 → v8 (Phase 4): characters gained the Waymeet bank vault + a mail inbox.
+// v8 → v9 (Phase 4): characters gained the daily-bounty log (day + active + done).
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
@@ -21,7 +22,7 @@ import { starterInbox } from '../data/mail.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -95,24 +96,38 @@ export interface CharacterSaveV8 extends CharacterSaveV7 {
   mail: MailLetterSave[];
 }
 
+/** Daily-bounty log: the day it was set, accepted bounties, and today's completions. */
+export interface BountyLogSave {
+  /** Day index the log belongs to; a newer day resets active + completed. */
+  day: number;
+  active: Array<{ id: string; count: number }>;
+  /** Bounty ids turned in today (drives the board's "done" state). */
+  completed: string[];
+}
+
+export interface CharacterSaveV9 extends CharacterSaveV8 {
+  /** Daily bounties (GDD §11): accepted tasks + today's completions. */
+  bounties: BountyLogSave;
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
 }
 
-export interface SaveGameV8 {
-  version: 8;
+export interface SaveGameV9 {
+  version: 9;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV8[];
+  characters: CharacterSaveV9[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV8;
-export type CharacterSave = CharacterSaveV8;
+export type SaveGame = SaveGameV9;
+export type CharacterSave = CharacterSaveV9;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -222,6 +237,16 @@ function mailInbox(v: unknown): MailLetterSave[] {
     }));
 }
 
+function bountyLog(v: unknown): BountyLogSave {
+  if (!isRecord(v)) return { day: 0, active: [], completed: [] };
+  const active = Array.isArray(v.active)
+    ? v.active
+        .filter((a): a is Record<string, unknown> => isRecord(a) && typeof a.id === 'string')
+        .map((a) => ({ id: str(a.id, ''), count: Math.max(0, Math.floor(num(a.count, 0))) }))
+    : [];
+  return { day: Math.floor(num(v.day, 0)), active, completed: strArray(v.completed) };
+}
+
 function deedState(v: unknown): DeedState {
   if (!isRecord(v)) return { progress: {}, completed: [] };
   const progress: Record<string, number> = {};
@@ -234,7 +259,7 @@ function deedState(v: unknown): DeedState {
   return { progress, completed: strArray(v.completed) };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV8 | null {
+function migrateCharacter(v: unknown): CharacterSaveV9 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -263,6 +288,7 @@ function migrateCharacter(v: unknown): CharacterSaveV8 | null {
     activeMount: typeof v.activeMount === 'string' ? v.activeMount : null,
     bank: itemStacks(v.bank),
     mail: mailInbox(v.mail),
+    bounties: bountyLog(v.bounties),
   };
 }
 
@@ -284,7 +310,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV8 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV9 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -307,7 +333,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV8 {
+): CharacterSaveV9 {
   return {
     id,
     name,
@@ -334,5 +360,6 @@ export function createCharacter(
     activeMount: null,
     bank: [],
     mail: starterInbox(),
+    bounties: { day: 0, active: [], completed: [] },
   };
 }

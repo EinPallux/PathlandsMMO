@@ -29,6 +29,7 @@ import { QuestDirector } from './questDirector.js';
 import { GatherDirector } from './gatherDirector.js';
 import { MetaDirector } from './metaDirector.js';
 import { MountController } from './mountController.js';
+import { BountyDirector } from './bountyDirector.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
@@ -61,6 +62,7 @@ export class Game {
   private readonly gather: GatherDirector;
   private readonly meta: MetaDirector;
   private readonly mount: MountController;
+  private readonly bounties: BountyDirector;
   private readonly character: CharacterSave | null;
   private lastGx = 0;
   private lastGz = 0;
@@ -160,17 +162,29 @@ export class Game {
       character?.mounts,
       character?.activeMount,
     );
+    // Day index for the daily bounty rotation — the one allowed wall-clock touch,
+    // taken here at the client bootstrap edge (ARCH §3; sim stays date-free).
+    const dayIndex = Math.floor(Date.now() / 86_400_000);
+    this.bounties = new BountyDirector(
+      this.combat,
+      this.meta,
+      WORLD_SEED,
+      dayIndex,
+      character?.bounties,
+    );
 
-    // Fan world events out to the quest + meta systems (Deeds track the same events).
+    // Fan world events out to the quest + meta + bounty systems (they share events).
     this.combat.onEnemyKilled = (id) => {
       this.quests.onKill(id);
       this.meta.handleKill(id);
+      this.bounties.onKill(id);
     };
     this.combat.onWaystoneUsed = (id) => this.quests.handleWaystoneUse(id);
     this.combat.onWaystoneAttuned = () => this.meta.handleWaystone();
     this.quests.onQuestTurnedIn = () => this.meta.handleQuest();
     this.gather.onCraft = () => this.meta.handleCraft();
     this.gather.onGatherSkill = (s) => this.meta.handleGatherSkill(s);
+    this.gather.onMaterialGained = (id, qty) => this.bounties.onGather(id, qty);
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
@@ -236,6 +250,8 @@ export class Game {
       depositItem: (index) => this.combat.depositItem(index),
       withdrawItem: (index) => this.combat.withdrawItem(index),
       claimMail: (id) => this.combat.claimMail(id),
+      acceptBounty: (id) => this.bounties.accept(id),
+      turnInBounty: (id) => this.bounties.turnIn(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -286,6 +302,10 @@ export class Game {
     if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
     if (this.input.wasTapped('KeyJ')) useStore.getState().toggleJournal();
     if (this.input.wasTapped('KeyB')) useStore.getState().toggleBank();
+    if (this.input.wasTapped('KeyO')) {
+      const p = this.controller.physics;
+      this.bounties.toggle(p.x, p.z);
+    }
     if (this.input.wasTapped('KeyG')) this.mount.toggle();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
@@ -508,6 +528,7 @@ export class Game {
       activeMount: this.mount.state.activeMount,
       bank: this.combat.characterBank,
       mail: this.combat.characterMail,
+      bounties: this.bounties.state,
       x: ph.x,
       y: ph.y,
       z: ph.z,

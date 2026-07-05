@@ -6,7 +6,22 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 7: supporting systems (Bank & Mailbox).**
+> **Phase 4 in progress (2026-07-05) — Part 8: the endgame loop v1 (daily bounties).**
+> The hub towns now post a **daily Bounty Board** (**O**). A data-driven bounty pool
+> (`shared/data/bounties.ts`) is rotated deterministically each day — seeded by the world
+> seed + a day index taken once at bootstrap (the sim stays date-free) — so Brookhollow,
+> Waymeet, Fernwick, and Mossgate each post 3 tasks: slay a family/type of foe or gather
+> materials, for **gold + XP + Deed progress**. A client `BountyDirector` posts the nearest
+> hub's board, tracks kill/gather events against accepted bounties, and pays out on turn-in
+> (feeding a new **Taskmaster** Deed); the board resets each day. Save **v9** persists the
+> daily log. **235 tests green** (bounty content/rotation + save v8→v9); `pnpm typecheck &&
+lint && build` clean; in-browser `O` opens Brookhollow's board, accepting a bounty flips it
+> to in-progress with a toast, zero console errors. Next: named rare-elite hunts, then the
+> remaining quest content.
+>
+> ---
+>
+> **Part 7 (2026-07-05): supporting systems (Bank & Mailbox).**
 > The **Waymeet Bank** opens with **B**: a two-tab panel with a **Vault** (a 50-slot shared
 > item store — click to move stacks between bag and vault) and **Mail** (an inbox of letters
 > from world NPCs, each with an optional gold gift claimed once). A new character starts with
@@ -202,6 +217,17 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 8 done (2026-07-05):** **the endgame loop v1** — **daily bounty boards**. A
+> data-driven bounty pool (`shared/data/bounties.ts`) posts a deterministic daily slice at
+> each of the four hub towns, seeded by the world seed + a bootstrap day index (the sim
+> stays date-free). A client `BountyDirector` posts the nearest hub's board (**O**), tracks
+> kill/gather events against accepted bounties, and pays **gold + XP + Deed progress** on
+> turn-in — completing bounties advances a new **Taskmaster** Deed. The board resets each
+> day; save **v9** persists the log. 235 tests green (bounty content/rotation + save v8→v9);
+> in-browser `O` opens Brookhollow's board and accepting a bounty flips it to in-progress
+> with a toast, zero console errors. **Next:** named rare-elite hunts and the remaining
+> quest content.
+>
 > **Part 7 done (2026-07-05):** **supporting systems** — the **Waymeet Bank & Mailbox**.
 > A single `BankPanel` (**B**) with two tabs: a **Vault** (`BANK_SIZE` = 50 shared storage
 > slots; click a bag item to deposit, a vault item to withdraw) and **Mail** (an inbox of
@@ -280,12 +306,12 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 ### Deliverables
 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
-- [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Part 2 done: the early-zone spine — main-story chapters 1–3 + Vale/Weald/Foothills side arcs, ~21 quests across 8 givers, levels 1–14. Remaining zones, professions intros, and dailies fill in later parts.)_
+- [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Part 2 done: the early-zone spine — main-story chapters 1–3 + Vale/Weald/Foothills side arcs, ~21 quests across 8 givers, levels 1–14. Part 8 added the daily bounty boards. Remaining zones and profession intros fill in later parts.)_
 - [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [~] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10. _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
-- [ ] **Endgame loop v1** — daily bounties, named rare-elite hunt targets with Deed tracking, Hollow boss loot tables worth re-running, profession masteries, a repeatable "restore the final Waystone" world event stub (full multiplayer version in Phase 6).
+- [~] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate): a data-driven bounty pool (`shared/data/bounties.ts`), a deterministic daily rotation seeded by the world seed + a day index taken at bootstrap, a `BountyDirector` that tracks kill/gather progress and pays gold + XP + Deed progress (the new "Taskmaster" Deed) on turn-in, and a Bounty Board panel (**O**) showing the nearest hub's postings; save v9 persists the daily log. _(Remaining: named rare-elite hunt targets with Deed tracking, Hollow boss re-run loot tables, profession masteries, and the "restore the final Waystone" world-event stub.)_
 - [~] **Supporting systems** — the **Waymeet Bank** (a 50-slot shared vault + a mailbox) as a single `BankPanel` (**B**) with Vault / Mail tabs: move stacks between bag and vault; read letters from world NPCs and claim their gold gifts; the Steward's welcome letter is delivered on reaching level 5. Save v8 persists the vault + inbox. _(Remaining: bank-building/mailbox-prop gating, item mail attachments, improved settings, and keybind remapping.)_
 
 ### Acceptance Criteria

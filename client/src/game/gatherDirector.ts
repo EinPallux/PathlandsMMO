@@ -81,6 +81,8 @@ export class GatherDirector {
   /** Meta hooks (set by the game): a craft finished / a gathering skill increased. */
   onCraft?: () => void;
   onGatherSkill?: (skill: number) => void;
+  /** A material was gathered (id + qty) — feeds gather bounties. */
+  onMaterialGained?: (materialId: string, qty: number) => void;
 
   constructor(
     world: World,
@@ -273,6 +275,7 @@ export class GatherDirector {
       this.materials[y.materialId] = (this.materials[y.materialId] ?? 0) + y.qty;
       const m = materialById(y.materialId);
       names.push(`${y.qty}× ${m?.name ?? y.materialId}`);
+      this.onMaterialGained?.(y.materialId, y.qty);
     }
     this.skills[prof] = newSkill;
     let msg = names.join(', ');

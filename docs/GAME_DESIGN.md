@@ -262,6 +262,20 @@ Solo-viable loop, weekly cadence:
 5. **The Sunken Crypt** — hardest Hollow, main-story finale, best solo loot.
 6. _(Phase 6)_ **World boss** — weekly "Restored Waystone" event boss tuned for 5–10 players (scales down to 3), Epic table + guild Deeds.
 
+> **Implementation (Phase 4 Part 8) — Daily bounties.** Bounty #1 above is live:
+> `shared/data/bounties.ts` posts a **daily board** at the four hubs (Brookhollow, Waymeet,
+> Fernwick, Mossgate), each showing 3 tasks picked deterministically from that hub's pool by
+> `dailyBountyIds(seed, day, hub)` — the day index is derived from the local date once at
+> client bootstrap (the only wall-clock touch; the sim stays date-free, so the board is
+> byte-identical for a given seed+day+hub). Tasks are **slay** (an enemy family or id) or
+> **gather** (a material); rewards are **gold + XP + Deed progress** (the "Taskmaster" Deed).
+> The `BountyDirector` shows the nearest hub's board (**O**), tracks progress from the same
+> kill/gather events the quest system uses, and the log resets each new day (save v9).
+> Provisional vs. the full design: rewards are gold/XP (materials come with the mastery
+> pass), the board is key-toggled rather than gated to a physical notice-board prop, and the
+> other endgame pillars (Hollow-mastery re-runs, named rare hunts, the world-event stub) are
+> later parts.
+
 ## 12. Social & MMO Features (Phase 6)
 
 - **Chat:** say (30 m), zone, party, guild, whisper, system; slash commands; profanity filter + mute.

@@ -80,6 +80,10 @@ export class MetaDirector {
     if (skill >= 25) this.award(applyDeedProgress(this.deeds, 'gatherSkill25'));
   }
 
+  handleBounty(): void {
+    this.award(applyDeedProgress(this.deeds, 'bounty'));
+  }
+
   // --- perks -----------------------------------------------------------------
 
   buyPerk(id: string): void {

@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 8,
+      version: 9,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -66,12 +66,27 @@ describe('save schema', () => {
               claimed: false,
             },
           ],
+          bounties: {
+            day: 20275,
+            active: [{ id: 'bh_boars', count: 3 }],
+            completed: ['bh_bloom'],
+          },
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v8 (pre-bounty) save, defaulting an empty bounty log', () => {
+    const v8 = {
+      version: 8,
+      account: { pathPoints: 0 },
+      characters: [{ name: 'Idle', class: 'priest', bank: [], mail: [] }],
+    };
+    const c = migrate(v8).characters[0]!;
+    expect(c.bounties).toEqual({ day: 0, active: [], completed: [] });
   });
 
   it('migrates a v7 (pre-bank/mail) save, defaulting a vault + starter inbox', () => {
