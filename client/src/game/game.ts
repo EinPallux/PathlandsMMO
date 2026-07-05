@@ -300,37 +300,37 @@ export class Game {
     const wheel = this.input.consumeWheel();
     if (wheel !== 0 && this.camera.mode === 'thirdPerson') this.camera.zoom(wheel);
 
-    if (this.input.wasTapped('KeyF')) this.toggleFreeFly();
-    if (this.input.wasTapped('KeyM')) useStore.getState().toggleMap();
-    if (this.input.wasTapped('Backquote')) useStore.getState().toggleDev();
-    if (this.input.wasTapped('KeyI') || this.input.wasTapped('KeyC')) {
-      useStore.getState().toggleChar();
-    }
-    if (this.input.wasTapped('KeyL')) useStore.getState().toggleQuestLog();
-    if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
-    if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
-    if (this.input.wasTapped('KeyJ')) useStore.getState().toggleJournal();
-    if (this.input.wasTapped('KeyB')) useStore.getState().toggleBank();
-    if (this.input.wasTapped('KeyO')) {
+    // Panel/action keys are rebindable (Settings, save v11); read the live map.
+    const store = useStore.getState();
+    const kb = store.keybinds;
+    const tapped = (action: string): boolean => this.input.wasTapped(kb[action] ?? '');
+    if (tapped('toggleFreeFly')) this.toggleFreeFly();
+    if (tapped('toggleMap')) store.toggleMap();
+    if (this.input.wasTapped('Backquote')) store.toggleDev();
+    if (tapped('toggleChar') || this.input.wasTapped('KeyI')) store.toggleChar();
+    if (tapped('toggleQuestLog')) store.toggleQuestLog();
+    if (tapped('toggleProfessions')) store.toggleProfessions();
+    if (tapped('toggleCrafting')) store.toggleCrafting();
+    if (tapped('toggleJournal')) store.toggleJournal();
+    if (tapped('toggleBank')) store.toggleBank();
+    if (tapped('toggleBounties')) {
       const p = this.controller.physics;
       this.bounties.toggle(p.x, p.z);
     }
-    if (this.input.wasTapped('KeyG')) this.mount.toggle();
+    if (tapped('toggleMount')) this.mount.toggle();
 
-    // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
-    // Enter releases spirit on death.
-    if (this.input.wasTapped('Tab')) this.combat.cycleTarget();
-    if (this.input.wasTapped('KeyR')) this.combat.toggleAutoAttack();
-    if (this.input.wasTapped('Enter')) this.combat.releaseSpirit();
+    // Combat: cycle target, cast the hotbar digits, toggle auto-attack, release spirit.
+    if (tapped('cycleTarget')) this.combat.cycleTarget();
+    if (tapped('toggleAutoAttack')) this.combat.toggleAutoAttack();
+    if (tapped('releaseSpirit')) this.combat.releaseSpirit();
     for (let i = 0; i < 10; i++) {
       const code = i === 9 ? 'Digit0' : `Digit${i + 1}`;
       if (this.input.wasTapped(code)) this.combat.castSlot(i);
     }
 
-    // Interact with E: advance dialogue → attune/use a Waystone → trade with a
+    // Interact (E by default): advance dialogue → attune/use a Waystone → trade with a
     // merchant → talk to an NPC.
-    if (this.input.wasTapped('KeyE')) {
-      const store = useStore.getState();
+    if (tapped('interact')) {
       const px = this.controller.physics.x;
       const pz = this.controller.physics.z;
       if (store.dialogue) {
@@ -354,10 +354,20 @@ export class Game {
       }
     }
     if (this.input.wasTapped('Escape')) {
-      useStore.getState().closeDialogue();
-      useStore.getState().closeTravel();
-      this.combat.closeVendor();
-      this.quests.closeDialog();
+      // Escape closes whatever transient dialog is open; if nothing is, it toggles Settings.
+      const anyOpen =
+        store.dialogue !== null ||
+        store.showTravel ||
+        store.vendor !== null ||
+        store.questDialog !== null;
+      if (anyOpen) {
+        store.closeDialogue();
+        store.closeTravel();
+        this.combat.closeVendor();
+        this.quests.closeDialog();
+      } else {
+        store.toggleSettings();
+      }
     }
 
     if (this.camera.mode === 'freeFly') {

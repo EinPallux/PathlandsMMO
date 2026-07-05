@@ -48,7 +48,7 @@ const shell: React.CSSProperties = {
 export function Onboarding({
   onEnter,
 }: {
-  onEnter: (c: CharacterSave, account: SaveGame['account']) => void;
+  onEnter: (c: CharacterSave, account: SaveGame['account'], settings: SaveGame['settings']) => void;
 }): JSX.Element {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [screen, setScreen] = useState<'title' | 'select' | 'create'>('title');
@@ -90,7 +90,7 @@ export function Onboarding({
         onCancel={() => setScreen('select')}
         onCreate={(c) => {
           void commit({ ...save, characters: [...save.characters, c] }).then(() =>
-            onEnter(c, save.account),
+            onEnter(c, save.account, save.settings),
           );
         }}
       />
@@ -115,7 +115,7 @@ export function Onboarding({
                 Level {c.level} {CLASS_INFO[c.class as CharacterClass]?.name ?? c.class}
               </div>
             </div>
-            <button style={smallBtn} onClick={() => onEnter(c, save.account)}>
+            <button style={smallBtn} onClick={() => onEnter(c, save.account, save.settings)}>
               Enter
             </button>
             <button

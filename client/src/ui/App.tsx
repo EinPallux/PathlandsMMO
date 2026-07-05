@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AccountSave, CharacterSave } from '@pathlands/shared';
+import type { AccountSave, CharacterSave, SaveGame } from '@pathlands/shared';
 import { Game } from '../game/game.js';
 import { useStore } from '../game/store.js';
 import { upsertCharacterAndAccount } from '../platform/saveStore.js';
+
+type Settings = SaveGame['settings'];
 import { LoadingScreen } from './LoadingScreen.js';
 import { Hud } from './Hud.js';
 import { DevOverlay } from './DevOverlay.js';
@@ -24,20 +26,28 @@ import { CraftingPanel } from './CraftingPanel.js';
 import { Journal } from './Journal.js';
 import { BankPanel } from './BankPanel.js';
 import { BountyBoard } from './BountyBoard.js';
+import { SettingsPanel } from './SettingsPanel.js';
 import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
-  const [entry, setEntry] = useState<{ character: CharacterSave; account: AccountSave } | null>(
-    null,
-  );
+  const [entry, setEntry] = useState<{
+    character: CharacterSave;
+    account: AccountSave;
+    settings: Settings;
+  } | null>(null);
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
 
   useEffect(() => {
     if (!entry || !canvasRef.current || gameRef.current) return;
+    // Seed the store from the saved settings before the game reads them.
+    const st = useStore.getState();
+    st.setSnapshot({ viewDistance: entry.settings.viewDistance });
+    st.setKeybinds(entry.settings.keybinds);
+    st.setMasterVolume(entry.settings.masterVolume);
     const game = new Game(canvasRef.current, entry.character, entry.account);
     gameRef.current = game;
 
@@ -59,7 +69,11 @@ export function App(): JSX.Element {
   }, [entry]);
 
   if (!entry) {
-    return <Onboarding onEnter={(character, account) => setEntry({ character, account })} />;
+    return (
+      <Onboarding
+        onEnter={(character, account, settings) => setEntry({ character, account, settings })}
+      />
+    );
   }
 
   return (
@@ -83,6 +97,7 @@ export function App(): JSX.Element {
         {ready && <Journal />}
         {ready && <BankPanel />}
         {ready && <BountyBoard />}
+        {ready && <SettingsPanel />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}

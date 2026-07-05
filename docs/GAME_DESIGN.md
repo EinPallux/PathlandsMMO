@@ -303,8 +303,25 @@ HUD (frames, hotbar, XP, buffs, minimap, tracker, chat[P6]) · Character sheet �
 > rather than gated to the physical bank building / mailbox prop (like the crafting panel —
 > station-proximity gating is a later pass); mail gifts are gold-only (item attachments and
 > player-to-player mail arrive with Phase 6); the vault is per-character (account-shared
-> storage is a Phase-6 consideration). **Settings & keybind remapping** from the deliverable
-> remain for a later part / Phase 5 polish.
+> storage is a Phase-6 consideration).
+>
+> **Implementation (Phase 4 Part 13) — Settings & keybind remapping.** A `SettingsPanel`
+> (opened with **Escape** when no other transient dialog is open; ✕ to close) exposes three
+> groups: **Display** (view distance, 3–12 chunks), **Audio** (master volume — the persisted
+> setting; the audio bus itself lands in Phase 5), and **Keybinds** — a rebindable list of the
+> **14** panel/action keys (world map, character sheet, quest log, professions, crafting,
+> journal, bank & mail, bounty board, mount, free-fly, interact, cycle-target, auto-attack,
+> release-spirit). The bindable set and its defaults are pure data in
+> `shared/data/keybinds.ts`; the game reads the live map every frame, so a rebind takes effect
+> immediately. Rebinding: click a row, press a key — the keypress is captured in the DOM
+> **capture phase** and swallowed so it never reaches the game's input handler mid-rebind.
+> **Reserved** codes (WASD / Space / Shift for movement, the hotbar digits, dev `` ` ``, and
+> Escape) can never be bound and are refused with a flash; choosing a code another action
+> already holds **swaps** the two so no action is left unbound or duplicated; **Reset to
+> defaults** restores the map. View distance, master volume, and the keybind map persist to the
+> save's `settings` block (**save v11**; the migration defaults the keybind map and merges any
+> saved binds forward). Remaining polish for Phase 5: interface/graphics-quality options and an
+> actual audio bus for the volume slider to drive.
 
 ## 15. Tuning Targets (Phase 5 checklist)
 

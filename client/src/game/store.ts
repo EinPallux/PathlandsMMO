@@ -3,7 +3,12 @@
 // call back into the game via the registered command handlers.
 
 import { create } from 'zustand';
-import { CharacterClass, type ItemDef, type ItemStackSave } from '@pathlands/shared';
+import {
+  CharacterClass,
+  defaultKeybinds,
+  type ItemDef,
+  type ItemStackSave,
+} from '@pathlands/shared';
 
 export interface Nameplate {
   id: string;
@@ -383,6 +388,10 @@ export interface UiState {
   showBank: boolean;
   bounties: BountyUi | null;
   showBounties: boolean;
+  /** Rebindable action → KeyboardEvent.code (read live by the game each frame). */
+  keybinds: Record<string, string>;
+  masterVolume: number;
+  showSettings: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -418,6 +427,9 @@ export interface UiState {
   toggleBank: () => void;
   setBounties: (b: BountyUi) => void;
   toggleBounties: () => void;
+  setKeybinds: (k: Record<string, string>) => void;
+  setMasterVolume: (v: number) => void;
+  toggleSettings: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -489,6 +501,9 @@ export const useStore = create<UiState>((set) => ({
   showBank: false,
   bounties: null,
   showBounties: false,
+  keybinds: defaultKeybinds(),
+  masterVolume: 0.8,
+  showSettings: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -524,6 +539,9 @@ export const useStore = create<UiState>((set) => ({
   toggleBank: () => set((st) => ({ showBank: !st.showBank })),
   setBounties: (bounties) => set({ bounties }),
   toggleBounties: () => set((st) => ({ showBounties: !st.showBounties })),
+  setKeybinds: (keybinds) => set({ keybinds }),
+  setMasterVolume: (masterVolume) => set({ masterVolume }),
+  toggleSettings: () => set((st) => ({ showSettings: !st.showSettings })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

@@ -6,17 +6,34 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 12: named rare-elite hunts.** Eight
+> **Phase 4 in progress (2026-07-05) — Part 13: Settings & keybind remapping.** A new
+> **Settings panel** (open with **Escape** when nothing else is open, or the ✕ to close)
+> exposes **view distance** (3–12 chunks), **master volume**, and a full **rebindable
+> keybind** list for the 14 panel/action keys (map, character, quest log, professions,
+> crafting, journal, bank, bounties, mount, free-fly, interact, cycle-target, auto-attack,
+> release-spirit). Click a row and press a key to rebind; the keypress is caught in the
+> capture phase and **swallowed** so it never leaks to the game's input handler mid-rebind.
+> Movement (WASD / Space / Shift), the hotbar digits, dev (`` ` ``) and Escape stay fixed and
+> are **refused** as bindings; picking a key another action holds **swaps** the two so nothing
+> is ever left unbound or duplicated; a **Reset to defaults** button restores the map. The
+> map is pure data in `shared/data/keybinds.ts`; the game reads the live map each frame
+> (`game.ts`), and both the panel edits and the sliders persist to the save's `settings` block
+> (**save v11**, migration defaults the keybind map, merging any saved binds). **246 tests
+> green**; `pnpm typecheck && lint && build` clean; in-browser the panel opens, view/volume
+> sliders move, M→N rebinds without opening the map (swallow verified), and a reserved key
+> flashes "reserved". Next: the remaining side-quest budget and Phase-5 tuning/polish.
+>
+> ---
+>
+> **Part 12 (2026-07-05): named rare-elite hunts.** Eight
 > wandering **named rares** now roam the zones (WORLD.md §4) — Old Thornhide (Vale),
 > Grislefang & the Weald pack-lord, Duskwing / Boulderjaw / Gnash-Cowl (Foothills),
 > Shardback Alpha (Peaks), Gruulmarg the War-Chief (Trollmoor), and Wreckmaw (Coast). Each
 > is an **Elite-rank** enemy (`named` flag in `shared/data/enemies.ts`, reusing a family
 > model) with a single long-respawn spawn point (`spawns.ts`), dropping Elite-tier loot and
 > feeding a new **Rarebane** Deed (slay 5). The `MetaDirector` announces each rare kill and
-> advances the Deed. **245 tests green** (rare content: Elite rank + buildable model +
-> world-spawned + Deed); `pnpm typecheck && lint && build` clean; in-browser the Journal
-> lists Rarebane under Combat with zero console errors. Next: the remaining side-quest
-> budget and Phase-5 tuning/polish.
+> advances the Deed. In-browser the Journal lists Rarebane under Combat with zero console
+> errors.
 >
 > ---
 >
@@ -412,7 +429,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 - [x] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant **account-wide** Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10 (Part 11 made Points/perks account-wide, save v10). _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
 - [~] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate) + **named rare-elite hunts**. Bounties: a data-driven pool (`shared/data/bounties.ts`), a deterministic daily rotation, a `BountyDirector` tracking kill/gather progress that pays gold + XP + the "Taskmaster" Deed, and a Bounty Board panel (**O**); save v9. Named rares (Part 12): 8 wandering Elite-rank hunt targets across the zones (`named` flag in `shared/data/enemies.ts` + spawn points in `spawns.ts`, ~15-min respawns), dropping Elite loot and feeding the new **Rarebane** Deed. _(Remaining: Hollow boss re-run loot tables, profession masteries, more rares + bespoke unique-drop tables, and the "restore the final Waystone" world-event stub.)_
-- [~] **Supporting systems** — the **Waymeet Bank** (a 50-slot shared vault + a mailbox) as a single `BankPanel` (**B**) with Vault / Mail tabs: move stacks between bag and vault; read letters from world NPCs and claim their gold gifts; the Steward's welcome letter is delivered on reaching level 5. Save v8 persists the vault + inbox. _(Remaining: bank-building/mailbox-prop gating, item mail attachments, improved settings, and keybind remapping.)_
+- [x] **Supporting systems** — the **Waymeet Bank** (a 50-slot shared vault + a mailbox) as a single `BankPanel` (**B**) with Vault / Mail tabs: move stacks between bag and vault; read letters from world NPCs and claim their gold gifts; the Steward's welcome letter is delivered on reaching level 5. Save v8 persists the vault + inbox. **Settings & keybinds (Part 13):** a `SettingsPanel` (Escape when nothing else is open) with view-distance and master-volume sliders and a full **rebindable keybind** list for the 14 panel/action keys — click-to-rebind with a capture-phase swallow, reserved-key refusal, conflict swap, and reset-to-defaults; the map is pure data (`shared/data/keybinds.ts`), read live each frame, persisted in `settings` (**save v11**). _(Remaining polish, deferred to Phase 5: bank-building/mailbox-prop gating and item mail attachments.)_
 
 ### Acceptance Criteria
 
@@ -424,7 +441,7 @@ _Status after Part 11 (2026-07-05). Criteria **#1–#4 pass**; #5 is a soft play
 4. ✅ **Deeds, Path Points, perks (account-wide); mount outdoors.** Deeds fire, Path Points accrue/spend, the mount works everywhere outdoors — and **Part 11 moved Path Points + perks onto the account** (save v10), so perks apply across all local characters.
 5. ⏳ **~25–35 h to cap as a quest-follower.** A soft playtest target, gated on the Phase-5 XP-source tuning (criterion #1 note) — deferred to Phase 5 with the rest of the pace tuning.
 
-> **Phase-4 systems are complete and the acceptance bar (#1–#4) is met.** Remaining before the phase is formally closed is **breadth + polish, not capability**: the zone side-quest budget toward ~110, named rare-elite hunts, and the deferred supporting-systems polish (station-proximity gating, settings, keybind remapping) — plus the Phase-5 XP-pace tuning (#5). These can proceed as content sessions or roll into Phase 5.
+> **Phase-4 systems are complete and the acceptance bar (#1–#4) is met.** Remaining before the phase is formally closed is **breadth + polish, not capability**: the zone side-quest budget toward ~110 — plus the Phase-5 XP-pace tuning (#5). Named rare-elite hunts (Part 12) and Settings + keybind remapping (Part 13) are now done; the only deferred supporting-systems polish is station-proximity gating and item mail attachments, which roll into Phase 5. These can proceed as content sessions or roll into Phase 5.
 
 ---
 

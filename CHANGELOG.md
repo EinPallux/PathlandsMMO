@@ -4,6 +4,36 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 13 — Settings & keybind remapping (2026-07-05)
+
+#### Added
+
+- **`shared/data/keybinds`** — the rebindable keybind schema: `KEYBIND_ACTIONS` (the 14
+  remappable panel/action keys), `DEFAULT_KEYBINDS`, human `KEYBIND_LABEL`s, `defaultKeybinds()`,
+  a `RESERVED_CODES` list (movement / hotbar / menu keys that may never be bound), and a
+  `keyLabel()` display helper. Pure data — the client reads and edits the persisted map.
+- **`client/ui/SettingsPanel`** — a new panel (open with **Escape** when nothing else is open,
+  ✕ to close): view-distance slider (3–12 chunks), master-volume slider, and a full keybind
+  list. Click a row and press a key to rebind; the keypress is caught in the **capture phase**
+  and swallowed so it never reaches the game's input handler. Reserved keys are refused with a
+  flash; picking a key another action holds **swaps** the two; a **Reset to defaults** button
+  restores the map. Sliders and binds persist to the save's `settings` block.
+- **Save v11** — `settings.keybinds` added to the schema; `createNewSave` seeds the defaults;
+  `migrate()` defaults the keybind map for pre-v11 saves, merging any saved binds forward.
+
+#### Changed
+
+- **`client/game/game.ts`** — panel/action toggles now read the **live keybind map** each
+  frame (`store.keybinds`) instead of hardcoded key codes. **Escape** closes any open transient
+  dialog (dialogue / travel / vendor / quest dialog) or, when none is open, toggles the Settings
+  panel.
+- **Onboarding → App → store** — the saved `settings` (view distance, volume, keybinds) are
+  threaded through character entry and seeded into the store before the game boots.
+
+#### Tests
+
+- +1 (save v10→v11 keybind-default migration + `settings.keybinds` round-trip); **246 total**.
+
 ### Part 12 — named rare-elite hunts (2026-07-05)
 
 - **`shared/data/enemies`** — a `named` flag on `EnemyDef` and **8 named rare-elites** (Old

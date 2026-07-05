@@ -21,14 +21,18 @@ import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
 import type { MailLetterSave } from '../data/mail.js';
 import { starterInbox } from '../data/mail.js';
+import { defaultKeybinds, DEFAULT_KEYBINDS } from '../data/keybinds.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 10;
+// v10 → v11 (Phase 4): settings gained the rebindable keybind map.
+export const SAVE_VERSION = 11;
 
 export interface SettingsV1 {
   viewDistance: number;
   masterVolume: number;
+  /** Rebindable action → KeyboardEvent.code (GDD §14; defaults in data/keybinds). */
+  keybinds: Record<string, string>;
 }
 
 export interface ItemStackSave {
@@ -130,8 +134,8 @@ export interface AccountSaveV3 extends AccountSaveV2 {
   perks: Record<string, number>;
 }
 
-export interface SaveGameV10 {
-  version: 10;
+export interface SaveGameV11 {
+  version: 11;
   worldSeed: number;
   account: AccountSaveV3;
   characters: CharacterSaveV10[];
@@ -141,7 +145,7 @@ export interface SaveGameV10 {
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV10;
+export type SaveGame = SaveGameV11;
 export type CharacterSave = CharacterSaveV10;
 export type AccountSave = AccountSaveV3;
 
@@ -156,6 +160,7 @@ const DEFAULT_SKILLS = (): Record<string, number> => ({
 export const DEFAULT_SETTINGS: SettingsV1 = {
   viewDistance: 8,
   masterVolume: 0.8,
+  keybinds: defaultKeybinds(),
 };
 
 export function createNewSave(): SaveGame {
@@ -164,7 +169,7 @@ export function createNewSave(): SaveGame {
     worldSeed: WORLD_SEED,
     account: { pathPoints: 0, perks: {} },
     characters: [],
-    settings: { ...DEFAULT_SETTINGS },
+    settings: { ...DEFAULT_SETTINGS, keybinds: defaultKeybinds() },
     updatedAtTick: 0,
   };
 }
@@ -197,6 +202,17 @@ function equipment(v: unknown): Record<string, ItemDef> {
   if (!isRecord(v)) return out;
   for (const [slot, item] of Object.entries(v)) {
     if (isRecord(item)) out[slot] = item as unknown as ItemDef;
+  }
+  return out;
+}
+
+function keybinds(v: unknown): Record<string, string> {
+  const out = defaultKeybinds();
+  if (isRecord(v)) {
+    for (const action of Object.keys(DEFAULT_KEYBINDS)) {
+      const code = v[action];
+      if (typeof code === 'string' && code.length > 0) out[action] = code;
+    }
   }
   return out;
 }
@@ -348,6 +364,7 @@ export function migrate(raw: unknown): SaveGame {
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
+      keybinds: keybinds(settings.keybinds),
     },
     updatedAtTick: num(raw.updatedAtTick, 0),
   };

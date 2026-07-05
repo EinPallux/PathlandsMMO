@@ -11,6 +11,8 @@ import {
   type SaveGame,
 } from '@pathlands/shared';
 
+type Settings = SaveGame['settings'];
+
 const DB_NAME = 'pathlands';
 const STORE = 'kv';
 const KEY = 'save';
@@ -86,6 +88,13 @@ export async function upsertCharacter(c: CharacterSave): Promise<void> {
 export async function upsertAccount(account: AccountSave): Promise<void> {
   const save = await loadSave();
   save.account = account;
+  await persistSave(save);
+}
+
+/** Merge a partial settings change (view distance, volume, keybinds) and persist. */
+export async function updateSettings(patch: Partial<Settings>): Promise<void> {
+  const save = await loadSave();
+  save.settings = { ...save.settings, ...patch };
   await persistSave(save);
 }
 

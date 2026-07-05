@@ -7,6 +7,7 @@ import {
   type SaveGame,
 } from '../src/proto/save.js';
 import { WORLD_SEED } from '../src/core/constants.js';
+import { DEFAULT_KEYBINDS } from '../src/data/keybinds.js';
 
 describe('save schema', () => {
   it('creates a valid empty save at the current version', () => {
@@ -18,7 +19,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 10,
+      version: 11,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3, perks: { deepPockets: 2 } },
       characters: [
@@ -71,10 +72,27 @@ describe('save schema', () => {
           },
         },
       ],
-      settings: { viewDistance: 10, masterVolume: 0.5 },
+      settings: {
+        viewDistance: 10,
+        masterVolume: 0.5,
+        keybinds: { ...DEFAULT_KEYBINDS, toggleMap: 'KeyN' },
+      },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a pre-keybind save, defaulting the keybind map (merging any saved binds)', () => {
+    const old = {
+      version: 10,
+      account: { pathPoints: 0, perks: {} },
+      characters: [],
+      settings: { viewDistance: 6, masterVolume: 0.4, keybinds: { toggleMap: 'KeyN' } },
+    };
+    const s = migrate(old).settings;
+    expect(s.viewDistance).toBe(6);
+    expect(s.keybinds.toggleMap).toBe('KeyN'); // saved override kept
+    expect(s.keybinds.toggleBank).toBe(DEFAULT_KEYBINDS.toggleBank); // rest defaulted
   });
 
   it('migrates a v8 (pre-bounty) save, defaulting an empty bounty log', () => {
