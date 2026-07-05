@@ -6,6 +6,19 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 3 in progress (2026-07-05).** The MMO-authoritative combat & progression
+> core is complete and tested in `shared/` (parts 1–3): the stat/XP/formula math
+> (GDD §4/§5), all four classes' 12 skills + paths and the enemy roster (10 asset +
+> 8 new + 5 Hollow bosses) as data-driven content, and the full tick-based combat
+> simulation — cast/GCD/cooldown/resource validation, a complete skill-effect
+> interpreter (damage/dot/heal/hot/shield/CC/buff/execute/…), auras, threat, death
+> and XP events, enemy AI (aggro/chase/leash/ability-use), and deterministic
+> spawners. 132 shared tests green. **Remaining for Phase 3:** enemy voxel models
+> (part 4), and the client layer — onboarding, HUD/target frames/hotbar/floaters,
+> inventory + equipment, and the death→Waystone loop (part 5) — then review + docs.
+>
+> ---
+>
 > **Phase 2 complete (2026-07-05).** The continent is now a living world: all 12
 > building models stamped into 8 settlements (Waymeet + villages) with roads,
 > Waystones, wells, signposts and fixtures; instanced vegetation/rock/node scatter
