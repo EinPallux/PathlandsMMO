@@ -39,6 +39,7 @@ export const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
 /** Voxel material ids stored per-voxel in chunk data (Uint8). */
 export enum Voxel {
   Air = 0,
+  // --- natural terrain (0–9) ---
   Grass = 1,
   Dirt = 2,
   Stone = 3,
@@ -48,7 +49,25 @@ export enum Voxel {
   Rock = 7, // exposed cliff/crag face
   CrystalRock = 8, // Glimmerpeaks luminous stone
   BlightMoss = 9, // Verdigris blight surface (emissive)
+  // --- built structures & roads (10+), stamped by the authored layer ---
+  WoodOak = 10,
+  WoodDark = 11,
+  Plaster = 12,
+  RoofTile = 13, // red clay tiles
+  Cobble = 14, // light dressed stone
+  CobbleDark = 15,
+  Thatch = 16,
+  GlassWindow = 17, // emissive (warm firelight through glass)
+  WaystoneStone = 18,
+  WaystoneGlow = 19, // emissive (cyan Waymaker light)
+  GoldTrim = 20,
+  IronDark = 21,
+  Path = 22, // road/path surface
+  LanternGlow = 23, // emissive (lantern flame)
 }
+
+/** Highest material id in use — sizing for lookup tables. */
+export const VOXEL_COUNT = 24;
 
 /** True for voxel types the player/entities cannot pass through. */
 export function isSolidVoxel(v: Voxel): boolean {
@@ -58,4 +77,14 @@ export function isSolidVoxel(v: Voxel): boolean {
 /** True for voxel types that count as swimmable fluid. */
 export function isFluidVoxel(v: Voxel): boolean {
   return v === Voxel.Water;
+}
+
+/** True for voxel types that glow (routed to the emissive mesh group at night). */
+export function isEmissiveVoxel(v: Voxel): boolean {
+  return (
+    v === Voxel.GlassWindow ||
+    v === Voxel.WaystoneGlow ||
+    v === Voxel.LanternGlow ||
+    v === Voxel.BlightMoss
+  );
 }

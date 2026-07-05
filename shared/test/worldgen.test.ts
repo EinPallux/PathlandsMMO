@@ -47,7 +47,7 @@ describe('worldgen determinism', () => {
     const center = hashBytes(w.generateChunk(48, 48).voxels);
     const peaks = hashBytes(w.generateChunk(17, 15).voxels);
     // Regenerate these intentionally if worldgen is deliberately changed.
-    expect([center, peaks]).toEqual([1090677699, 1031093948]);
+    expect([center, peaks]).toEqual([2815396934, 1031093948]);
   });
 });
 
@@ -79,8 +79,9 @@ describe('worldgen structure', () => {
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
         const h = w.heightAt(48 * CHUNK_SIZE + lx, 48 * CHUNK_SIZE + lz);
         const top = chunk.voxels[voxelIndex(lx, h, lz)]!;
-        // Top voxel is either solid land, or (rare) a cave mouth right at surface.
-        expect(top === Voxel.Air || isSolidVoxel(top as Voxel)).toBe(true);
+        // Top voxel is solid land, a cave mouth (air), or a water feature
+        // (fountain/well) stamped by the authored layer — never a fall-through.
+        expect(top === Voxel.Air || top === Voxel.Water || isSolidVoxel(top as Voxel)).toBe(true);
       }
     }
   });

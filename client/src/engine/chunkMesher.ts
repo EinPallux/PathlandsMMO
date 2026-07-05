@@ -1,10 +1,12 @@
 // Bridges deterministic worldgen (shared) to the greedy mesher. Given a generated
-// chunk, produces render buffers, culling correctly across chunk borders by querying
-// the World for out-of-chunk neighbours. Pure — runs inside the chunk Web Worker.
+// chunk, produces render buffers per material group (0 = opaque, 1 = emissive),
+// culling correctly across chunk borders by querying the World for out-of-chunk
+// neighbours. Pure — runs inside the chunk Web Worker.
 
 import {
   voxelIndex,
   isSolidVoxel,
+  isEmissiveVoxel,
   terrainColor,
   CHUNK_SIZE,
   WORLD_HEIGHT,
@@ -13,9 +15,12 @@ import {
   type Voxel,
   type Biome,
 } from '@pathlands/shared';
-import { meshVolume, type MeshBuffers } from './greedyMesh.js';
+import { meshVolumeGrouped, type MeshBuffers } from './greedyMesh.js';
 
-export function meshChunkData(world: World, chunk: ChunkData): MeshBuffers {
+export const GROUP_OPAQUE = 0;
+export const GROUP_EMISSIVE = 1;
+
+export function meshChunkData(world: World, chunk: ChunkData): Map<number, MeshBuffers> {
   const { cx, cz, voxels, biomes, maxY } = chunk;
   const baseX = cx * CHUNK_SIZE;
   const baseZ = cz * CHUNK_SIZE;
@@ -27,7 +32,6 @@ export function meshChunkData(world: World, chunk: ChunkData): MeshBuffers {
     if (lx >= 0 && lx < CHUNK_SIZE && lz >= 0 && lz < CHUNK_SIZE) {
       return isSolidVoxel(voxels[voxelIndex(lx, ly, lz)]! as Voxel);
     }
-    // Neighbour chunk — deterministic single-voxel query.
     return world.isSolidAt(baseX + lx, ly, baseZ + lz);
   };
 
@@ -37,5 +41,8 @@ export function meshChunkData(world: World, chunk: ChunkData): MeshBuffers {
     return terrainColor(v, biome);
   };
 
-  return meshVolume(CHUNK_SIZE, ny, CHUNK_SIZE, solid, color);
+  const group = (lx: number, ly: number, lz: number): number =>
+    isEmissiveVoxel(voxels[voxelIndex(lx, ly, lz)]! as Voxel) ? GROUP_EMISSIVE : GROUP_OPAQUE;
+
+  return meshVolumeGrouped(CHUNK_SIZE, ny, CHUNK_SIZE, solid, color, group);
 }

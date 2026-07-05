@@ -32,6 +32,8 @@ const SKY_FRAG = /* glsl */ `
 
 const lerpColor = (a: THREE.Color, b: THREE.Color, t: number): THREE.Color => a.clone().lerp(b, t);
 
+const WHITE = new THREE.Color(0xffffff);
+
 // Palette stops for the cycle.
 const C = {
   dayTop: new THREE.Color(0x4a86c8),
@@ -157,8 +159,10 @@ export class Environment {
       this.sun.position.set(-dir.x * 300, Math.max(30, -dir.y * 300), -dir.z * 300);
     }
 
-    this.hemi.color.copy(horizon);
-    this.hemi.intensity = 0.25 + dayF * 0.4;
+    // Desaturate the sky-ambient toward white so it lights surfaces neutrally
+    // (a strongly-blue ambient tints red roof tiles purple).
+    this.hemi.color.copy(horizon).lerp(WHITE, 0.55);
+    this.hemi.intensity = 0.3 + dayF * 0.4;
 
     this.fog.color.copy(horizon);
     this.scene.background = horizon.clone();

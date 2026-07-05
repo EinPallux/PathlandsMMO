@@ -1,8 +1,9 @@
 // Web Worker: generates and meshes a chunk off the main thread, returning
-// transferable buffers. One World is cached per seed so noise tables are built once.
+// transferable buffers for the opaque and emissive material groups. One World is
+// cached per seed so noise tables are built once.
 
-import { World } from '@pathlands/shared';
-import { meshChunkData } from './chunkMesher.js';
+import { World, type PropInstance } from '@pathlands/shared';
+import { meshChunkData, GROUP_OPAQUE, GROUP_EMISSIVE } from './chunkMesher.js';
 
 interface ChunkRequest {
   reqId: number;
@@ -11,15 +12,20 @@ interface ChunkRequest {
   seed: number;
 }
 
-interface ChunkResponse {
-  reqId: number;
-  cx: number;
-  cz: number;
+interface GroupPayload {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
   indices: Uint32Array;
-  empty: boolean;
+}
+
+interface ChunkResponse {
+  reqId: number;
+  cx: number;
+  cz: number;
+  opaque: GroupPayload | null;
+  emissive: GroupPayload | null;
+  props: PropInstance[];
 }
 
 let world: World | null = null;
@@ -34,23 +40,24 @@ ctx.onmessage = (event: MessageEvent): void => {
     currentSeed = seed;
   }
   const chunk = world.generateChunk(cx, cz);
-  const m = meshChunkData(world, chunk);
-  const response: ChunkResponse = {
-    reqId,
-    cx,
-    cz,
-    positions: m.positions,
-    normals: m.normals,
-    colors: m.colors,
-    indices: m.indices,
-    empty: m.indices.length === 0,
-  };
-  ctx.postMessage(response, [
-    m.positions.buffer,
-    m.normals.buffer,
-    m.colors.buffer,
-    m.indices.buffer,
-  ]);
+  const groups = meshChunkData(world, chunk);
+  const opaque = groups.get(GROUP_OPAQUE) ?? null;
+  const emissive = groups.get(GROUP_EMISSIVE) ?? null;
+  const props = world.scatterChunk(cx, cz);
+
+  const response: ChunkResponse = { reqId, cx, cz, opaque, emissive, props };
+  const transfer: Transferable[] = [];
+  for (const g of [opaque, emissive]) {
+    if (g) {
+      transfer.push(
+        g.positions.buffer as ArrayBuffer,
+        g.normals.buffer as ArrayBuffer,
+        g.colors.buffer as ArrayBuffer,
+        g.indices.buffer as ArrayBuffer,
+      );
+    }
+  }
+  ctx.postMessage(response, transfer);
 };
 
-export type { ChunkRequest, ChunkResponse };
+export type { ChunkRequest, ChunkResponse, GroupPayload };

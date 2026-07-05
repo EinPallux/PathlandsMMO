@@ -5,13 +5,15 @@
 
 import * as THREE from 'three';
 import { CHUNK_SIZE, WORLD_CHUNKS_X, WORLD_CHUNKS_Z, WORLD_SEED } from '@pathlands/shared';
-import type { ChunkResponse } from './chunkWorker.js';
+import type { ChunkResponse, GroupPayload } from './chunkWorker.js';
+import type { PropRenderer } from './propRenderer.js';
 
 interface ChunkEntry {
   cx: number;
   cz: number;
   state: 'queued' | 'loading' | 'ready';
   mesh?: THREE.Mesh;
+  emissiveMesh?: THREE.Mesh;
 }
 
 const chunkKey = (cx: number, cz: number): number => cx * 1000 + cz;
@@ -20,25 +22,40 @@ export class ChunkManager {
   private readonly scene: THREE.Scene;
   private readonly seed: number;
   private readonly material: THREE.MeshLambertMaterial;
+  private readonly emissiveMaterial: THREE.MeshBasicMaterial;
   private readonly workers: Worker[] = [];
   private readonly idle: Worker[] = [];
   private readonly entries = new Map<number, ChunkEntry>();
   private readonly desired = new Set<number>();
+  /** Chunk key each busy worker is currently meshing (for error recovery). */
+  private readonly busy = new Map<Worker, number>();
   private queue: ChunkEntry[] = [];
   private lastCX = Number.NaN;
   private lastCZ = Number.NaN;
   private radius: number;
+  private readonly props: PropRenderer | null;
 
-  constructor(scene: THREE.Scene, seed = WORLD_SEED, radius = 7, workerCount?: number) {
+  constructor(
+    scene: THREE.Scene,
+    seed = WORLD_SEED,
+    radius = 7,
+    props: PropRenderer | null = null,
+    workerCount?: number,
+  ) {
     this.scene = scene;
     this.seed = seed;
     this.radius = radius;
+    this.props = props;
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    // Emissive voxels (windows, lanterns, Waystones, blight) render full-bright,
+    // unaffected by the sun — so they glow at night.
+    this.emissiveMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
 
     const n = workerCount ?? Math.max(2, Math.min(6, (navigator.hardwareConcurrency ?? 4) - 1));
     for (let i = 0; i < n; i++) {
       const worker = new Worker(new URL('./chunkWorker.ts', import.meta.url), { type: 'module' });
       worker.onmessage = (e: MessageEvent) => this.onWorkerMessage(worker, e.data as ChunkResponse);
+      worker.onerror = () => this.onWorkerError(worker);
       this.workers.push(worker);
       this.idle.push(worker);
     }
@@ -51,7 +68,7 @@ export class ChunkManager {
 
   get loadedCount(): number {
     let n = 0;
-    for (const e of this.entries.values()) if (e.state === 'ready' && e.mesh) n++;
+    for (const e of this.entries.values()) if (e.state === 'ready') n++;
     return n;
   }
 
@@ -100,10 +117,7 @@ export class ChunkManager {
     for (const [key, entry] of this.entries) {
       const dist = (entry.cx - pcx) * (entry.cx - pcx) + (entry.cz - pcz) * (entry.cz - pcz);
       if (dist > keep) {
-        if (entry.mesh) {
-          this.scene.remove(entry.mesh);
-          entry.mesh.geometry.dispose();
-        }
+        this.disposeEntryMeshes(entry);
         this.entries.delete(key);
         this.desired.delete(key);
       }
@@ -127,6 +141,7 @@ export class ChunkManager {
       if (entry.state !== 'queued') continue;
       const worker = this.idle.pop()!;
       entry.state = 'loading';
+      this.busy.set(worker, chunkKey(entry.cx, entry.cz));
       worker.postMessage({
         reqId: chunkKey(entry.cx, entry.cz),
         cx: entry.cx,
@@ -136,42 +151,80 @@ export class ChunkManager {
     }
   }
 
+  /** Recover from a worker crash: requeue its chunk and free the worker. */
+  private onWorkerError(worker: Worker): void {
+    const key = this.busy.get(worker);
+    this.busy.delete(worker);
+    if (key !== undefined) {
+      const entry = this.entries.get(key);
+      if (entry && entry.state === 'loading' && this.desired.has(key)) {
+        entry.state = 'queued';
+        this.queue.push(entry);
+      }
+    }
+    if (!this.idle.includes(worker)) this.idle.push(worker);
+    this.pump();
+  }
+
+  private buildMesh(g: GroupPayload, cx: number, cz: number, mat: THREE.Material): THREE.Mesh {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(g.positions, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(g.normals, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(g.colors, 3));
+    geo.setIndex(new THREE.BufferAttribute(g.indices, 1));
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    return mesh;
+  }
+
+  private disposeEntryMeshes(entry: ChunkEntry): void {
+    if (entry.mesh) {
+      this.scene.remove(entry.mesh);
+      entry.mesh.geometry.dispose();
+      entry.mesh = undefined;
+    }
+    if (entry.emissiveMesh) {
+      this.scene.remove(entry.emissiveMesh);
+      entry.emissiveMesh.geometry.dispose();
+      entry.emissiveMesh = undefined;
+    }
+    this.props?.removeChunk(chunkKey(entry.cx, entry.cz));
+  }
+
   private onWorkerMessage(worker: Worker, resp: ChunkResponse): void {
     this.idle.push(worker);
+    this.busy.delete(worker);
     const key = chunkKey(resp.cx, resp.cz);
     const entry = this.entries.get(key);
-    // Discard results for chunks unloaded while in flight.
-    if (!entry || !this.desired.has(key)) {
+    // Discard only if the chunk was fully unloaded (entry gone). A kept-but-not-
+    // desired chunk still gets its mesh so it never stalls in 'loading'.
+    if (!entry) {
       this.pump();
       return;
     }
+    // Drop any prior meshes first, in case a re-dispatch produced two results.
+    this.disposeEntryMeshes(entry);
     entry.state = 'ready';
-    if (!resp.empty) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(resp.positions, 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(resp.normals, 3));
-      geo.setAttribute('color', new THREE.BufferAttribute(resp.colors, 3));
-      geo.setIndex(new THREE.BufferAttribute(resp.indices, 1));
-      geo.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geo, this.material);
-      mesh.position.set(resp.cx * CHUNK_SIZE, 0, resp.cz * CHUNK_SIZE);
-      mesh.matrixAutoUpdate = false;
-      mesh.updateMatrix();
-      entry.mesh = mesh;
-      this.scene.add(mesh);
+    if (resp.opaque) {
+      entry.mesh = this.buildMesh(resp.opaque, resp.cx, resp.cz, this.material);
+      this.scene.add(entry.mesh);
     }
+    if (resp.emissive) {
+      entry.emissiveMesh = this.buildMesh(resp.emissive, resp.cx, resp.cz, this.emissiveMaterial);
+      this.scene.add(entry.emissiveMesh);
+    }
+    if (resp.props.length > 0) this.props?.addChunk(key, resp.props);
     this.pump();
   }
 
   dispose(): void {
     for (const worker of this.workers) worker.terminate();
-    for (const entry of this.entries.values()) {
-      if (entry.mesh) {
-        this.scene.remove(entry.mesh);
-        entry.mesh.geometry.dispose();
-      }
-    }
+    for (const entry of this.entries.values()) this.disposeEntryMeshes(entry);
     this.entries.clear();
     this.material.dispose();
+    this.emissiveMaterial.dispose();
   }
 }

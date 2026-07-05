@@ -103,6 +103,35 @@ export function terrainColor(v: Voxel, biome: Biome): number {
       return pal.crystalRock;
     case Voxel.BlightMoss:
       return pal.blight;
+    // --- built structures & roads ---
+    case Voxel.WoodOak:
+      return pal.woodOak;
+    case Voxel.WoodDark:
+      return pal.woodDark;
+    case Voxel.Plaster:
+      return pal.plaster;
+    case Voxel.RoofTile:
+      return pal.roofBrick;
+    case Voxel.Cobble:
+      return 0x9a9aa0;
+    case Voxel.CobbleDark:
+      return 0x6a6a72;
+    case Voxel.Thatch:
+      return 0xb79a52;
+    case Voxel.GlassWindow:
+      return 0xffd98a; // warm firelight
+    case Voxel.WaystoneStone:
+      return 0x7d7f8c;
+    case Voxel.WaystoneGlow:
+      return 0x8fe6f0; // Waymaker cyan
+    case Voxel.GoldTrim:
+      return pal.gold;
+    case Voxel.IronDark:
+      return pal.ironDark;
+    case Voxel.Path:
+      return 0x94795a; // packed-earth road
+    case Voxel.LanternGlow:
+      return 0xffb64a;
     default:
       return 0xff00ff; // magenta = "should never render"
   }

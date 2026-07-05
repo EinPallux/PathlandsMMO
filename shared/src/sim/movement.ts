@@ -83,7 +83,7 @@ function moveVertical(s: VoxelSampler, p: PlayerPhysics, dy: number): void {
   p.onGround = false;
   if (dy === 0) {
     // Still detect resting-on-ground for animation/jump when not moving vertically.
-    if (collides(s, p.x, p.y - EPS * 2, p.z)) p.onGround = true;
+    if (collides(s, p.x, p.y - 0.06, p.z)) p.onGround = true;
     return;
   }
   const steps = Math.max(1, Math.ceil(Math.abs(dy) / MAX_SUBSTEP));
@@ -93,7 +93,12 @@ function moveVertical(s: VoxelSampler, p: PlayerPhysics, dy: number): void {
     if (!collides(s, p.x, ny, p.z)) {
       p.y = ny;
     } else {
-      if (dy < 0) p.onGround = true;
+      if (dy < 0) {
+        // Snap the feet flush to the surface instead of resting a substep above it.
+        let guard = 0;
+        while (!collides(s, p.x, p.y - 0.03, p.z) && guard++ < 40) p.y -= 0.03;
+        p.onGround = true;
+      }
       p.vy = 0;
       break;
     }

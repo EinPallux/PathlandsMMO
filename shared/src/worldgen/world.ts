@@ -16,6 +16,18 @@ import { Noise } from '../core/noise.js';
 import { deriveSeed, hashFloat2, hashFloat3 } from '../core/rng.js';
 import { clamp, lerp, smoothstep } from '../core/math.js';
 import { Biome, BIOMES, BIOME_LIST, normX, normZ } from './biomes.js';
+import { AuthoredLayer } from './placement.js';
+import type { PropId } from '../models/props/props.js';
+
+/** One instanced decoration prop placed by the scatter (client renders it). */
+export interface PropInstance {
+  prop: PropId;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  scale: number;
+}
 
 export interface ColumnSample {
   /** Surface height (index of the topmost solid voxel). */
@@ -59,6 +71,8 @@ export class World {
   private readonly caveA: Noise;
   private readonly caveB: Noise;
   private readonly columnCache = new Map<number, ColumnSample>();
+  /** Authored settlements/roads/structures layer (ARCH §4). */
+  readonly authored: AuthoredLayer;
 
   constructor(seed: number) {
     this.seed = seed;
@@ -67,6 +81,7 @@ export class World {
     this.river = new Noise(deriveSeed(seed, 'river'));
     this.caveA = new Noise(deriveSeed(seed, 'caveA'));
     this.caveB = new Noise(deriveSeed(seed, 'caveB'));
+    this.authored = new AuthoredLayer(seed, (x, z) => this.baseHeightAt(x, z));
   }
 
   // --- Biome blending -------------------------------------------------------
@@ -131,8 +146,8 @@ export class World {
     return Math.max(south, west) * 64;
   }
 
-  /** Continuous surface height (integer) at a world column. */
-  heightAt(x: number, z: number): number {
+  /** Natural terrain height, before the authored layer flattens/grades it. */
+  private baseHeightAt(x: number, z: number): number {
     const p = this.blendedParams(x, z);
 
     // Warp the sampling position for more organic hills.
@@ -164,11 +179,18 @@ export class World {
     return Math.round(clamp(h, 3, WORLD_HEIGHT - 2));
   }
 
+  /** Surface height with settlement platforms and road grading applied. */
+  heightAt(x: number, z: number): number {
+    return this.authored.flatten(x, z, this.baseHeightAt(x, z));
+  }
+
   // --- Surface material -----------------------------------------------------
 
   private pickSurface(x: number, z: number, h: number, biome: Biome, slope: number): Voxel {
     if (h <= SEA_LEVEL) return Voxel.Sand; // seabed
     if (h <= SEA_LEVEL + BEACH_HEIGHT) return Voxel.Sand; // beach
+    const road = this.authored.roadSurface(x, z);
+    if (road !== null) return road; // roads & plazas
     if (biome === Biome.Peaks) {
       if (h > SNOW_LINE) return Voxel.Snow;
       return hashFloat2(x, z, this.seed ^ 0x51a1) < 0.14 ? Voxel.CrystalRock : Voxel.Rock;
@@ -217,6 +239,9 @@ export class World {
   voxelAt(x: number, y: number, z: number): Voxel {
     if (y < 0) return Voxel.Stone;
     if (y >= WORLD_HEIGHT) return Voxel.Air;
+    // Stamped structures (buildings, Waystones…) override the terrain.
+    const st = this.authored.structureVoxelAt(x, y, z);
+    if (st !== Voxel.Air) return st;
     const s = this.sampleColumn(x, z);
     const h = s.height;
     if (y <= h) {
@@ -286,6 +311,146 @@ export class World {
       }
     }
 
+    // Stamp authored structures (buildings, Waystones, wells…) into the chunk,
+    // overwriting terrain/water and raising maxY so tall towers still mesh.
+    this.authored.stampChunk(cx, cz, CHUNK_SIZE, (lx, ly, lz, m) => {
+      if (ly < 0 || ly >= WORLD_HEIGHT) return;
+      voxels[voxelIndex(lx, ly, lz)] = m;
+      if (ly > maxY) maxY = ly;
+    });
+
     return { cx, cz, voxels, biomes, maxY: Math.min(maxY, WORLD_HEIGHT - 1) };
   }
+
+  // --- Deterministic prop scatter (instanced decoration) --------------------
+
+  /**
+   * Deterministic decoration props for a chunk (trees, rocks, flora, gathering-
+   * node shells). Rendered as InstancedMesh by the client; not stamped into the
+   * voxel field, so thousands are cheap. Avoids settlements, roads, and water.
+   */
+  scatterChunk(cx: number, cz: number): PropInstance[] {
+    const out: PropInstance[] = [];
+    const salt = (n: number): number => this.seed ^ n;
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      const wz = cz * CHUNK_SIZE + lz;
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const wx = cx * CHUNK_SIZE + lx;
+        if (this.authored.isInSettlement(wx, wz) || this.authored.isNearRoad(wx, wz)) continue;
+        const s = this.sampleColumn(wx, wz);
+        if (s.height <= SEA_LEVEL) continue;
+        const yaw = hashFloat2(wx, wz, salt(0x9e1)) * Math.PI * 2;
+        const y = s.height + 1;
+
+        if (s.surface === Voxel.Grass) {
+          const rt = hashFloat2(wx, wz, salt(0x7a1));
+          const density = TREE_DENSITY[s.biome];
+          if (rt < density) {
+            out.push(
+              inst(treeForBiome(s.biome, wx, wz, this.seed), wx, y, wz, yaw, wx, wz, this.seed),
+            );
+            continue;
+          }
+          const rf = hashFloat2(wx, wz, salt(0x33b));
+          if (rf < 0.05) {
+            out.push(
+              inst(floraForBiome(s.biome, wx, wz, this.seed), wx, y, wz, yaw, wx, wz, this.seed),
+            );
+            continue;
+          }
+          const rh = hashFloat2(wx, wz, salt(0x5c2));
+          if (rh < 0.0016) {
+            const herb = s.biome === Biome.Trollmoor ? 'herbFen' : 'herbMeadow';
+            out.push(inst(herb, wx, y, wz, yaw, wx, wz, this.seed));
+          }
+        } else if (s.surface === Voxel.Rock || s.surface === Voxel.CrystalRock) {
+          const rr = hashFloat2(wx, wz, salt(0x55f));
+          if (rr < 0.03) {
+            out.push(
+              inst(rockForBiome(s.biome, wx, wz, this.seed), wx, y, wz, yaw, wx, wz, this.seed),
+            );
+            continue;
+          }
+          if (s.height < SNOW_LINE && hashFloat2(wx, wz, salt(0x7a1)) < 0.012) {
+            const pine = s.biome === Biome.Peaks ? 'treeCrystalPine' : 'treePine';
+            out.push(inst(pine, wx, y, wz, yaw, wx, wz, this.seed));
+            continue;
+          }
+          const ro = hashFloat2(wx, wz, salt(0x0e1));
+          if (ro < 0.0018) {
+            out.push(
+              inst(oreForBiome(s.biome, wx, wz, this.seed), wx, y, wz, yaw, wx, wz, this.seed),
+            );
+          }
+        } else if (s.surface === Voxel.Sand && s.biome === Biome.Coast) {
+          if (hashFloat2(wx, wz, salt(0x7a1)) < 0.01) {
+            out.push(inst('treePalm', wx, y, wz, yaw, wx, wz, this.seed));
+          }
+        }
+      }
+    }
+    return out;
+  }
+}
+
+// --- scatter helpers --------------------------------------------------------
+
+const TREE_DENSITY: Record<Biome, number> = {
+  [Biome.Vale]: 0.02,
+  [Biome.Weald]: 0.06,
+  [Biome.Foothills]: 0.012,
+  [Biome.Peaks]: 0.0,
+  [Biome.Trollmoor]: 0.012,
+  [Biome.Coast]: 0.008,
+};
+
+function pick3(a: PropId, b: PropId, c: PropId, x: number, z: number, seed: number): PropId {
+  const r = hashFloat2(x, z, seed ^ 0x1234) * 3;
+  return r < 1 ? a : r < 2 ? b : c;
+}
+
+function treeForBiome(biome: Biome, x: number, z: number, seed: number): PropId {
+  switch (biome) {
+    case Biome.Weald:
+      return pick3('treeMosswood', 'treeMosswood', 'treeOak', x, z, seed);
+    case Biome.Foothills:
+      return pick3('treeOak', 'treeDead', 'treePine', x, z, seed);
+    case Biome.Trollmoor:
+      return pick3('treeDead', 'treeBlighted', 'treeDead', x, z, seed);
+    case Biome.Coast:
+      return pick3('treeOak', 'treeBirch', 'treeOak', x, z, seed);
+    default:
+      return pick3('treeOak', 'treeBirch', 'treeOak', x, z, seed);
+  }
+}
+
+function floraForBiome(biome: Biome, x: number, z: number, seed: number): PropId {
+  if (biome === Biome.Weald) return pick3('fern', 'bush', 'fern', x, z, seed);
+  if (biome === Biome.Trollmoor) return pick3('reeds', 'bush', 'flowerYellow', x, z, seed);
+  if (biome === Biome.Vale) return pick3('flowerRed', 'flowerYellow', 'bush', x, z, seed);
+  return pick3('bush', 'flowerYellow', 'fern', x, z, seed);
+}
+
+function rockForBiome(biome: Biome, x: number, z: number, seed: number): PropId {
+  if (biome === Biome.Peaks) return pick3('rockCrystal', 'rockLarge', 'rockSmall', x, z, seed);
+  return pick3('rockSmall', 'rockLarge', 'rockSmall', x, z, seed);
+}
+
+function oreForBiome(biome: Biome, x: number, z: number, seed: number): PropId {
+  if (biome === Biome.Peaks) return pick3('oreSilver', 'oreCrystal', 'oreIron', x, z, seed);
+  return pick3('oreCopper', 'oreIron', 'oreCopper', x, z, seed);
+}
+
+function inst(
+  prop: PropId,
+  x: number,
+  y: number,
+  z: number,
+  yaw: number,
+  hx: number,
+  hz: number,
+  seed: number,
+): PropInstance {
+  const scale = 0.82 + hashFloat2(hx, hz, seed ^ 0x2b7) * 0.42;
+  return { prop, x: x + 0.5, y, z: z + 0.5, yaw, scale };
 }

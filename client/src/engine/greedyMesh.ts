@@ -1,9 +1,10 @@
 // Greedy voxel mesher with baked ambient occlusion and vertex colours (ARCH §5).
 // Pure and THREE-free so it runs in a Web Worker and is unit-testable. Emits one
-// interleaved buffer set per volume — one draw call per chunk on the main thread.
+// interleaved buffer set per material group (e.g. opaque vs emissive) so glowing
+// voxels can render full-bright at night.
 //
-// Merging rule: adjacent faces merge only when material colour AND all four corner
-// AO values match, so AO gradients stay crisp while flat runs collapse to few quads.
+// Merging rule: adjacent faces merge only when group AND material colour AND all
+// four corner AO values match, so AO gradients stay crisp while flat runs collapse.
 
 export interface MeshBuffers {
   positions: Float32Array;
@@ -14,6 +15,7 @@ export interface MeshBuffers {
 
 export type SolidFn = (x: number, y: number, z: number) => boolean;
 export type ColorFn = (x: number, y: number, z: number) => number; // 0xRRGGBB
+export type GroupFn = (x: number, y: number, z: number) => number; // material group id
 
 // AO 0..3 → brightness multiplier (0 = deepest crevice).
 const AO_BRIGHTNESS = [0.5, 0.7, 0.86, 1.0];
@@ -23,21 +25,48 @@ function aoValue(side1: boolean, side2: boolean, corner: boolean): number {
   return 3 - ((side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0));
 }
 
+interface GroupArrays {
+  positions: number[];
+  normals: number[];
+  colors: number[];
+  indices: number[];
+}
+
+function newGroup(): GroupArrays {
+  return { positions: [], normals: [], colors: [], indices: [] };
+}
+
+function freezeGroup(g: GroupArrays): MeshBuffers {
+  return {
+    positions: new Float32Array(g.positions),
+    normals: new Float32Array(g.normals),
+    colors: new Float32Array(g.colors),
+    indices: new Uint32Array(g.indices),
+  };
+}
+
 /**
- * Mesh a rectangular voxel volume [0..nx)×[0..ny)×[0..nz). `solid` and `color`
- * may be queried one voxel outside the volume (for correct border culling & AO).
+ * Mesh a rectangular voxel volume, splitting faces by material group. `solid`,
+ * `color`, and `group` may be queried one voxel outside the volume (border culling
+ * & AO). Returns a map of groupId → buffers (only groups with geometry appear).
  */
-export function meshVolume(
+export function meshVolumeGrouped(
   nx: number,
   ny: number,
   nz: number,
   solid: SolidFn,
   color: ColorFn,
-): MeshBuffers {
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const colors: number[] = [];
-  const indices: number[] = [];
+  group: GroupFn,
+): Map<number, MeshBuffers> {
+  const groups = new Map<number, GroupArrays>();
+  const arraysFor = (g: number): GroupArrays => {
+    let a = groups.get(g);
+    if (!a) {
+      a = newGroup();
+      groups.set(g, a);
+    }
+    return a;
+  };
 
   const dims = [nx, ny, nz];
   const pos = [0, 0, 0];
@@ -56,34 +85,52 @@ export function meshVolume(
     const ed = [0, 0, 0];
     ed[d] = 1;
 
-    const present = new Int8Array(U * V); // 0 none, +1 face toward +d, -1 toward -d
+    const present = new Int8Array(U * V);
     const rgbMask = new Int32Array(U * V);
-    const aoMask = new Int32Array(U * V); // packed 4×2-bit corner AO
+    const aoMask = new Int32Array(U * V);
+    const grpMask = new Int32Array(U * V);
 
     for (let slice = -1; slice < D; slice++) {
-      // Build the mask for the boundary plane at d = slice+1.
       let i = 0;
       for (let vv = 0; vv < V; vv++) {
         for (let uu = 0; uu < U; uu++, i++) {
           pos[u] = uu;
           pos[v] = vv;
+          // Query occupancy at the boundary planes too (solid() handles out-of-
+          // volume: chunk mesher returns the neighbour chunk's voxel; model mesher
+          // and tests return false). Without this, chunk borders are never culled
+          // against neighbours and every chunk meshes as a closed shell with
+          // doubled hidden faces + a hidden world floor.
           pos[d] = slice;
-          const a = slice >= 0 && solid(pos[0]!, pos[1]!, pos[2]!);
+          const a = solid(pos[0]!, pos[1]!, pos[2]!);
           pos[d] = slice + 1;
-          const b = slice + 1 < D && solid(pos[0]!, pos[1]!, pos[2]!);
+          const b = solid(pos[0]!, pos[1]!, pos[2]!);
           if (a === b) {
             present[i] = 0;
             continue;
           }
+          // Emit only faces OWNED by an in-volume voxel. A face at a boundary whose
+          // owner is the neighbour chunk belongs to that chunk — emitting it here
+          // would double it and read color()/AO out of range (the magenta default).
           if (a) {
-            pos[d] = slice; // owning voxel on −d side, face toward +d
+            if (slice < 0) {
+              present[i] = 0;
+              continue;
+            }
+            pos[d] = slice;
             present[i] = 1;
             rgbMask[i] = color(pos[0]!, pos[1]!, pos[2]!);
+            grpMask[i] = group(pos[0]!, pos[1]!, pos[2]!);
             aoMask[i] = faceAO(pos, u, v, d, 1, solid);
           } else {
-            pos[d] = slice + 1; // owning voxel on +d side, face toward −d
+            if (slice + 1 >= D) {
+              present[i] = 0;
+              continue;
+            }
+            pos[d] = slice + 1;
             present[i] = -1;
             rgbMask[i] = color(pos[0]!, pos[1]!, pos[2]!);
+            grpMask[i] = group(pos[0]!, pos[1]!, pos[2]!);
             aoMask[i] = faceAO(pos, u, v, d, -1, solid);
           }
         }
@@ -91,7 +138,6 @@ export function meshVolume(
 
       const plane = slice + 1;
 
-      // 2D greedy merge of the mask.
       for (let j = 0; j < V; j++) {
         for (let k = 0; k < U;) {
           const idx = j * U + k;
@@ -102,13 +148,15 @@ export function meshVolume(
           }
           const rgb = rgbMask[idx]!;
           const ao = aoMask[idx]!;
+          const grp = grpMask[idx]!;
 
           let w = 1;
           while (
             k + w < U &&
             present[j * U + k + w] === p &&
             rgbMask[j * U + k + w] === rgb &&
-            aoMask[j * U + k + w] === ao
+            aoMask[j * U + k + w] === ao &&
+            grpMask[j * U + k + w] === grp
           ) {
             w++;
           }
@@ -117,12 +165,19 @@ export function meshVolume(
           heightLoop: while (j + h < V) {
             for (let kk = 0; kk < w; kk++) {
               const id = (j + h) * U + k + kk;
-              if (present[id] !== p || rgbMask[id] !== rgb || aoMask[id] !== ao) break heightLoop;
+              if (
+                present[id] !== p ||
+                rgbMask[id] !== rgb ||
+                aoMask[id] !== ao ||
+                grpMask[id] !== grp
+              ) {
+                break heightLoop;
+              }
             }
             h++;
           }
 
-          emitQuad(positions, normals, colors, indices, plane, k, j, w, h, eu, ev, ed, p, rgb, ao);
+          emitQuad(arraysFor(grp), plane, k, j, w, h, eu, ev, ed, p, rgb, ao);
 
           for (let hh = 0; hh < h; hh++) {
             for (let ww = 0; ww < w; ww++) {
@@ -135,12 +190,30 @@ export function meshVolume(
     }
   }
 
-  return {
-    positions: new Float32Array(positions),
-    normals: new Float32Array(normals),
-    colors: new Float32Array(colors),
-    indices: new Uint32Array(indices),
-  };
+  const out = new Map<number, MeshBuffers>();
+  for (const [g, arrays] of groups) {
+    if (arrays.indices.length > 0) out.set(g, freezeGroup(arrays));
+  }
+  return out;
+}
+
+/** Single-group mesh (opaque). Convenience wrapper over meshVolumeGrouped. */
+export function meshVolume(
+  nx: number,
+  ny: number,
+  nz: number,
+  solid: SolidFn,
+  color: ColorFn,
+): MeshBuffers {
+  const groups = meshVolumeGrouped(nx, ny, nz, solid, color, () => 0);
+  return (
+    groups.get(0) ?? {
+      positions: new Float32Array(0),
+      normals: new Float32Array(0),
+      colors: new Float32Array(0),
+      indices: new Uint32Array(0),
+    }
+  );
 }
 
 /** Compute packed AO (4 corners) for the face of `voxel` toward sign·d. */
@@ -153,14 +226,13 @@ function faceAO(
   solid: SolidFn,
 ): number {
   const n = [voxel[0]!, voxel[1]!, voxel[2]!];
-  n[d] = n[d]! + sign; // step to the outside plane
+  n[d] = n[d]! + sign;
   const at = (su: number, sv: number): boolean => {
     const x = [n[0]!, n[1]!, n[2]!];
     x[u]! += su;
     x[v]! += sv;
     return solid(x[0]!, x[1]!, x[2]!);
   };
-  // Corner order: c00(−u,−v), c10(+u,−v), c11(+u,+v), c01(−u,+v)
   const s_nu = at(-1, 0);
   const s_pu = at(1, 0);
   const s_nv = at(0, -1);
@@ -173,10 +245,7 @@ function faceAO(
 }
 
 function emitQuad(
-  positions: number[],
-  normals: number[],
-  colors: number[],
-  indices: number[],
+  out: GroupArrays,
   plane: number,
   k: number,
   j: number,
@@ -189,7 +258,6 @@ function emitQuad(
   rgb: number,
   aoPacked: number,
 ): void {
-  // Base corner in 3D.
   const base = [ed[0]! * plane, ed[1]! * plane, ed[2]! * plane];
   base[0]! += eu[0]! * k + ev[0]! * j;
   base[1]! += eu[1]! * k + ev[1]! * j;
@@ -210,18 +278,17 @@ function emitQuad(
   const g = ((rgb >> 8) & 0xff) / 255;
   const b = (rgb & 0xff) / 255;
 
-  const startVert = positions.length / 3;
+  const startVert = out.positions.length / 3;
   const corners = [c00, c10, c11, c01];
   const cornerAO = [a00, a10, a11, a01];
   for (let ci = 0; ci < 4; ci++) {
     const c = corners[ci]!;
     const ao = cornerAO[ci]!;
-    positions.push(c[0]!, c[1]!, c[2]!);
-    normals.push(nrm[0]!, nrm[1]!, nrm[2]!);
-    colors.push(r * ao, g * ao, b * ao);
+    out.positions.push(c[0]!, c[1]!, c[2]!);
+    out.normals.push(nrm[0]!, nrm[1]!, nrm[2]!);
+    out.colors.push(r * ao, g * ao, b * ao);
   }
 
-  // Determine winding so the geometric normal matches the desired outward normal.
   const e1 = [c10[0]! - c00[0]!, c10[1]! - c00[1]!, c10[2]! - c00[2]!];
   const e2 = [c11[0]! - c00[0]!, c11[1]! - c00[1]!, c11[2]! - c00[2]!];
   const cross = [
@@ -230,8 +297,6 @@ function emitQuad(
     e1[0]! * e2[1]! - e1[1]! * e2[0]!,
   ];
   const dot = cross[0]! * nrm[0]! + cross[1]! * nrm[1]! + cross[2]! * nrm[2]!;
-
-  // Flip the diagonal to reduce AO interpolation artifacts.
   const flipDiag = a00 + a11 > a10 + a01;
 
   let tris: number[];
@@ -240,5 +305,5 @@ function emitQuad(
   } else {
     tris = dot >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
   }
-  for (const t of tris) indices.push(startVert + t);
+  for (const t of tris) out.indices.push(startVert + t);
 }

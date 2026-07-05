@@ -14,6 +14,7 @@ import {
   type VoxelSampler,
 } from '@pathlands/shared';
 import { ChunkManager } from '../engine/chunkManager.js';
+import { PropRenderer } from '../engine/propRenderer.js';
 import { Environment } from '../engine/environment.js';
 import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
@@ -21,8 +22,9 @@ import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { useStore, type GameCommands } from './store.js';
 
+// Brookhollow plaza, just north of the fountain (which sits at 1536,1536).
 const SPAWN_X = 1536.5;
-const SPAWN_Z = 1536.5;
+const SPAWN_Z = 1524.5;
 const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 
@@ -33,6 +35,7 @@ export class Game {
   private readonly world = new World(WORLD_SEED);
   private readonly sampler: VoxelSampler;
   private readonly chunks: ChunkManager;
+  private readonly propRenderer: PropRenderer;
   private readonly env: Environment;
   private readonly camera: CameraRig;
   private readonly input: Input;
@@ -66,7 +69,8 @@ export class Game {
 
     const viewDist = useStore.getState().viewDistance;
     this.camera = new CameraRig(canvas.clientWidth / canvas.clientHeight);
-    this.chunks = new ChunkManager(this.scene, WORLD_SEED, viewDist);
+    this.propRenderer = new PropRenderer(this.scene);
+    this.chunks = new ChunkManager(this.scene, WORLD_SEED, viewDist, this.propRenderer);
     this.env = new Environment(this.scene, viewDist);
 
     this.input = new Input(canvas);
@@ -192,6 +196,7 @@ export class Game {
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
     this.env.update(dt, this.camera.camera.position);
     this.chunks.update(rs.x, rs.z);
+    this.propRenderer.update();
 
     this.renderer.render(this.scene, this.camera.camera);
 
@@ -247,6 +252,7 @@ export class Game {
     window.removeEventListener('resize', this.onResize);
     this.input.dispose();
     this.chunks.dispose();
+    this.propRenderer.dispose();
     this.env.dispose();
     this.playerModel.dispose();
     this.renderer.dispose();
