@@ -1,0 +1,36 @@
+{
+  "name": "pathlands",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pathlands — a 3D voxel browser MMORPG (Cube World look, WoW-Classic-style design)",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @pathlands/client dev",
+    "build": "pnpm --filter @pathlands/client build",
+    "preview": "pnpm --filter @pathlands/client preview",
+    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . && prettier --check \"**/*.{ts,tsx,json,md}\"",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.19.1",
+    "vitest": "^2.1.8"
+  }
+}

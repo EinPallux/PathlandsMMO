@@ -1,0 +1,14 @@
+{
+  "name": "@pathlands/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pathlands deterministic simulation core — pure TypeScript, no DOM/Three.js/React/Node. Imported unchanged by the client and (Phase 6) the server.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

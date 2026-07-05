@@ -13,6 +13,7 @@ Reference: the existing PNGs (Cube-World-like voxel figurines). Distilled rules:
 - **Nothing photoreal, nothing gritty.** Blood = none; damage reads via flashes and numbers.
 
 ### Named palette (constants in `shared/models/palette.ts`; extend there, document here)
+
 Grass `#6FA84E` (vale) / `#4E7A3A` (weald) · dirt `#8A6A48` · stone `#8D8D93` / dark `#5E5E66` · sand `#E4D29A` · snow `#EFF3F6` · water `#3D7DC4` · wood oak `#7A5636` / dark `#4F3A26` · roof brick `#A6503E` · plaster `#E8DFC8` · wheat `#D9B54A` · blight `#7CCB2E` (emissive tier) · crystal `#7FD6E8`/`#9A7FE8` · flame `#F2A03D` · leather `#6E4F33` · iron `#B9BEC6` · gold trim `#C9A23F`. Skin tones ×4, hair ×6 defined alongside.
 
 ## 2. The Voxel Model Format (code-authored)
@@ -48,24 +49,24 @@ defineModel({
 
 - **Humanoid rig (shared by all classes + NPCs):** parts `head, torso, armL, armR, legL, legR` (+`weaponMain, weaponOff` sockets on hands). Quadruped rig: `head, torso, tail, legFL, legFR, legBL, legBR`. Special rigs (treant, grub, wisp…) defined per model but reuse the same part-keyframe system.
 - **Animation = part keyframes** (per-part position/rotation tracks, linear/ease interpolation), defined in code next to the model. Standard clip set every combat-capable model must have: `idle, walk, run, attack, hit, death` (+`cast` for casters, `jump/swim/mount` for players). Cube-World-style bounce: keep it snappy, 0.3–0.6 s clips, exaggerated key poses.
-- Sim owns the animation *state*; client tweens the clip. Never gameplay-gate on visual animation timing.
+- Sim owns the animation _state_; client tweens the clip. Never gameplay-gate on visual animation timing.
 
 ## 5. The 2D Renders — Usage Map (`public/assets/`, filenames verbatim)
 
-| Folder | Files | 3D reconstruction | 2D UI usage |
-|---|---|---|---|
-| `classes/` | `Warrior Class.png`, `Ranger Class.png`, `Priest Class.png` | player models (Phase 1) | character creation/select portraits, class tooltips |
-| `enemies/` | `Briar Goblin.png`, `Mossfang Wolf.png`, `Thornback Boar.png`, `Venomcap Spriggan.png`, `Hollowroot Treant.png`, `Dire Stag.png`, `Cave Gnoll.png`, `Stonejaw Grub.png`, `Crystalback Lizard.png`, `Ironhide Troll.png` | enemy models (Phase 3) | bestiary/journal pages, boss-intro banners, loading screens |
-| `buildings/` | `Medival House 1..4.png`, `Big Medival House 1..2.png`, `Medival Inn.png`, `Medival Church.png`, `Medival Stable.png`, `Medival Bathhouse.png`, `Medival Worker Hut.png`, `Medival Water Fountain.png` | settlement building kit (Phase 2) | loading screens, map POI vignettes |
-| `mounts/` | `Wolf Mount.png` | mount model (Phase 4) | mount journal/vendor UI |
+| Folder       | Files                                                                                                                                                                                                                   | 3D reconstruction                 | 2D UI usage                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------- |
+| `classes/`   | `Warrior Class.png`, `Ranger Class.png`, `Priest Class.png`                                                                                                                                                             | player models (Phase 1)           | character creation/select portraits, class tooltips         |
+| `enemies/`   | `Briar Goblin.png`, `Mossfang Wolf.png`, `Thornback Boar.png`, `Venomcap Spriggan.png`, `Hollowroot Treant.png`, `Dire Stag.png`, `Cave Gnoll.png`, `Stonejaw Grub.png`, `Crystalback Lizard.png`, `Ironhide Troll.png` | enemy models (Phase 3)            | bestiary/journal pages, boss-intro banners, loading screens |
+| `buildings/` | `Medival House 1..4.png`, `Big Medival House 1..2.png`, `Medival Inn.png`, `Medival Church.png`, `Medival Stable.png`, `Medival Bathhouse.png`, `Medival Worker Hut.png`, `Medival Water Fountain.png`                  | settlement building kit (Phase 2) | loading screens, map POI vignettes                          |
+| `mounts/`    | `Wolf Mount.png`                                                                                                                                                                                                        | mount model (Phase 4)             | mount journal/vendor UI                                     |
 
 Access via a typed manifest module (`client/src/platform/assetManifest.ts`) so the misspelled filenames ("Medival") live in exactly one place. A **Mage portrait** must be produced in Phase 1 in the same framing/style (voxel-render look, white background); until AI-image parity is possible, compose it as a styled render of the in-game Mage model on the white card layout — visual consistency with the other three cards is the acceptance bar.
 
 ## 6. New-Asset Wishlist (authored in code, per phase)
 
-- **Phase 1:** 4 class models; terrain palettes.
-- **Phase 2 (bulk):** trees ×~8 (oak/birch/mosswood/pine/crystal-pine/palm/dead/blighted), rocks ×4, bushes/flowers/crops ×~10, fences/signposts/lanterns/bridge/well/market stall/grave/ruin kit, ore-vein + herb-node + fishing-spot shells ×4 tiers, villager m/f ×3 outfits, guard, vendor stalls, critters (deer/rabbit/bird/fish) + Dire Stag.
-- **Phase 3:** ~14 new enemy rigs + recolors (list in WORLD.md §5), named-rare dressings, weapon models per class ×4 visual tiers.
+- **Phase 1:** ✅ 4 class models (Warrior/Ranger/Priest reconstructed, Mage authored) via the shared parametric humanoid builder + weapon/hat/hood helpers; terrain palettes + `terrainColor(voxel, biome)`; `VoxelSet` authoring helpers and the runtime greedy model mesher (self-AO + shade jitter). Mage 2D portrait is rendered live from the in-game model on the class-select card (no source PNG).
+- **Phase 2 (bulk):** ✅ trees (oak/birch/mosswood/pine/crystal-pine/palm/dead/blighted), rocks, bushes/flowers/crops, fences/signposts/lanterns/bridge/well/market stall/grave/ruin kit, ore-vein + herb-node + node shells, villager m/f ×3 outfits, guard, vendor, critters (deer/rabbit/bird/fish) + Dire Stag, **all 12 building models** (kit in `shared/models/structures/`), and themed Hollow-entrance portals (goblin/gnoll/crystal/iron/crypt). Emissive keys (windows/lanterns/blight/crystal) glow at night via the opaque+emissive mesher split.
+- **Phase 3:** ✅ enemy models (`shared/models/creatures/enemies.ts`) — the 10 asset-PNG reconstructions + 8 new archetypes (blightrat, road bandit, bandit archer, marsh slime, cave bat, bog drake, drowned dead, crypt skeleton/sentinel) on a compact quadruped rig, the shared humanoid rig, and bespoke rigs (spriggan/treant/grub/slime/bat); the 5 Hollow bosses reuse their base model at Boss scale. `buildEnemyModel(modelId)` + cache. _(Named-rare dressings and per-class weapon visual tiers land with content in Phase 4/5.)_
 - **Phase 4:** wolf mount + 3 skins, gathering tools, potion/ingredient icons (2D, drawn as mini voxel renders), quest-item props.
 - **Phase 5:** VFX sprites, UI kit final pass.
 
@@ -73,4 +74,4 @@ Keep this list updated as models land (check off in the phase's ROADMAP items; n
 
 ## 7. UI Art Direction
 
-Wood-and-parchment panels with iron corner rivets (drawn as crisp 2D, *not* skeuomorphic photos — flat colors from §1 palette, 2 px dark outlines, chunky 8 px-radius corners). Rarity colors: Common white `#F2F2F2`, Uncommon green `#5FBF4E`, Rare blue `#4EA3E8` (brighter than world-water blue for text readability), Epic purple `#A66FE8`. Font: one warm rounded sans for UI + one display serif for titles (bundled locally, open-licensed). Icons: mini voxel-render style, 64 px grid. Damage floaters: white physical, class-colored magic, ×1.5-size gold crits. Dark-parchment tooltip with item-level right-aligned — classic MMO grammar throughout.
+Wood-and-parchment panels with iron corner rivets (drawn as crisp 2D, _not_ skeuomorphic photos — flat colors from §1 palette, 2 px dark outlines, chunky 8 px-radius corners). Rarity colors: Common white `#F2F2F2`, Uncommon green `#5FBF4E`, Rare blue `#4EA3E8` (brighter than world-water blue for text readability), Epic purple `#A66FE8`. Font: one warm rounded sans for UI + one display serif for titles (bundled locally, open-licensed). Icons: mini voxel-render style, 64 px grid. Damage floaters: white physical, class-colored magic, ×1.5-size gold crits. Dark-parchment tooltip with item-level right-aligned — classic MMO grammar throughout.

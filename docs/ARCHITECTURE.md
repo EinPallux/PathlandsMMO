@@ -4,15 +4,15 @@ Engine and infrastructure spec. The governing constraint: **Phases 1–5 ship a 
 
 ## 1. Stack & Rationale
 
-| Layer | Choice | Why |
-|---|---|---|
-| Language | TypeScript, `strict` everywhere | One language across client/shared/server; the shared sim core is the whole plan |
-| 3D | **Three.js** (no game framework) | Mature, performant enough for chunked voxel rendering with our own meshing; full control |
-| Client app | Vite + React (DOM overlay UI) + Zustand | Vite for DX/static builds (Vercel); React only for UI panels — the 3D scene is plain Three.js; Zustand bridges sim→UI cheaply |
-| Sim core | `shared/` pure TS package | No DOM/Three/Node imports — enforced by ESLint import rules + a dedicated tsconfig |
-| Server (P6) | Node.js 22, `ws` (upgrade to `uWebSockets.js` only if load tests demand), PostgreSQL, Drizzle ORM | Boring, debuggable, fits a single VPS; imports `shared/` unchanged |
-| Persistence | IndexedDB (P1–5, via `idb-keyval`) → PostgreSQL (P6) | Same versioned schema both sides |
-| Deploy | Vercel static (client) · Docker Compose on VPS (server+db+nginx) | Matches the phase plan |
+| Layer       | Choice                                                                                            | Why                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Language    | TypeScript, `strict` everywhere                                                                   | One language across client/shared/server; the shared sim core is the whole plan                                               |
+| 3D          | **Three.js** (no game framework)                                                                  | Mature, performant enough for chunked voxel rendering with our own meshing; full control                                      |
+| Client app  | Vite + React (DOM overlay UI) + Zustand                                                           | Vite for DX/static builds (Vercel); React only for UI panels — the 3D scene is plain Three.js; Zustand bridges sim→UI cheaply |
+| Sim core    | `shared/` pure TS package                                                                         | No DOM/Three/Node imports — enforced by ESLint import rules + a dedicated tsconfig                                            |
+| Server (P6) | Node.js 22, `ws` (upgrade to `uWebSockets.js` only if load tests demand), PostgreSQL, Drizzle ORM | Boring, debuggable, fits a single VPS; imports `shared/` unchanged                                                            |
+| Persistence | IndexedDB (P1–5, via `idb-keyval`) → PostgreSQL (P6)                                              | Same versioned schema both sides                                                                                              |
+| Deploy      | Vercel static (client) · Docker Compose on VPS (server+db+nginx)                                  | Matches the phase plan                                                                                                        |
 
 Explicit **no**s: no .vox/GLTF asset files (models are code, see ART_GUIDE), no physics engine (voxel AABB collision is bespoke and simple), no ECS framework (plain typed structures + systems functions; an ECS library is complexity we don't need at this entity count), no Colyseus (we want protocol control and `shared/` reuse).
 
@@ -36,7 +36,7 @@ pathlands/
 └─ docs/
 ```
 
-Rule of thumb: if deleting `client/` would lose game *rules*, the code is in the wrong package.
+Rule of thumb: if deleting `client/` would lose game _rules_, the code is in the wrong package.
 
 ## 3. Simulation Core (`shared/sim`)
 
@@ -44,7 +44,13 @@ Rule of thumb: if deleting `client/` would lose game *rules*, the code is in the
 - **State:** plain serializable objects in typed stores (entities, players, spawners, quest states, node timers). Snapshot = `structuredClone`-safe by construction — this is also the save format and (P6) the network snapshot source.
 - **Intents:** the only way anything changes. `{type: 'Move', dir…}`, `{type: 'CastSkill', skillId, targetId}`, `{type: 'LootItem'…}`, `{type: 'AcceptQuest'…}` — defined in `shared/proto`. Client input produces intents; sim validates (range, resource, cooldown, ownership) and applies. P6: intents serialize to the server verbatim; validation code is already the authority.
 - **Seeded RNG:** xoshiro/PCG streams keyed by domain (`rng.loot`, `rng.ai`, `rng.crit`…) forked per encounter, so replays/tests are deterministic and server/client can't diverge on shared rolls.
-- **Systems order per tick:** inputs/intents → AI → movement+collision → combat resolution → DoT/HoT/auras → spawners/respawns → quest/deed triggers → economy/professions → events out. Events (damage numbers, level-ups, loot toasts) flow to UI via a ring buffer; UI never reaches into sim state to mutate.
+- **Systems order per tick:** inputs/intents → AI → boss-encounter scripts → combat resolution → DoT/HoT/auras → spawners/respawns → quest/deed triggers → economy/professions → events out. Events (damage numbers, level-ups, loot toasts, `bossPhase` barks) flow to UI via a ring buffer; UI never reaches into sim state to mutate.
+- **Content is data (`shared/data`):** enemies/skills/items/loot, the **world spawn table** (`spawns.ts` — one region list for zones + Hollow packs + bosses, referencing the settlement/Hollow coords), **boss encounter scripts** (`EnemyDef.boss` — HP-threshold beats interpreted by `stepBossMechanics`), **vendor** stock/pricing (`vendors.ts`), and **quests** (`data/quests` — typed `QuestDef`s + quest-giver placement). The client driver activates spawn regions by player proximity (culling distant enemies); in P6 the server owns spawning and boss scripts unchanged.
+- **Quests (`shared/quests`):** a pure state machine over the quest definitions — `acceptQuest` → `applyQuestEvent` (advances objectives from kills/exploration/talks/world-object use) → `turnInQuest` (returns the reward to grant). The client's `QuestDirector` feeds it events and grants rewards; P6 moves the log server-side unchanged.
+- **Professions (`shared/professions`):** a pure skill/gather engine (difficulty curve, `gatherNode`, `rollFish`) over material/tier data. Gather nodes are **not** stored state — they are re-derived from the deterministic `world.scatterChunk`, so the client's `GatherDirector` tracks depletion/respawn locally and banks materials + skills into the save.
+- **Meta (`shared/meta`):** a pure Deed/perk engine over `shared/data/deeds.ts` + `perks.ts`. `applyDeedProgress(state, metric, amount?)` advances every Deed keyed on that metric (tiered Deeds share one counter), clamps to threshold, and returns award notices once complete; `buyPerk`/`perkMagnitude` handle the Path-Point economy. The client's `MetaDirector` subscribes to the same kill/boss/Waystone/quest/craft/gather events the other directors emit, awards Path Points, and pushes perk magnitudes (bag cap, travel-fee cut) into the `CombatDirector`. Kept account-scoping out for now: meta rides on the character save until Phase-6 accounts.
+- **Mounts:** speed is a simulation input, not a client hack — `MoveIntent.speedMult` carries a **clamped** ground-speed multiplier into `stepPlayerMovement` (mount + Trailblazer's out-of-combat perk), so the same intent→sim path a Phase-6 server validates governs mount speed. Mount data/models are `shared/data/mounts.ts` + `shared/models/creatures/mounts.ts`. The client `MountController` owns owned-mount state and the rules (level 20, outdoor-only, dismount-on-combat), renders the ridden Wolf, and each tick computes the multiplier the game feeds the movement intent. Deed completion can unlock a skin (`MetaDirector.onDeedComplete` → `MountController.grantSkinForDeed`).
+- **Save versioning:** `SAVE_VERSION` 7 — v2→v3 added the quest log; v3→v4 added profession skills + the material stash; v4→v5 added the crafted-consumables stash; v5→v6 added meta progression (`deeds`, `pathPoints`, `perks`); v6→v7 added mounts (`mounts`, `activeMount`). `migrate()` walks any prior shape forward.
 
 ## 4. World Generation (`shared/worldgen`)
 
@@ -96,7 +102,7 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 ## 10. Risk Register (watch these)
 
 1. **Meshing/GC pressure** on chunk churn → transferable buffers, pooled geometry, profile early (Phase 1 acceptance gate).
-2. **Content pipeline throughput** (110 quests, ~40 models) → data-driven schemas + authoring helpers *first*, content second (ordering inside Phases 2–4 reflects this).
+2. **Content pipeline throughput** (110 quests, ~40 models) → data-driven schemas + authoring helpers _first_, content second (ordering inside Phases 2–4 reflects this).
 3. **Prediction edge cases in P6** (swim/fall/slope) → movement rules pure & tick-based from Phase 1; record/replay harness for divergence hunting.
 4. **Safari/WebGL quirks** → compatibility pass is a Phase 5 deliverable, not a launch surprise.
 5. **Scope creep** → ROADMAP backlog section is the only door; GDD scope constants are load-bearing.

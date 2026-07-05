@@ -1,6 +1,6 @@
 # Pathlands
 
-**Pathlands** is a 3D voxel browser MMORPG in the visual spirit of *Cube World* and the design spirit of old-school MMORPGs (think World of Warcraft Classic — fewer systems, deeper world). It runs entirely in the browser, built on **Three.js + TypeScript**, and is developed **solo-first**: every phase up to the last produces a fully playable single-player game deployable on **Vercel**. The final phase turns it into a true MMO with a server-authoritative Node.js backend hosted on a **Linux VPS**.
+**Pathlands** is a 3D voxel browser MMORPG in the visual spirit of _Cube World_ and the design spirit of old-school MMORPGs (think World of Warcraft Classic — fewer systems, deeper world). It runs entirely in the browser, built on **Three.js + TypeScript**, and is developed **solo-first**: every phase up to the last produces a fully playable single-player game deployable on **Vercel**. The final phase turns it into a true MMO with a server-authoritative Node.js backend hosted on a **Linux VPS**.
 
 > One continent. One shared world. No instances. Follow the Old Paths.
 
@@ -18,16 +18,16 @@
 
 ## Documentation Map
 
-| Document | Purpose |
-|---|---|
-| [CLAUDE.md](CLAUDE.md) | Instructions & conventions for AI coding sessions (read first) |
-| [AGENTS.md](AGENTS.md) | Entry point for generic AI agent tooling |
-| [ROADMAP.md](ROADMAP.md) | The 6 development phases, deliverables, acceptance criteria, live status |
-| [CHANGELOG.md](CHANGELOG.md) | What changed, per session/phase |
-| [docs/GAME_DESIGN.md](docs/GAME_DESIGN.md) | Full game design document: systems, classes, combat, quests, professions, economy |
-| [docs/WORLD.md](docs/WORLD.md) | World atlas: lore, zones, towns, dungeons, enemy placement |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture: engine, worldgen, save system, netcode, deployment |
-| [docs/ART_GUIDE.md](docs/ART_GUIDE.md) | Voxel style guide, asset pipeline, asset inventory & wishlist |
+| Document                                     | Purpose                                                                           |
+| -------------------------------------------- | --------------------------------------------------------------------------------- |
+| [CLAUDE.md](CLAUDE.md)                       | Instructions & conventions for AI coding sessions (read first)                    |
+| [AGENTS.md](AGENTS.md)                       | Entry point for generic AI agent tooling                                          |
+| [ROADMAP.md](ROADMAP.md)                     | The 6 development phases, deliverables, acceptance criteria, live status          |
+| [CHANGELOG.md](CHANGELOG.md)                 | What changed, per session/phase                                                   |
+| [docs/GAME_DESIGN.md](docs/GAME_DESIGN.md)   | Full game design document: systems, classes, combat, quests, professions, economy |
+| [docs/WORLD.md](docs/WORLD.md)               | World atlas: lore, zones, towns, dungeons, enemy placement                        |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture: engine, worldgen, save system, netcode, deployment        |
+| [docs/ART_GUIDE.md](docs/ART_GUIDE.md)       | Voxel style guide, asset pipeline, asset inventory & wishlist                     |
 
 ## Tech Stack (summary)
 
