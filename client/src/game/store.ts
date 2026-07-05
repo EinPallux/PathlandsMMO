@@ -5,6 +5,19 @@
 import { create } from 'zustand';
 import { CharacterClass } from '@pathlands/shared';
 
+export interface Nameplate {
+  id: string;
+  name: string;
+  sx: number;
+  sy: number;
+}
+
+export interface DialogueState {
+  name: string;
+  lines: string[];
+  index: number;
+}
+
 export interface GameCommands {
   teleport(x: number, z: number): void;
   setClass(cls: CharacterClass): void;
@@ -39,12 +52,19 @@ export interface UiState {
 
   commands: GameCommands | null;
 
+  nameplates: Nameplate[];
+  dialogue: DialogueState | null;
+
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   toggleMap: () => void;
   toggleDev: () => void;
   setSelectedClass: (cls: CharacterClass) => void;
   setCommands: (c: GameCommands) => void;
+  setNameplates: (n: Nameplate[]) => void;
+  openDialogue: (name: string, lines: string[]) => void;
+  advanceDialogue: () => void;
+  closeDialogue: () => void;
 }
 
 export const useStore = create<UiState>((set) => ({
@@ -72,10 +92,23 @@ export const useStore = create<UiState>((set) => ({
 
   commands: null,
 
+  nameplates: [],
+  dialogue: null,
+
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
   setSelectedClass: (selectedClass) => set({ selectedClass }),
   setCommands: (commands) => set({ commands }),
+  setNameplates: (nameplates) => set({ nameplates }),
+  openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),
+  advanceDialogue: () =>
+    set((st) => {
+      if (!st.dialogue) return {};
+      const next = st.dialogue.index + 1;
+      if (next >= st.dialogue.lines.length) return { dialogue: null };
+      return { dialogue: { ...st.dialogue, index: next } };
+    }),
+  closeDialogue: () => set({ dialogue: null }),
 }));

@@ -15,6 +15,7 @@ import {
 } from '@pathlands/shared';
 import { ChunkManager } from '../engine/chunkManager.js';
 import { PropRenderer } from '../engine/propRenderer.js';
+import { EntityManager } from '../engine/entityManager.js';
 import { Environment } from '../engine/environment.js';
 import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
@@ -36,6 +37,7 @@ export class Game {
   private readonly sampler: VoxelSampler;
   private readonly chunks: ChunkManager;
   private readonly propRenderer: PropRenderer;
+  private readonly entities: EntityManager;
   private readonly env: Environment;
   private readonly camera: CameraRig;
   private readonly input: Input;
@@ -71,6 +73,7 @@ export class Game {
     this.camera = new CameraRig(canvas.clientWidth / canvas.clientHeight);
     this.propRenderer = new PropRenderer(this.scene);
     this.chunks = new ChunkManager(this.scene, WORLD_SEED, viewDist, this.propRenderer);
+    this.entities = new EntityManager(this.scene, this.world);
     this.env = new Environment(this.scene, viewDist);
 
     this.input = new Input(canvas);
@@ -148,6 +151,21 @@ export class Game {
     if (this.input.wasTapped('KeyM')) useStore.getState().toggleMap();
     if (this.input.wasTapped('Backquote')) useStore.getState().toggleDev();
 
+    // Talk to nearby NPCs with E (advances dialogue if already open).
+    if (this.input.wasTapped('KeyE')) {
+      const store = useStore.getState();
+      if (store.dialogue) {
+        store.advanceDialogue();
+      } else {
+        const npc = this.entities.interactNearest(
+          this.controller.physics.x,
+          this.controller.physics.z,
+        );
+        if (npc) store.openDialogue(npc.name, npc.dialogue);
+      }
+    }
+    if (this.input.wasTapped('Escape')) useStore.getState().closeDialogue();
+
     if (this.camera.mode === 'freeFly') {
       const sp = FREE_FLY_SPEED * dt * (this.input.isDown('ShiftLeft') ? 3 : 1);
       let f = 0;
@@ -197,6 +215,15 @@ export class Game {
     this.env.update(dt, this.camera.camera.position);
     this.chunks.update(rs.x, rs.z);
     this.propRenderer.update();
+    this.entities.update(
+      dt,
+      rs.x,
+      rs.z,
+      this.camera.camera,
+      this.canvas.clientWidth,
+      this.canvas.clientHeight,
+    );
+    useStore.getState().setNameplates(this.entities.nameplates);
 
     this.renderer.render(this.scene, this.camera.camera);
 
@@ -253,6 +280,7 @@ export class Game {
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();
+    this.entities.dispose();
     this.env.dispose();
     this.playerModel.dispose();
     this.renderer.dispose();

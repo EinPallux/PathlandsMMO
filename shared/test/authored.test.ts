@@ -89,6 +89,26 @@ describe('authored layer', () => {
     expect(mismatches).toBe(0);
   });
 
+  it('spawns deterministic NPCs at every settlement', () => {
+    const a = w.authored.npcSpawns();
+    const b = new World(WORLD_SEED).authored.npcSpawns();
+    expect(a.map((n) => `${n.id}:${n.name}:${n.x},${n.z}`)).toEqual(
+      b.map((n) => `${n.id}:${n.name}:${n.x},${n.z}`),
+    );
+    for (const s of SETTLEMENTS) {
+      expect(a.filter((n) => n.id.startsWith(s.id)).length).toBeGreaterThan(0);
+    }
+    // Towns with an inn get a vendor.
+    expect(a.some((n) => n.kind === 'vendor')).toBe(true);
+    expect(a.some((n) => n.kind === 'guard')).toBe(true);
+  });
+
+  it('spawns wildlife deterministically', () => {
+    const a = w.wildlifeChunk(70, 48);
+    const b = new World(WORLD_SEED).wildlifeChunk(70, 48);
+    expect(a).toEqual(b);
+  });
+
   it('scatters props deterministically and avoids settlements', () => {
     const cx = 60;
     const cz = 55; // wilderness weald-ish

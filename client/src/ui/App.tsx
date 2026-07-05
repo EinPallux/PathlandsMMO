@@ -5,6 +5,8 @@ import { LoadingScreen } from './LoadingScreen.js';
 import { Hud } from './Hud.js';
 import { DevOverlay } from './DevOverlay.js';
 import { DebugMap } from './DebugMap.js';
+import { Nameplates } from './Nameplates.js';
+import { Dialogue } from './Dialogue.js';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -26,7 +28,9 @@ export function App(): JSX.Element {
     <div style={{ position: 'absolute', inset: 0 }}>
       <canvas id="game-canvas" ref={canvasRef} />
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        {ready && <Nameplates />}
         {ready && <Hud />}
+        {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}
       </div>

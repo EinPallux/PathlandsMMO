@@ -18,6 +18,15 @@ import { clamp, lerp, smoothstep } from '../core/math.js';
 import { Biome, BIOMES, BIOME_LIST, normX, normZ } from './biomes.js';
 import { AuthoredLayer } from './placement.js';
 import type { PropId } from '../models/props/props.js';
+import type { CreatureKind } from '../models/creatures/creatures.js';
+
+/** One ambient wildlife spawn point (client renders & wanders it). */
+export interface WildlifeSpawn {
+  kind: CreatureKind;
+  x: number;
+  y: number;
+  z: number;
+}
 
 /** One instanced decoration prop placed by the scatter (client renders it). */
 export interface PropInstance {
@@ -386,6 +395,36 @@ export class World {
           if (hashFloat2(wx, wz, salt(0x7a1)) < 0.01) {
             out.push(inst('treePalm', wx, y, wz, yaw, wx, wz, this.seed));
           }
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Deterministic ambient wildlife for a chunk (sparse). Deer/rabbits/birds in
+   * grassland, fish in shallow water, a rare Dire Stag in the Weald.
+   */
+  wildlifeChunk(cx: number, cz: number): WildlifeSpawn[] {
+    const out: WildlifeSpawn[] = [];
+    for (let lz = 2; lz < CHUNK_SIZE; lz += 5) {
+      const wz = cz * CHUNK_SIZE + lz;
+      for (let lx = 2; lx < CHUNK_SIZE; lx += 5) {
+        const wx = cx * CHUNK_SIZE + lx;
+        if (this.authored.isInSettlement(wx, wz)) continue;
+        const s = this.sampleColumn(wx, wz);
+        const r = hashFloat2(wx, wz, this.seed ^ 0xa11e);
+        if (s.surface === Voxel.Grass && s.height > SEA_LEVEL) {
+          if (r < 0.02) {
+            let kind: CreatureKind;
+            if (s.biome === Biome.Weald && r < 0.0008) kind = 'direStag';
+            else if (r < 0.008) kind = 'deer';
+            else if (r < 0.014) kind = 'rabbit';
+            else kind = 'bird';
+            out.push({ kind, x: wx + 0.5, y: s.height + 1, z: wz + 0.5 });
+          }
+        } else if (s.height <= SEA_LEVEL && s.height > SEA_LEVEL - 8 && r < 0.02) {
+          out.push({ kind: 'fish', x: wx + 0.5, y: SEA_LEVEL, z: wz + 0.5 });
         }
       }
     }

@@ -4,5 +4,7 @@ export * from './builder.js';
 export * from './rig.js';
 export * from './humanoid.js';
 export * from './characters/index.js';
+export * from './characters/npcs.js';
+export * from './creatures/index.js';
 export * from './structures/index.js';
 export * from './props/index.js';

@@ -12,7 +12,59 @@ import { makeRng } from '../core/rng.js';
 import { getBuilding, type BuildingId } from '../models/structures/buildings.js';
 import { getFixture } from '../models/structures/fixtures.js';
 import type { Building } from '../models/structures/kit.js';
+import type { NpcKind } from '../models/characters/npcs.js';
 import { SETTLEMENTS, ROADS, WILD_WAYSTONES, type Settlement } from './settlements.js';
+
+export interface NpcSpawn {
+  id: string;
+  kind: NpcKind;
+  name: string;
+  seed: number;
+  x: number;
+  y: number;
+  z: number;
+  dialogue: string[];
+}
+
+const NPC_NAMES = [
+  'Alda',
+  'Bram',
+  'Corry',
+  'Dunn',
+  'Elsie',
+  'Fenn',
+  'Gwyn',
+  'Harl',
+  'Isolde',
+  'Joss',
+  'Kellen',
+  'Lark',
+  'Mabel',
+  'Nolan',
+  'Orin',
+  'Petra',
+];
+
+const VILLAGER_LINES = [
+  'Fair day on the Old Road, Wayfarer.',
+  'They say a Waystone woke to the south. Strange times.',
+  'Mind the Weald after dark — the moss glows green now.',
+  'A Wayfarer! Not many can light the old stones these days.',
+];
+const GUARD_LINES = [
+  'Keep to the paths, traveller.',
+  'Trouble stirs beyond the walls. Stay sharp.',
+];
+const VENDOR_LINES = [
+  'Wares? Come back when the coin flows, friend.',
+  'Finest goods this side of Waymeet — soon as I restock.',
+];
+
+function linesFor(kind: NpcKind): string[] {
+  if (kind === 'guard') return GUARD_LINES;
+  if (kind === 'vendor') return VENDOR_LINES;
+  return VILLAGER_LINES;
+}
 
 const PLOT = 18; // grid spacing between building plots
 const ROAD_HALF = 3; // road half-width (metres)
@@ -283,6 +335,46 @@ export class AuthoredLayer {
 
     this.placed = out;
     this.voxelMap = map;
+  }
+
+  private npcCache: NpcSpawn[] | null = null;
+
+  /** Deterministic ambient NPCs standing around each settlement's plaza. */
+  npcSpawns(): NpcSpawn[] {
+    if (this.npcCache) return this.npcCache;
+    const out: NpcSpawn[] = [];
+    for (const s of SETTLEMENTS) {
+      const py = this.platformY(s) + 1;
+      const rng = makeRng(this.seed, 'npc', s.id);
+      const count = 2 + s.rings * 2;
+      for (let i = 0; i < count; i++) {
+        let kind: NpcKind = 'villager';
+        if (i === 0 && s.hasInn) kind = 'vendor';
+        else if (i === 1) kind = 'guard';
+        const a = rng.float(0, Math.PI * 2);
+        const r = rng.float(8, s.radius * 0.6);
+        const x = Math.round(s.cx + Math.cos(a) * r);
+        const z = Math.round(s.cz + Math.sin(a) * r);
+        const name =
+          kind === 'guard'
+            ? 'Guard'
+            : kind === 'vendor'
+              ? `${NPC_NAMES[rng.int(0, NPC_NAMES.length - 1)]} the Merchant`
+              : NPC_NAMES[rng.int(0, NPC_NAMES.length - 1)]!;
+        out.push({
+          id: `${s.id}-npc${i}`,
+          kind,
+          name,
+          seed: rng.int(0, 9999),
+          x,
+          y: py,
+          z,
+          dialogue: linesFor(kind),
+        });
+      }
+    }
+    this.npcCache = out;
+    return out;
   }
 
   /** Material of a stamped structure at (x,y,z), or Air. O(1). */
