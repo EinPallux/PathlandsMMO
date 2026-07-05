@@ -2,6 +2,31 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
+## [Phase 4 — Quests, Professions & the Long Game] — in progress
+
+### Part 1 — the quest system (2026-07-05)
+
+- **`shared/data/quests`** — a typed, data-driven quest schema (`QuestDef` with eight
+  objective kinds — kill/collect/gather/deliver/talk/explore/use/boss — rewards, prereqs,
+  chapters/chains) plus a starter arc: the Brookhollow tutorial (walk to the fountain,
+  cull boars, gather rat tails), main-story chapter 1 "Light the Way" (attune the
+  Waystone), and the Millstead chain leading to the Briarhollow boss. Named quest-giver
+  NPCs (`QUEST_GIVERS`) anchored to settlement plazas.
+- **`shared/quests`** — a pure, deterministic quest state machine: accept, advance
+  objectives from world events (`applyQuestEvent`), turn in (granting rewards), abandon,
+  pin; quest log cap 25, tracker cap 5; prereq + level + turned-in gating; cross-NPC
+  turn-ins. Runs client-side now and server-side unchanged in Phase 6.
+- **Save v3** — characters gained a quest log (active quests + objective progress +
+  turned-in ids); `migrate()` walks v2 saves forward with an empty log.
+- **`client/game/questDirector`** — owns the quest log, feeds the engine world events
+  (kills via the combat director, exploration each tick, talks, Waystone use), grants
+  rewards through the combat director, and publishes the quest UI slices + per-giver
+  indicators.
+- **`client/ui`** — quest-giver `!`/`?` nameplate indicators, a **QuestDialog** (accept /
+  turn-in / class-filtered reward choice), a **QuestLogPanel** (L: objectives, pin,
+  abandon), a **QuestTracker** HUD (pinned quests), and transient **QuestToasts**.
+- **Tests** — +19 (13 quest-engine + content-validity, save v2→v3 migration); 184 total.
+
 ## [Phase 3 — Combat, Classes & Character Growth] — 2026-07-05
 
 Pathlands becomes a game: create a character, fight through the world 1→30, loot

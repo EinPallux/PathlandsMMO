@@ -12,6 +12,8 @@ import {
   buildCreature,
   CHUNK_SIZE,
   SEA_LEVEL,
+  QUEST_GIVERS,
+  settlementById,
   type WanderState,
   type WanderConfig,
   type NpcSpawn,
@@ -27,6 +29,7 @@ const CFG: Record<string, WanderConfig> = {
   villager: { homeRadius: 6, speed: 1.0, faceRadius: 6 },
   guard: { homeRadius: 4, speed: 0.9, faceRadius: 6 },
   vendor: { homeRadius: 3, speed: 0.8, faceRadius: 6 },
+  giver: { homeRadius: 2, speed: 0.5, faceRadius: 8 }, // quest givers stay put
   deer: { homeRadius: 20, speed: 2.2, faceRadius: 12 },
   direStag: { homeRadius: 24, speed: 2.4, faceRadius: 14 },
   rabbit: { homeRadius: 12, speed: 3.0, faceRadius: 6 },
@@ -52,10 +55,35 @@ export class EntityManager {
   private readonly tmpVec = new THREE.Vector3();
   private nameplateTimer = 0;
 
+  /** Ids of the named quest-giver NPCs (calmer wander + "!/?" indicators). */
+  private readonly giverIds = new Set<string>();
+  /** Giver id → quest indicator, refreshed each frame by the game from the log. */
+  giverIndicators: Record<string, 'available' | 'turnin' | 'progress'> = {};
+
   constructor(scene: THREE.Scene, world: World) {
     this.scene = scene;
     this.world = world;
-    this.npcSpawns = world.authored.npcSpawns();
+    // Ambient wanderers + the named quest givers, anchored to their settlements.
+    const givers: NpcSpawn[] = QUEST_GIVERS.flatMap((g) => {
+      const s = settlementById(g.settlement);
+      if (!s) return [];
+      const x = s.cx + g.dx;
+      const z = s.cz + g.dz;
+      this.giverIds.add(g.id);
+      return [
+        {
+          id: g.id,
+          kind: 'villager',
+          name: g.name,
+          seed: g.seed,
+          x,
+          y: world.heightAt(Math.floor(x), Math.floor(z)),
+          z,
+          dialogue: [],
+        },
+      ];
+    });
+    this.npcSpawns = [...world.authored.npcSpawns(), ...givers];
   }
 
   private heightAt = (x: number, z: number): number => this.world.heightAt(x, z);
@@ -105,7 +133,8 @@ export class EntityManager {
       const has = this.entities.has(npc.id);
       if (near && !has) {
         const obj = new ModelObject(buildNpc(npc.kind, npc.seed));
-        this.spawn(npc.id, obj, npc.x, npc.y, npc.z, npc.kind, npc);
+        const cfgKind = this.giverIds.has(npc.id) ? 'giver' : npc.kind;
+        this.spawn(npc.id, obj, npc.x, npc.y, npc.z, cfgKind, npc);
       } else if (!near && has) {
         this.despawn(npc.id);
       }
@@ -166,11 +195,13 @@ export class EntityManager {
       this.tmpVec.project(camera);
       if (this.tmpVec.z > 1 || this.tmpVec.z < -1) continue;
       if (Math.abs(this.tmpVec.x) > 1.1 || Math.abs(this.tmpVec.y) > 1.1) continue;
+      const indicator = this.giverIds.has(e.key) ? this.giverIndicators[e.key] : undefined;
       plates.push({
         id: e.key,
         name: e.npc.name,
         sx: (this.tmpVec.x * 0.5 + 0.5) * sw,
         sy: (-this.tmpVec.y * 0.5 + 0.5) * sh,
+        ...(indicator ? { indicator } : {}),
       });
     }
     // Provided to the caller via getter; the game pushes to the store.

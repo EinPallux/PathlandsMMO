@@ -8,6 +8,14 @@ export function Nameplates(): JSX.Element {
       {nameplates.map((p) => {
         const hostile = p.hostile === true;
         const nameColor = hostile ? '#e0736b' : colors.ink;
+        const mark =
+          p.indicator === 'available'
+            ? { ch: '!', color: colors.gold }
+            : p.indicator === 'turnin'
+              ? { ch: '?', color: colors.gold }
+              : p.indicator === 'progress'
+                ? { ch: '?', color: colors.inkDim }
+                : null;
         return (
           <div
             key={p.id}
@@ -23,6 +31,19 @@ export function Nameplates(): JSX.Element {
               pointerEvents: 'none',
             }}
           >
+            {mark && (
+              <div
+                style={{
+                  fontSize: 18,
+                  fontWeight: 800,
+                  lineHeight: 1,
+                  color: mark.color,
+                  textShadow: '0 1px 3px #000',
+                }}
+              >
+                {mark.ch}
+              </div>
+            )}
             <div
               style={{
                 padding: '1px 6px',

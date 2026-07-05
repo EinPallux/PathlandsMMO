@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 2,
+      version: 3,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -37,12 +37,49 @@ describe('save schema', () => {
           inventory: [],
           equipment: {},
           discoveredWaystones: ['brookhollow', 'waymeet'],
+          quests: {
+            active: [{ id: 'q_boar_trouble', counts: [3], pinned: true }],
+            turnedIn: ['q_find_feet'],
+          },
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v2 (pre-quest) save, defaulting an empty quest log', () => {
+    const v2 = {
+      version: 2,
+      worldSeed: WORLD_SEED,
+      account: { pathPoints: 1 },
+      characters: [
+        {
+          id: 'c1',
+          name: 'Pre',
+          class: 'warrior',
+          appearance: { skin: 1, hair: 1 },
+          level: 8,
+          xp: 5000,
+          gold: 50,
+          x: 1,
+          y: 2,
+          z: 3,
+          yaw: 0,
+          inventory: [],
+          equipment: {},
+          discoveredWaystones: ['brookhollow'],
+        },
+      ],
+      settings: { viewDistance: 8, masterVolume: 0.8 },
+      updatedAtTick: 10,
+    };
+    const migrated = migrate(v2);
+    expect(migrated.version).toBe(SAVE_VERSION);
+    const c = migrated.characters[0]!;
+    expect(c.quests).toEqual({ active: [], turnedIn: [] });
+    expect(c.discoveredWaystones).toEqual(['brookhollow']);
   });
 
   it('migrates a v1 (pre-combat) save, defaulting the new fields', () => {

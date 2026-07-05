@@ -9,3 +9,4 @@ export * from './skills.js';
 export * from './enemies.js';
 export * from './spawns.js';
 export * from './vendors.js';
+export * from './quests/index.js';

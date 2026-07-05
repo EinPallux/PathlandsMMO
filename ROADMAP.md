@@ -6,6 +6,25 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 4 in progress (2026-07-05) — Part 1: the quest system.** Pathlands now has
+> quests. A pure, data-driven quest engine lives in `shared/quests` (state machine:
+> accept → advance-on-event → turn-in, all eight objective kinds, chains, prereqs, a
+> 25-quest log + 5-pin tracker) over typed definitions in `shared/data/quests`. Named
+> quest-giver NPCs stand at the settlements with `!` (available) / `?` (turn-in) / `?`
+> grey (in-progress) indicators; pressing **E** opens a giver dialogue to accept a
+> quest or hand one in for XP/gold/an item (with class-filtered reward choices) or a
+> Waystone unlock. Objectives advance from world events the client feeds the engine —
+> kills, exploration, talking, Waystone use — with toasts, a quest log panel (**L**),
+> and a tracker HUD. Quest state persists in **save v3**. A starter arc proves it end
+> to end: the Brookhollow tutorial (walk to the fountain / cull boars / gather rat
+> tails), main-story chapter 1 ("Light the Way" — attune the Waystone), and the
+> Millstead chain leading to the Briarhollow boss — covering every objective kind. **184
+> tests green** (13 quest-engine + save-migration); `pnpm typecheck && lint && build`
+> clean; in-browser the quest log renders over Brookhollow with zero console errors.
+> Next: the bulk quest content, then professions, meta progression, mounts, and endgame.
+>
+> ---
+>
 > **Phase 3 complete (2026-07-05).** Pathlands is now a game. The MMO-authoritative
 > combat & progression core lives in `shared/` (stat/XP/formula math, all four
 > classes' skills + 10/20/30 Paths, the enemy roster of 10 asset + new archetypes +
@@ -135,13 +154,23 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ---
 
-## Phase 4 — Quests, Professions & the Long Game
+## Phase 4 — Quests, Professions & the Long Game 🚧 IN PROGRESS
 
 **Milestone:** The content game: ~110 quests including the main story, all five professions, meta progression, mounts, achievements, and an endgame loop. This is the "the world has things to do everywhere" phase.
 
+> **Part 1 done (2026-07-05):** the **quest system** — a pure, data-driven engine
+> (`shared/quests` + `shared/data/quests`) with all eight objective kinds, chains,
+> prereqs, a 25-quest log and 5-pin tracker; named quest-giver NPCs at the settlements
+> with `!`/`?` indicators; a giver dialogue (accept / turn-in / reward choice); a quest
+> log panel (L) and tracker HUD; XP/gold/item/Waystone rewards; and save v3 persistence.
+> A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
+> chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
+> **Next:** the bulk quest content (~110), then gathering/crafting professions, meta
+> progression, mounts, and the endgame loop.
+
 ### Deliverables
 
-- [ ] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains), quest log (~25 active max), tracker HUD, map/minimap markers, NPC `!`/`?` indicators, dialogue windows using NPC portraits, XP/gold/item/choice rewards, prerequisites & chain state, shareable-later flags for Phase 6.
+- [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
 - [ ] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path" (Waystone mystery, ~30 quests, finale in the Sunken Crypt), zone side-quest arcs, Hollow quest lines, profession intro quests, one daily-repeatable bounty board per major settlement.
 - [ ] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100, node placement activated across all zones (deterministic spawns + respawn timers), tiered materials per zone level band, gathering cast/channel + fishing timing minigame, tool items.
 - [ ] **Crafting professions** — Blacksmithing (weapons/armor incl. several best-pre-boss items) and Alchemy (combat/utility/profession potions, flasks); recipe books, trainers, discovery recipes, crafting UI with material requirements; economy-consistent material flows (mining→smithing, herbalism→alchemy).

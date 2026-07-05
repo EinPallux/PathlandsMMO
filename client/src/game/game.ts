@@ -25,6 +25,8 @@ import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
 import { CombatDirector } from './combatDirector.js';
+import { QuestDirector } from './questDirector.js';
+import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
 // Brookhollow plaza, just north of the fountain (which sits at 1536,1536).
@@ -50,6 +52,7 @@ export class Game {
   private currentClass: CharacterClass;
   private readonly discovery: Discovery;
   private readonly combat: CombatDirector;
+  private readonly quests: QuestDirector;
   private readonly character: CharacterSave | null;
 
   private accumulator = 0;
@@ -123,6 +126,10 @@ export class Game {
         : undefined,
     );
 
+    this.quests = new QuestDirector(this.combat, character?.quests);
+    // Share the live indicator map so giver nameplates show "!/?" markers.
+    this.entities.giverIndicators = this.quests.indicators;
+
     this.registerCommands();
     window.addEventListener('resize', this.onResize);
     this.canvas.addEventListener('mousedown', this.onCanvasClick);
@@ -171,6 +178,11 @@ export class Game {
       buyItem: (index) => this.combat.buyItem(index),
       buybackItem: (index) => this.combat.buybackItem(index),
       closeVendor: () => this.combat.closeVendor(),
+      acceptQuest: (id) => this.quests.accept(id),
+      turnInQuest: (id, choice) => this.quests.turnIn(id, choice),
+      abandonQuest: (id) => this.quests.abandon(id),
+      pinQuest: (id, pinned) => this.quests.pin(id, pinned),
+      closeQuestDialog: () => this.quests.closeDialog(),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -216,6 +228,7 @@ export class Game {
     if (this.input.wasTapped('KeyI') || this.input.wasTapped('KeyC')) {
       useStore.getState().toggleChar();
     }
+    if (this.input.wasTapped('KeyL')) useStore.getState().toggleQuestLog();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
     // Enter releases spirit on death.
@@ -235,11 +248,15 @@ export class Game {
       const pz = this.controller.physics.z;
       if (store.dialogue) {
         store.advanceDialogue();
+      } else if (store.questDialog) {
+        this.quests.closeDialog();
       } else if (store.vendor) {
         this.combat.closeVendor();
       } else if (!this.combat.interactWaystone()) {
         const npc = this.entities.interactNearest(px, pz);
-        if (npc?.kind === 'vendor') {
+        if (npc && questGiverById(npc.id)) {
+          this.quests.openGiver(npc.id, npc.name);
+        } else if (npc?.kind === 'vendor') {
           this.combat.openVendor(npc.name, npc.seed, npc.x, npc.z);
         } else if (npc) {
           store.openDialogue(npc.name, npc.dialogue);
@@ -250,6 +267,7 @@ export class Game {
       useStore.getState().closeDialogue();
       useStore.getState().closeTravel();
       this.combat.closeVendor();
+      this.quests.closeDialog();
     }
 
     if (this.camera.mode === 'freeFly') {
@@ -328,6 +346,9 @@ export class Game {
         : (this.entities.nearestVendor(rs.x, rs.z, 4.5)?.name ?? null);
     if (st.nearbyVendor !== promptName) st.setNearbyVendor(promptName);
 
+    // Quest explore-objective checks (throttled inside).
+    this.quests.tickExplore(dt, rs.x, rs.z);
+
     this.discovery.reveal(rs.x, rs.z);
     this.discovery.tick(dt);
     const live = useStore.getState().live;
@@ -396,6 +417,7 @@ export class Game {
       inventory: this.combat.characterInventory,
       equipment: this.combat.characterEquipment,
       discoveredWaystones: this.combat.characterWaystones,
+      quests: this.quests.state,
       x: ph.x,
       y: ph.y,
       z: ph.z,

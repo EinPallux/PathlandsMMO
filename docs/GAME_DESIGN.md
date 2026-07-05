@@ -166,6 +166,15 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 - Rewards: XP (dominant), gold, item choices (1 of 2–3, class-filtered), consumables; main-story chapters award signature Uncommon/Rare pieces and Waystone unlocks.
 - All objective state machines in `shared/quests`; definitions in `shared/data/quests/` (typed, validated at build).
 
+> **Implementation (Phase 4 Part 1).** The engine (`shared/quests/log.ts`) is a pure
+> state machine: `acceptQuest` → `applyQuestEvent` (kills/collect/talk/explore/use/boss)
+> → `turnInQuest` (returns the reward for the client to grant), with prereq/level/log-cap
+> gating and cross-NPC turn-ins. Definitions + quest-giver placement live in
+> `shared/data/quests`. The client's `QuestDirector` feeds events from combat/movement,
+> grants rewards, and drives the giver dialogue, log (L), tracker, toasts, and `!`/`?`
+> nameplate indicators. Quest state persists in save v3. Bulk content, daily bounties,
+> and map markers follow in later Phase-4 parts.
+
 ## 9. Professions
 
 Each character learns **all five** (no pick restrictions — indie population is too small for interdependence walls; trading still matters for surplus in Phase 6). Skill 1–100 each; +1 point per action at orange/yellow difficulty, decreasing to gray (classic curve).

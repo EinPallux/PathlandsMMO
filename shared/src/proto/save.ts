@@ -5,11 +5,14 @@
 // v1 → v2 (Phase 3): characters gained combat progression (level/xp/gold),
 // inventory + equipment, and discovered Waystones; the save gained an account
 // block (Path Points).
+// v2 → v3 (Phase 4): characters gained a quest log (active quests + progress +
+// turned-in ids).
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
+import type { QuestLogState } from '../quests/log.js';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -43,24 +46,29 @@ export interface CharacterSaveV2 {
   discoveredWaystones: string[];
 }
 
+export interface CharacterSaveV3 extends CharacterSaveV2 {
+  /** Quest log: active quests + objective progress + turned-in ids (GDD §8). */
+  quests: QuestLogState;
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10). */
   pathPoints: number;
 }
 
-export interface SaveGameV2 {
-  version: 2;
+export interface SaveGameV3 {
+  version: 3;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV2[];
+  characters: CharacterSaveV3[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV2;
-export type CharacterSave = CharacterSaveV2;
+export type SaveGame = SaveGameV3;
+export type CharacterSave = CharacterSaveV3;
 
 export const DEFAULT_SETTINGS: SettingsV1 = {
   viewDistance: 8,
@@ -110,7 +118,24 @@ function equipment(v: unknown): Record<string, ItemDef> {
   return out;
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV2 | null {
+function questLog(v: unknown): QuestLogState {
+  if (!isRecord(v)) return { active: [], turnedIn: [] };
+  const active = Array.isArray(v.active) ? v.active : [];
+  return {
+    active: active
+      .filter((p): p is Record<string, unknown> => isRecord(p) && typeof p.id === 'string')
+      .map((p) => ({
+        id: str(p.id, ''),
+        counts: Array.isArray(p.counts)
+          ? p.counts.map((c) => Math.max(0, Math.floor(num(c, 0))))
+          : [],
+        pinned: p.pinned === true,
+      })),
+    turnedIn: strArray(v.turnedIn),
+  };
+}
+
+function migrateCharacter(v: unknown): CharacterSaveV3 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -128,6 +153,7 @@ function migrateCharacter(v: unknown): CharacterSaveV2 | null {
     inventory: itemStacks(v.inventory),
     equipment: equipment(v.equipment),
     discoveredWaystones: strArray(v.discoveredWaystones),
+    quests: questLog(v.quests),
   };
 }
 
@@ -149,7 +175,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV2 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV3 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -172,7 +198,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV2 {
+): CharacterSaveV3 {
   return {
     id,
     name,
@@ -188,5 +214,6 @@ export function createCharacter(
     inventory: [],
     equipment: {},
     discoveredWaystones: [],
+    quests: { active: [], turnedIn: [] },
   };
 }

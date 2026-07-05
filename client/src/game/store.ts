@@ -15,6 +15,8 @@ export interface Nameplate {
   hpFrac?: number;
   hostile?: boolean;
   targeted?: boolean;
+  /** Quest-giver indicator (GDD §8): available "!", ready "?" gold, in-progress "?" grey. */
+  indicator?: 'available' | 'turnin' | 'progress';
 }
 
 export interface HotbarSlot {
@@ -118,6 +120,42 @@ export interface VendorUi {
   buyback: VendorEntry[];
 }
 
+export interface QuestObjectiveUi {
+  label: string;
+  count: number;
+  need: number;
+  done: boolean;
+}
+
+export interface QuestEntryUi {
+  id: string;
+  name: string;
+  chapter: number | null;
+  pinned: boolean;
+  complete: boolean;
+  objectives: QuestObjectiveUi[];
+}
+
+export interface QuestDialogUi {
+  giver: string;
+  giverId: string;
+  offers: Array<{
+    id: string;
+    name: string;
+    intro: string;
+    chapter: number | null;
+    reward: string;
+  }>;
+  turnIns: Array<{ id: string; name: string; complete: string; reward: string; choices: string[] }>;
+  active: string[];
+}
+
+export interface QuestToast {
+  id: number;
+  text: string;
+  kind: 'accept' | 'progress' | 'complete';
+}
+
 export type WeatherKind = 'clear' | 'overcast' | 'rain';
 
 export interface GameCommands {
@@ -141,6 +179,12 @@ export interface GameCommands {
   buyItem(index: number): void;
   buybackItem(index: number): void;
   closeVendor(): void;
+  /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
+  acceptQuest(id: string): void;
+  turnInQuest(id: string, choiceIndex: number): void;
+  abandonQuest(id: string): void;
+  pinQuest(id: string, pinned: boolean): void;
+  closeQuestDialog(): void;
   /** Waystones: attune/open the nearby stone, fast-travel to a discovered one. */
   interactWaystone(): void;
   travelTo(id: string): void;
@@ -192,6 +236,12 @@ export interface UiState {
   /** Name of a merchant within trade range (drives the "Press E to trade" prompt). */
   nearbyVendor: string | null;
 
+  questLog: QuestEntryUi[] | null;
+  questTracker: QuestEntryUi[];
+  questDialog: QuestDialogUi | null;
+  questToasts: QuestToast[];
+  showQuestLog: boolean;
+
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   toggleMap: () => void;
@@ -206,6 +256,11 @@ export interface UiState {
   setWaystone: (w: WaystoneUi) => void;
   setVendor: (v: VendorUi | null) => void;
   setNearbyVendor: (name: string | null) => void;
+  setQuestLog: (q: QuestEntryUi[]) => void;
+  setQuestTracker: (q: QuestEntryUi[]) => void;
+  setQuestDialog: (q: QuestDialogUi | null) => void;
+  setQuestToasts: (t: QuestToast[]) => void;
+  toggleQuestLog: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -256,6 +311,12 @@ export const useStore = create<UiState>((set) => ({
   vendor: null,
   nearbyVendor: null,
 
+  questLog: null,
+  questTracker: [],
+  questDialog: null,
+  questToasts: [],
+  showQuestLog: false,
+
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
@@ -270,6 +331,11 @@ export const useStore = create<UiState>((set) => ({
   setWaystone: (waystone) => set({ waystone }),
   setVendor: (vendor) => set({ vendor }),
   setNearbyVendor: (nearbyVendor) => set({ nearbyVendor }),
+  setQuestLog: (questLog) => set({ questLog }),
+  setQuestTracker: (questTracker) => set({ questTracker }),
+  setQuestDialog: (questDialog) => set({ questDialog }),
+  setQuestToasts: (questToasts) => set({ questToasts }),
+  toggleQuestLog: () => set((st) => ({ showQuestLog: !st.showQuestLog })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

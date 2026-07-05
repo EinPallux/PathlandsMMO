@@ -27,6 +27,7 @@ import {
   canEquip,
   rollLoot,
   buildEnemyLootTable,
+  generateItem,
   WORLD_SPAWNS,
   EquipSlot,
   RING_SLOTS,
@@ -50,6 +51,8 @@ import {
   type ItemDef,
   type ItemStackSave,
   type VendorStockItem,
+  type GeneratedItemSpec,
+  type QuestReward,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
 import {
@@ -133,6 +136,10 @@ export class CombatDirector {
   private activeVendor: { name: string; stock: VendorStockItem[] } | null = null;
   /** Recently sold stacks, buyable back at the sold price (most-recent first). */
   private buyback: Array<{ item: ItemDef; qty: number; price: number }> = [];
+
+  /** Quest hooks (set by the game): fired when the player kills an enemy / uses a Waystone. */
+  onEnemyKilled?: (enemyId: string) => void;
+  onWaystoneUsed?: (waystoneId: string) => void;
 
   private readonly renders = new Map<string, RenderEnemy>();
   private dying: Dying[] = [];
@@ -220,6 +227,9 @@ export class CombatDirector {
   }
   get characterGold(): number {
     return this.gold;
+  }
+  get playerClass(): CharacterClass {
+    return this.cls;
   }
   get characterInventory(): ItemStackSave[] {
     // Return a copy so the save never embeds a live, still-mutating reference.
@@ -471,6 +481,7 @@ export class CombatDirector {
       this.pushFloater(this.player, `Waystone attuned! +${bonus} XP`, 'xp');
       this.relevelIfNeeded();
     }
+    this.onWaystoneUsed?.(ws.id); // quest `use` objectives fire even if re-visited
     useStore.getState().openTravel();
     return true;
   }
@@ -491,6 +502,40 @@ export class CombatDirector {
     const p = this.player;
     p.x = to.x;
     p.z = to.z;
+  }
+
+  /** Add XP (floater optional) and level up if a threshold was crossed. */
+  private gainXp(amount: number, floater = true): void {
+    if (amount <= 0) return;
+    this.totalXp += amount;
+    if (floater) this.pushFloater(this.player, `+${amount} XP`, 'xp');
+    this.relevelIfNeeded();
+  }
+
+  /** Grant a completed quest's reward: XP, gold, fixed + chosen items, Waystone. */
+  grantReward(reward: QuestReward, choiceIndex: number): void {
+    this.gainXp(reward.xp);
+    if (reward.gold) {
+      this.gold += reward.gold;
+      this.pushFloater(this.player, `+${reward.gold}c`, 'xp');
+    }
+    for (const s of reward.items ?? []) this.awardItem(s);
+    if (reward.choices && reward.choices.length > 0) {
+      const pick = reward.choices[Math.max(0, Math.min(choiceIndex, reward.choices.length - 1))];
+      if (pick) this.awardItem(pick);
+    }
+    if (reward.waystoneUnlock) this.discovered.add(reward.waystoneUnlock);
+  }
+
+  /** Generate a reward item for the player's class and drop it in the bag. */
+  private awardItem(s: GeneratedItemSpec): void {
+    if (this.inventory.length >= BAG_SIZE) {
+      this.pushFloater(this.player, 'Bag full', 'miss');
+      return;
+    }
+    const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
+    this.inventory.push({ item, qty: 1 });
+    this.pushFloater(this.player, item.name, 'heal');
   }
 
   /** Level up the player if accumulated XP crossed a threshold (shared with kills). */
@@ -573,19 +618,7 @@ export class CombatDirector {
       const text = ev.amount <= 0 && ev.type === 'damage' ? 'absorb' : String(ev.amount);
       this.pushFloater(target, text, kind);
     } else if (ev.type === 'xp') {
-      // Award XP + handle level-ups (full heal + stat rebuild on ding).
-      this.totalXp += ev.amount;
-      this.pushFloater(this.player, `+${ev.amount} XP`, 'xp');
-      const prog = levelProgressFromTotalXp(this.totalXp);
-      if (prog.level > this.level) {
-        this.level = prog.level;
-        const cur = this.player;
-        const leveled = this.makePlayer(cur.x, cur.z);
-        leveled.targetId = cur.targetId;
-        leveled.autoAttack = cur.autoAttack;
-        this.state.entities.set(PLAYER_ID, leveled);
-        this.pushFloater(leveled, `Level ${this.level}!`, 'xp');
-      }
+      this.gainXp(ev.amount);
     } else if (ev.type === 'death') {
       this.lootFrom(ev.entityId, ev.killerId);
     } else if (ev.type === 'bossPhase') {
@@ -601,6 +634,7 @@ export class CombatDirector {
     if (!victim || victim.faction !== 'enemy' || !victim.enemyId) return;
     const def = enemyById(victim.enemyId);
     if (!def) return;
+    this.onEnemyKilled?.(victim.enemyId); // quest kill/collect/boss objectives
     const table = buildEnemyLootTable(def, victim.level);
     const result = rollLoot(table, this.state.rng, { forClass: this.cls });
     if (result.gold > 0) {
