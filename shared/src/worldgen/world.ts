@@ -243,6 +243,20 @@ export class World {
     return c1 * c1 + c2 * c2 < 0.018;
   }
 
+  /**
+   * Deep-stone material for a column below the dirt/rock cap. Peaks sprinkles
+   * CrystalRock veins into the stone; both the chunk mesher (`generateChunk`) and
+   * the single-voxel collision path (`voxelAt`) must call this so they never
+   * disagree on material (the "collision matches meshing" invariant — matters for
+   * Phase 4 mining/harvest queries).
+   */
+  private deepStone(x: number, y: number, z: number, h: number, biome: Biome): Voxel {
+    if (biome === Biome.Peaks && y < h - 6 && hashFloat3(x, y, z, this.seed) < 0.02) {
+      return Voxel.CrystalRock;
+    }
+    return Voxel.Stone;
+  }
+
   // --- Single-voxel query (collision) ---------------------------------------
 
   voxelAt(x: number, y: number, z: number): Voxel {
@@ -263,7 +277,7 @@ export class World {
       if (y === h) return s.surface;
       if (y > h - 3)
         return s.rocky ? Voxel.Stone : s.surface === Voxel.Sand ? Voxel.Sand : Voxel.Dirt;
-      return Voxel.Stone;
+      return this.deepStone(x, y, z, h, s.biome);
     }
     if (y <= SEA_LEVEL) return Voxel.Water;
     return Voxel.Air;
@@ -303,10 +317,7 @@ export class World {
           } else if (y > h - 3) {
             v = s.rocky ? Voxel.Stone : s.surface === Voxel.Sand ? Voxel.Sand : Voxel.Dirt;
           } else {
-            v = Voxel.Stone;
-            if (biome === Biome.Peaks && y < h - 6 && hashFloat3(wx, y, wz, this.seed) < 0.02) {
-              v = Voxel.CrystalRock;
-            }
+            v = this.deepStone(wx, y, wz, h, biome);
           }
           voxels[voxelIndex(lx, y, lz)] = v;
         }
@@ -359,7 +370,12 @@ export class World {
       const wz = cz * CHUNK_SIZE + lz;
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
         const wx = cx * CHUNK_SIZE + lx;
-        if (this.authored.isInSettlement(wx, wz) || this.authored.isNearRoad(wx, wz)) continue;
+        if (
+          this.authored.isInSettlement(wx, wz) ||
+          this.authored.isNearRoad(wx, wz) ||
+          this.authored.isNearHollow(wx, wz)
+        )
+          continue;
         const s = this.sampleColumn(wx, wz);
         if (s.height <= SEA_LEVEL) continue;
         const yaw = hashFloat2(wx, wz, salt(0x9e1)) * Math.PI * 2;

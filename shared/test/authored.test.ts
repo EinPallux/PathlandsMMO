@@ -29,6 +29,36 @@ describe('authored layer', () => {
     expect(maxDelta).toBeLessThanOrEqual(2);
   });
 
+  it('flattens the whole building grid so no outer-ring building floats or buries', () => {
+    // Buildings sit on a square Chebyshev grid (PLOT spacing) out to `rings`; the
+    // flat plateau must reach every plot or a building stamped at platformY hovers
+    // over unflattened terrain (or sinks into a slope). Regression for the
+    // grubbersRest/fernwick/mossgate floating-house bug.
+    const PLOT = 18;
+    for (const s of SETTLEMENTS) {
+      const plat = w.heightAt(s.cx, s.cz);
+      let worst = 0;
+      let worstAt = '';
+      for (let ring = 1; ring <= s.rings; ring++) {
+        for (let gz = -ring; gz <= ring; gz++) {
+          for (let gx = -ring; gx <= ring; gx++) {
+            if (Math.max(Math.abs(gx), Math.abs(gz)) !== ring) continue;
+            const g = w.heightAt(s.cx + gx * PLOT, s.cz + gz * PLOT);
+            if (Math.abs(g - plat) > worst) {
+              worst = Math.abs(g - plat);
+              worstAt = `${s.id} plot(${gx},${gz}) ground=${g} platform=${plat}`;
+            }
+          }
+        }
+      }
+      // ≤2m: every plot sits on the flat plateau. The only non-zero deltas are
+      // plots directly on a road entrance, where the road ramp intentionally meets
+      // the platform (same tolerance as the plaza-flatten test). Pre-fix these were
+      // 5–36m floats/burials.
+      expect(worst, worstAt).toBeLessThanOrEqual(2);
+    }
+  });
+
   it('stamps building materials into a settlement chunk', () => {
     const s = SETTLEMENTS.find((x) => x.id === 'waymeet')!;
     const cx = Math.floor(s.cx / CHUNK_SIZE);

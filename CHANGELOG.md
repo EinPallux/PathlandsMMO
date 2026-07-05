@@ -27,6 +27,29 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 - **Phase-1 adversarial-review follow-ups** — corrected greedy-mesher cross-chunk border culling (out-of-volume voxels no longer emit magenta-defaulted faces), added chunk-streaming robustness (discard-guard, dispose-before-rebuild, worker `onerror` recovery), and made movement snap-to-ground on load.
 - Purple-roof tint (blue hemisphere ambient bleeding into red tiles) by desaturating the sky-ambient toward white.
+- **Phase-2 adversarial-review follow-ups:**
+  - _Determinism:_ replaced `Math.hypot` in the authored placement layer with a
+    deterministic `Math.sqrt`-based distance (as already done in `sim/movement.ts`);
+    `Math.hypot` is only implementation-approximated and its result feeds
+    `Math.round` into stamped terrain/carve heights, so it could have produced a
+    non-byte-identical world across JS engines (client worker vs. Phase-6 server).
+  - _Floating buildings:_ outer-ring buildings sit on a square grid whose corners
+    reached past several towns' circular flatten radius, leaving them hovering
+    (or buried) over unflattened slopes (up to 36 m at Grubbers' Rest). The
+    settlement plateau is now derived from the building grid itself
+    (`rings·PLOT·√2 + PLOT`, flat core + graded apron), and scatter exclusion
+    shares that radius. New regression test asserts every grid plot sits flush.
+  - _Collision/mesh material split:_ `voxelAt` returned plain `Stone` where
+    `generateChunk` meshed `CrystalRock` veins in the Peaks (~42 k voxels),
+    breaking the "collision matches meshing" invariant; both now call a shared
+    `deepStone` helper.
+  - _Chunk streaming:_ a worker error on a kept-but-not-desired chunk could stall
+    it in `'loading'` forever (permanent hole); `onWorkerError` now requeues any
+    loading chunk and the queue is rebuilt from all pending entries. The worker's
+    message handler is wrapped in try/catch so one bad chunk degrades to an empty
+    chunk instead of spinning the pool.
+  - _Prop scatter:_ props are now excluded from Hollow bowls so trees no longer
+    hover over the carved entrance pits.
 
 ### Verified
 

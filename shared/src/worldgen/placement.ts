@@ -73,6 +73,21 @@ function linesFor(kind: NpcKind): string[] {
 const PLOT = 18; // grid spacing between building plots
 const ROAD_HALF = 3; // road half-width (metres)
 const ROAD_RAMP = 5; // grading falloff beyond the road edge
+const SETTLEMENT_APRON = 16; // graded ramp width beyond the flat building plateau
+
+/**
+ * Radius of the fully-flat settlement plateau. Buildings sit on a square
+ * Chebyshev grid, so the outermost corner plots are `rings·PLOT·√2` from centre;
+ * the plateau must reach at least that far plus a PLOT-wide margin for their
+ * footprints, or outer-ring buildings stamp over unflattened terrain and float
+ * (or bury). Deriving the flatten radius from the grid — rather than the authored
+ * circular `radius`, which was smaller than the grid for several towns — keeps
+ * the flat ground and the building layout in lockstep. Both `flatten` and scatter
+ * exclusion use this.
+ */
+function settlementFlatRadius(s: Settlement): number {
+  return s.rings * PLOT * Math.SQRT2 + PLOT;
+}
 
 interface PlacedStructure {
   worldVoxels: Int32Array; // packed [x,y,z,material] × n
@@ -232,11 +247,14 @@ export class AuthoredLayer {
   /** Apply settlement flattening and road grading to a base height. */
   flatten(x: number, z: number, baseH: number): number {
     let h = baseH;
-    // Settlement platforms (nearest wins).
+    // Settlement platforms: flat plateau covering the whole building grid, then a
+    // graded apron ramping back to natural terrain (nearest wins).
     for (const s of SETTLEMENTS) {
+      const coreR = settlementFlatRadius(s);
+      const apronR = coreR + SETTLEMENT_APRON;
       const d = dist2(x, z, s.cx, s.cz);
-      if (d < s.radius) {
-        const t = smoothstep(s.radius, s.radius * 0.55, d);
+      if (d < apronR) {
+        const t = d <= coreR ? 1 : smoothstep(apronR, coreR, d);
         h = lerp(h, this.platformY(s), t);
       }
     }
@@ -273,10 +291,19 @@ export class AuthoredLayer {
     return null;
   }
 
-  /** True if (x,z) lies within any settlement (used to keep scatter out of towns). */
+  /** True if (x,z) lies on any settlement's flat plateau (keeps scatter out of towns). */
   isInSettlement(x: number, z: number): boolean {
     for (const s of SETTLEMENTS) {
-      if (dist2(x, z, s.cx, s.cz) < s.radius) return true;
+      if (dist2(x, z, s.cx, s.cz) < settlementFlatRadius(s)) return true;
+    }
+    return false;
+  }
+
+  /** True if (x,z) is inside a Hollow's carved bowl or flattened apron (keeps scatter
+   * out of the pit so props don't hover over the void or clip the entrance portal). */
+  isNearHollow(x: number, z: number): boolean {
+    for (const hollow of HOLLOWS) {
+      if (dist2(x, z, hollow.x, hollow.z) < HOLLOW_FLATTEN_R) return true;
     }
     return false;
   }
