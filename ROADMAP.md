@@ -6,7 +6,21 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 11: closing the acceptance gaps.** The two
+> **Phase 4 in progress (2026-07-05) — Part 12: named rare-elite hunts.** Eight
+> wandering **named rares** now roam the zones (WORLD.md §4) — Old Thornhide (Vale),
+> Grislefang & the Weald pack-lord, Duskwing / Boulderjaw / Gnash-Cowl (Foothills),
+> Shardback Alpha (Peaks), Gruulmarg the War-Chief (Trollmoor), and Wreckmaw (Coast). Each
+> is an **Elite-rank** enemy (`named` flag in `shared/data/enemies.ts`, reusing a family
+> model) with a single long-respawn spawn point (`spawns.ts`), dropping Elite-tier loot and
+> feeding a new **Rarebane** Deed (slay 5). The `MetaDirector` announces each rare kill and
+> advances the Deed. **245 tests green** (rare content: Elite rank + buildable model +
+> world-spawned + Deed); `pnpm typecheck && lint && build` clean; in-browser the Journal
+> lists Rarebane under Combat with zero console errors. Next: the remaining side-quest
+> budget and Phase-5 tuning/polish.
+>
+> ---
+>
+> **Part 11 (2026-07-05): closing the acceptance gaps.** The two
 > open criteria from the Part-10 pass are now closed. **(#4) Path Points + perks are
 > account-wide** — moved off the character onto the account (**save v10**, migration folds
 > any per-character meta into the shared pool: highest Points + max-rank perk union), threaded
@@ -266,6 +280,13 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 12 done (2026-07-05):** **named rare-elite hunts.** Eight wandering **named rares**
+> (Elite rank, `named` flag, reusing family models) roam the zones with single long-respawn
+> spawn points, drop Elite-tier loot, and feed a new **Rarebane** Deed (slay 5) — the
+> `MetaDirector` announces each rare kill. Content-validated (Elite rank + buildable model +
+> world-spawned + Deed). 245 tests green. This advances the Endgame-loop deliverable
+> (bounties + rares now done). **Next:** the remaining side-quest budget + Phase-5 polish.
+>
 > **Part 11 done (2026-07-05):** **closed the acceptance gaps.** Path Points + perks are now
 > **account-wide** (moved off the character onto the account; **save v10** folds any
 > per-character meta into the shared pool), threaded through Onboarding/App/Game and persisted
@@ -390,7 +411,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [x] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant **account-wide** Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10 (Part 11 made Points/perks account-wide, save v10). _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
-- [~] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate): a data-driven bounty pool (`shared/data/bounties.ts`), a deterministic daily rotation seeded by the world seed + a day index taken at bootstrap, a `BountyDirector` that tracks kill/gather progress and pays gold + XP + Deed progress (the new "Taskmaster" Deed) on turn-in, and a Bounty Board panel (**O**) showing the nearest hub's postings; save v9 persists the daily log. _(Remaining: named rare-elite hunt targets with Deed tracking, Hollow boss re-run loot tables, profession masteries, and the "restore the final Waystone" world-event stub.)_
+- [~] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate) + **named rare-elite hunts**. Bounties: a data-driven pool (`shared/data/bounties.ts`), a deterministic daily rotation, a `BountyDirector` tracking kill/gather progress that pays gold + XP + the "Taskmaster" Deed, and a Bounty Board panel (**O**); save v9. Named rares (Part 12): 8 wandering Elite-rank hunt targets across the zones (`named` flag in `shared/data/enemies.ts` + spawn points in `spawns.ts`, ~15-min respawns), dropping Elite loot and feeding the new **Rarebane** Deed. _(Remaining: Hollow boss re-run loot tables, profession masteries, more rares + bespoke unique-drop tables, and the "restore the final Waystone" world-event stub.)_
 - [~] **Supporting systems** — the **Waymeet Bank** (a 50-slot shared vault + a mailbox) as a single `BankPanel` (**B**) with Vault / Mail tabs: move stacks between bag and vault; read letters from world NPCs and claim their gold gifts; the Steward's welcome letter is delivered on reaching level 5. Save v8 persists the vault + inbox. _(Remaining: bank-building/mailbox-prop gating, item mail attachments, improved settings, and keybind remapping.)_
 
 ### Acceptance Criteria

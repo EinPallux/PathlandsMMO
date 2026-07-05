@@ -106,6 +106,16 @@ The hub: **Waymeet**, a walled market city where the Old Roads cross, built from
 
 At least two per zone, wandering, 2–6 h respawn, unique-drop tables: Old Thornhide (boar, Vale) · the Pale Stag (Weald) · Deadeye Moll (Foothills) · Shardback Alpha (Peaks) · Gruulmarg (Trollmoor) · Wreckmaw (Coast) · …one per remaining slot authored during Phase 3/4 content work, recorded here as added.
 
+> **Implementation (Phase 4 Part 12).** Eight named rare-elites are live
+> (`shared/data/enemies.ts`, `named: true`, Elite rank, reusing a family model; spawn
+> points + ~15 min respawns in `shared/data/spawns.ts`): **Old Thornhide** (Vale boar) ·
+> **Grislefang** (Weald wolf) · **Duskwing** (Foothills cave-bat) · **Boulderjaw** (Foothills
+> grub) · **Gnash-Cowl** (Foothills gnoll) · **Shardback Alpha** (Peaks crystalback) ·
+> **Gruulmarg the War-Chief** (Trollmoor troll) · **Wreckmaw** (Coast bog-drake). They drop
+> Elite-tier loot and feed the **Rarebane** Deed (slay 5). The Pale Stag / Deadeye Moll from
+> the list above already exist as quest targets. Remaining toward ~15: a few more slots +
+> bespoke unique-drop tables (Phase-5 loot polish).
+
 ## 5. Content Budget Reconciliation (vs. GDD)
 
 - Quests: 20+22+20+18+18+12 = **110** ✔ (≈30 of these are main-story chapters ch.1–6)

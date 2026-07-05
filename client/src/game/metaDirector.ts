@@ -57,9 +57,15 @@ export class MetaDirector {
   // --- event feed ------------------------------------------------------------
 
   handleKill(enemyId: string): void {
+    const def = enemyById(enemyId);
     const notices = applyDeedProgress(this.deeds, 'kill');
-    if (enemyById(enemyId)?.rank === EnemyRank.Boss) {
+    if (def?.rank === EnemyRank.Boss) {
       notices.push(...applyDeedProgress(this.deeds, 'boss'));
+    }
+    // Named rare-elites feed the Rarebane Deed and announce the kill (GDD §11).
+    if (def?.named) {
+      notices.push(...applyDeedProgress(this.deeds, 'rare'));
+      this.toast(`Rare slain: ${def.name}!`);
     }
     this.award(notices);
   }

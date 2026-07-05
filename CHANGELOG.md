@@ -4,6 +4,20 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 12 — named rare-elite hunts (2026-07-05)
+
+- **`shared/data/enemies`** — a `named` flag on `EnemyDef` and **8 named rare-elites** (Old
+  Thornhide, Grislefang, Duskwing, Boulderjaw, Gnash-Cowl, Shardback Alpha, Gruulmarg the
+  War-Chief, Wreckmaw): Elite rank, reusing a family model, spanning the zones from the Vale
+  to the Coast. Elite rank already grants tougher stats + better loot.
+- **`shared/data/spawns`** — one single-spawn, ~15-minute-respawn region per rare at a wander
+  point in its zone.
+- **`shared/data/deeds`** — a **Rarebane** Deed (`rare` metric, slay 5) in the Combat category.
+- **`client/game/metaDirector`** — `handleKill` feeds the `rare` metric and announces the kill
+  ("Rare slain: …!") when the fallen enemy is `named`.
+- **Tests** — +1 (named rares are Elite, buildable, world-spawned, and tracked by a Deed);
+  245 total.
+
 ### Part 11 — closing the acceptance gaps (2026-07-05)
 
 - **Account-wide Path Points + perks (save v10).** Moved `pathPoints`/`perks` off the

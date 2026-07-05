@@ -62,6 +62,8 @@ export interface EnemyDef {
   abilities: string[];
   /** Encounter script for Boss-rank enemies (HP-threshold beats). */
   boss?: BossScript;
+  /** A wandering named rare-elite hunt target (GDD §11 / WORLD.md §4). */
+  named?: boolean;
   /** Short bestiary blurb (used on journal pages). */
   blurb: string;
 }
@@ -87,6 +89,7 @@ function e(
     leashRadius: opts.leashRadius ?? 28,
     abilities: opts.abilities ?? [],
     ...(opts.boss ? { boss: opts.boss } : {}),
+    ...(opts.named ? { named: true } : {}),
     blurb: opts.blurb ?? '',
   };
 }
@@ -323,6 +326,72 @@ export const ENEMIES: readonly EnemyDef[] = [
       ],
     },
     blurb: 'The final Waymaker, bound to its flooded tomb — the three-phase story finale.',
+  }),
+
+  // --- Named rare-elite hunt targets (GDD §11, WORLD.md §4) ---------------------
+  // Wandering, Elite-rank, one per key zone; reuse a family model, drop better loot,
+  // and feed the "Rarebane" Deed. Spawn points + long respawns live in spawns.ts.
+  e('rareOldThornhide', 'Old Thornhide', EnemyFamily.Beast, [6, 6], {
+    modelId: 'enemy.thornbackBoar',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 4.6,
+    aggroRadius: 14,
+    blurb: 'The scarred old boar-king of the Heartmead meadows; hunters tell tales of his tusks.',
+  }),
+  e('rareGrislefang', 'Grislefang', EnemyFamily.Beast, [11, 11], {
+    modelId: 'enemy.mossfangWolf',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 5.4,
+    aggroRadius: 16,
+    blurb: 'A great grey wolf that leads the Mossfang packs through the deep Weald.',
+  }),
+  e('rareBoulderjaw', 'Boulderjaw', EnemyFamily.Aberration, [16, 16], {
+    modelId: 'enemy.stonejawGrub',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 14,
+    blurb: 'A grub grown vast on Foothills ore, its plated jaws crack solid rock.',
+  }),
+  e('rareGnashCowl', 'Gnash-Cowl', EnemyFamily.Humanoid, [17, 17], {
+    modelId: 'enemy.caveGnoll',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 15,
+    abilities: ['cleaveSwipe'],
+    blurb: 'The gnoll war-leader of the Stonejaw dens, cowled in survey-map hide.',
+  }),
+  e('rareShardbackAlpha', 'Shardback Alpha', EnemyFamily.Beast, [23, 23], {
+    modelId: 'enemy.crystalbackLizard',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 16,
+    blurb: 'The eldest crystalback of the Glimmerpeaks; its shell rings like a struck bell.',
+  }),
+  e('rareGruulmarg', 'Gruulmarg the War-Chief', EnemyFamily.Humanoid, [29, 29], {
+    modelId: 'enemy.ironhideTroll',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 4.4,
+    aggroRadius: 18,
+    leashRadius: 34,
+    blurb: 'The troll war-chief of the Trollmoor cairns, remembered in the Sentinels’ glyphs.',
+  }),
+  e('rareWreckmaw', 'Wreckmaw', EnemyFamily.Beast, [30, 30], {
+    modelId: 'enemy.bogDrake',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 16,
+    blurb: 'A drake that haunts the Sunlit Coast shipwrecks, gorged on the drowned.',
+  }),
+  e('rareDuskwing', 'Duskwing', EnemyFamily.Beast, [13, 13], {
+    modelId: 'enemy.caveBat',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 5.6,
+    aggroRadius: 15,
+    blurb: 'A monstrous cave-bat whose shriek empties the Foothills cliffs at dusk.',
   }),
 ];
 

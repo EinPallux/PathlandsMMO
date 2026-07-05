@@ -80,6 +80,15 @@ export const DEEDS: readonly DeedDef[] = [
     threshold: 3,
     pathPoints: 4,
   },
+  {
+    id: 'd_rarebane',
+    name: 'Rarebane',
+    description: 'Slay 5 named rare-elites.',
+    category: DeedCategory.Combat,
+    metric: 'rare',
+    threshold: 5,
+    pathPoints: 3,
+  },
   // --- Quests ---
   {
     id: 'd_helping_hand',
