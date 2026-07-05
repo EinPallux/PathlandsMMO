@@ -6,16 +6,21 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 3 in progress (2026-07-05).** The MMO-authoritative combat & progression
-> core is complete and tested in `shared/` (parts 1–3): the stat/XP/formula math
-> (GDD §4/§5), all four classes' 12 skills + paths and the enemy roster (10 asset +
-> 8 new + 5 Hollow bosses) as data-driven content, and the full tick-based combat
-> simulation — cast/GCD/cooldown/resource validation, a complete skill-effect
-> interpreter (damage/dot/heal/hot/shield/CC/buff/execute/…), auras, threat, death
-> and XP events, enemy AI (aggro/chase/leash/ability-use), and deterministic
-> spawners. 132 shared tests green. **Remaining for Phase 3:** enemy voxel models
-> (part 4), and the client layer — onboarding, HUD/target frames/hotbar/floaters,
-> inventory + equipment, and the death→Waystone loop (part 5) — then review + docs.
+> **Phase 3 in progress (2026-07-05).** Combat is playable in-browser. Done: the
+> MMO-authoritative combat & progression core in `shared/` (parts 1–3 — stat/XP/
+> formula math, all four classes' 12 skills + paths, the enemy roster of 10 asset +
+> 8 new + 5 Hollow bosses, and the full tick-based sim: cast/GCD/cooldown/resource
+> validation, a complete skill-effect interpreter, auras, threat, death/XP events,
+> enemy AI, deterministic spawners); every enemy's voxel model (part 4); and the
+> client combat layer (part 5) — a CombatDirector runs the shared sim in lockstep
+> with movement, spawns/renders enemies, and drives a HUD (player/target frames,
+> hotbar with cooldowns, damage/heal/crit floaters, enemy HP nameplates) with
+> Tab/click targeting and 1-0 hotbar casting. 136 shared tests green; headless
+> browser pass shows Tab-targeting a boar, casting, and class-switch rebuilding the
+> player + hotbar with zero console errors. **Remaining for Phase 3:** full
+> onboarding screens (title → character create), inventory/equipment + vendors, the
+> Waystone activation/travel network, and Hollow boss population — then the
+> adversarial review + acceptance-criteria pass.
 >
 > ---
 >
