@@ -17,10 +17,13 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > hotbar with cooldowns, damage/heal/crit floaters, enemy HP nameplates) with
 > Tab/click targeting and 1-0 hotbar casting. 136 shared tests green; headless
 > browser pass shows Tab-targeting a boar, casting, and class-switch rebuilding the
-> player + hotbar with zero console errors. **Remaining for Phase 3:** full
-> onboarding screens (title → character create), inventory/equipment + vendors, the
-> Waystone activation/travel network, and Hollow boss population — then the
-> adversarial review + acceptance-criteria pass.
+> player + hotbar with zero console errors. **Onboarding** is in too (part 5b-i):
+> title → character list → creation (class cards from the PNG art, name, skin/hair)
+> → spawn, with save schema v2 and IndexedDB persistence (verified across a reload);
+> the game boots from the chosen character and autosaves level/xp/position.
+> **Remaining for Phase 3:** inventory/equipment + loot pickup + vendors, the
+> Waystone activation/travel network (+ respawn-at-Waystone), and Hollow boss
+> population — then the adversarial review + acceptance-criteria pass.
 >
 > ---
 >
