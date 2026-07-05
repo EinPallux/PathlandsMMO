@@ -37,8 +37,11 @@ export class PlayerController {
     this.prev = { ...this.physics };
   }
 
-  /** Advance one fixed tick. cameraYaw resolves WASD to a world-space wish. */
-  tick(sampler: VoxelSampler, input: Input, cameraYaw: number, dt: number): void {
+  /**
+   * Advance one fixed tick. cameraYaw resolves WASD to a world-space wish;
+   * speedMult scales ground speed (mount + out-of-combat perks, clamped by the sim).
+   */
+  tick(sampler: VoxelSampler, input: Input, cameraYaw: number, dt: number, speedMult = 1): void {
     this.prev = { ...this.physics };
 
     let f = 0;
@@ -72,6 +75,7 @@ export class PlayerController {
       input.isDown('Space'),
       input.isDown('ShiftLeft') || input.isDown('ShiftRight'),
       yaw,
+      speedMult,
     );
     stepPlayerMovement(sampler, this.physics, intent, dt);
   }

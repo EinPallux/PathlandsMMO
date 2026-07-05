@@ -16,6 +16,11 @@ export const STEP_HEIGHT = 1.05; // auto-climb up to ~1 voxel
 export const WALK_SPEED = 4.6;
 export const RUN_SPEED = 7.6;
 export const SWIM_SPEED = 3.6;
+// Ground-speed multiplier bounds (mounts + out-of-combat perks). Clamped so no
+// client-supplied intent can grant more than a mount's worth of speed — the value
+// stays sane whatever the source, which is what Phase-6 server authority needs.
+export const MIN_SPEED_MULT = 0.1;
+export const MAX_SPEED_MULT = 2.0;
 export const GRAVITY = -25;
 export const JUMP_SPEED = 8.2;
 export const SWIM_UP_SPEED = 4.0;
@@ -131,7 +136,10 @@ export function stepPlayerMovement(
   // Math.hypot is only "implementation-approximated" and could diverge a client
   // (browser) from the Phase-6 server (Node) — breaking prediction. Keep it sqrt.
   const wishLen = Math.sqrt(intent.wishX * intent.wishX + intent.wishZ * intent.wishZ);
-  const speed = p.inWater ? SWIM_SPEED : intent.sprint ? RUN_SPEED : WALK_SPEED;
+  // Mount / perk speed applies to ground movement only (GDD §7 — a mount is +60%
+  // *ground* speed); swimming is unaffected. Undefined ⇒ 1 (no modifier).
+  const mult = Math.max(MIN_SPEED_MULT, Math.min(MAX_SPEED_MULT, intent.speedMult ?? 1));
+  const speed = p.inWater ? SWIM_SPEED : (intent.sprint ? RUN_SPEED : WALK_SPEED) * mult;
   if (wishLen > 1e-4) {
     const norm = Math.min(1, wishLen);
     p.vx = (intent.wishX / wishLen) * speed * norm;

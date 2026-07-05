@@ -158,6 +158,22 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 - **Waystones** are ancient obelisks at every settlement + key wilds (~18 total). First activation: discovery XP + map marker. Any two activated Waystones allow paid teleport (fee scales with distance & level, ~1–10 silver) — the main travel gold sink before mounts.
 - **Mount** at level 20: Wolf (+60% ground speed, outdoor only, instant dismount on damage). Cost: 40 gold + quest. Skins via Deeds.
 
+> **Implementation (Phase 4 Part 6).** The Wolf is a code-authored voxel model
+> (`shared/models/creatures/mounts.ts`; there is no mount PNG — it is authored fresh per
+> ART_GUIDE, not derived from the enemy wolf). Data lives in `shared/data/mounts.ts`; the
+> client `MountController` enforces the rules and the speed rides through the sim as a
+> clamped `MoveIntent.speedMult` (server-recomputable in Phase 6). Three skins ship: the
+> base **Grey Wolf** (40 gold at level 20) and **Dire Wolf** / **Frostfang Wolf**, unlocked
+> by the Slayer / Pathfinder Deeds. `G` mounts/dismounts. Provisional deviations to revisit
+> as the systems fill out: **(1)** "instant dismount on damage" is implemented as dismount
+> the instant the rider _enters combat_ (a superset — taking or dealing damage flags
+> combat), which also covers the Phase-6 authority model cleanly; **(2)** "outdoor only" is
+> enforced by an underground check (dismount when the rider drops below the local surface,
+> i.e. into a cave/Hollow) rather than an explicit zone flag; **(3)** the mount is sold for
+> gold at level 20 with the acquisition _quest_ deferred to the bulk quest-content part;
+> **(4)** owned mounts are stored per-character (save v7), becoming account-wide with
+> Phase-6 accounts.
+
 ## 8. Quests
 
 - Types: **Kill**, **Collect** (drop-based), **Gather** (world objects), **Deliver**, **Talk-to**, **Explore** (reach area), **Use-object**, **Boss**, and **Chains** of the above. No escorts (cut: pain, low value).

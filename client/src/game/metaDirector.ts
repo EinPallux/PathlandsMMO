@@ -26,6 +26,9 @@ export class MetaDirector {
   private perks: Record<string, number>;
   private toastSeq = 1;
 
+  /** Fired once per newly-completed Deed (e.g. to grant a mount skin). */
+  onDeedComplete?: (deedId: string) => void;
+
   constructor(
     combat: CombatDirector,
     deeds?: DeedState,
@@ -97,6 +100,11 @@ export class MetaDirector {
     );
   }
 
+  /** Trailblazer's out-of-combat movement bonus (0 = none), applied by the game. */
+  get outOfCombatSpeedBonus(): number {
+    return perkMagnitude(this.perks, 'moveSpeed');
+  }
+
   // --- publishing ------------------------------------------------------------
 
   private award(notices: DeedNotice[]): void {
@@ -106,6 +114,7 @@ export class MetaDirector {
       this.toast(
         `Deed earned: ${n.name} (+${n.pathPoints} Path Point${n.pathPoints > 1 ? 's' : ''})`,
       );
+      this.onDeedComplete?.(n.deedId);
     }
     this.publish();
   }

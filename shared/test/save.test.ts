@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 6,
+      version: 7,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -53,12 +53,33 @@ describe('save schema', () => {
           deeds: { progress: { d_first_blood: 4 }, completed: ['d_wayfarer'] },
           pathPoints: 1,
           perks: { deepPockets: 2 },
+          mounts: ['wolf', 'frostWolf'],
+          activeMount: 'frostWolf',
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v6 (pre-mount) save, defaulting no mounts', () => {
+    const v6 = {
+      version: 6,
+      account: { pathPoints: 2 },
+      characters: [
+        {
+          name: 'Footsore',
+          class: 'warrior',
+          deeds: { progress: {}, completed: [] },
+          pathPoints: 0,
+          perks: {},
+        },
+      ],
+    };
+    const c = migrate(v6).characters[0]!;
+    expect(c.mounts).toEqual([]);
+    expect(c.activeMount).toBeNull();
   });
 
   it('migrates a v5 (pre-deeds) save, defaulting deed state + perks', () => {

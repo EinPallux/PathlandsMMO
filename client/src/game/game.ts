@@ -28,6 +28,7 @@ import { CombatDirector } from './combatDirector.js';
 import { QuestDirector } from './questDirector.js';
 import { GatherDirector } from './gatherDirector.js';
 import { MetaDirector } from './metaDirector.js';
+import { MountController } from './mountController.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
@@ -36,6 +37,8 @@ const SPAWN_X = 1536.5;
 const SPAWN_Z = 1524.5;
 const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
+// How far below the local surface counts as "indoors/underground" for mount rules.
+const UNDERGROUND_MARGIN = 3;
 
 export class Game {
   private readonly canvas: HTMLCanvasElement;
@@ -57,6 +60,7 @@ export class Game {
   private readonly quests: QuestDirector;
   private readonly gather: GatherDirector;
   private readonly meta: MetaDirector;
+  private readonly mount: MountController;
   private readonly character: CharacterSave | null;
   private lastGx = 0;
   private lastGz = 0;
@@ -148,6 +152,12 @@ export class Game {
       character?.pathPoints,
       character?.perks,
     );
+    this.mount = new MountController(
+      this.scene,
+      this.combat,
+      character?.mounts,
+      character?.activeMount,
+    );
 
     // Fan world events out to the quest + meta systems (Deeds track the same events).
     this.combat.onEnemyKilled = (id) => {
@@ -159,6 +169,8 @@ export class Game {
     this.quests.onQuestTurnedIn = () => this.meta.handleQuest();
     this.gather.onCraft = () => this.meta.handleCraft();
     this.gather.onGatherSkill = (s) => this.meta.handleGatherSkill(s);
+    // A completed Deed may unlock a mount skin (GDD §7).
+    this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
     this.registerCommands();
     window.addEventListener('resize', this.onResize);
@@ -216,6 +228,9 @@ export class Game {
       craftRecipe: (id) => this.gather.craftRecipe(id),
       useConsumable: (id) => this.gather.useConsumable(id),
       buyPerk: (id) => this.meta.buyPerk(id),
+      buyMount: () => this.mount.buyMount(),
+      toggleMount: () => this.mount.toggle(),
+      selectMount: (id) => this.mount.selectMount(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -265,6 +280,7 @@ export class Game {
     if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
     if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
     if (this.input.wasTapped('KeyJ')) useStore.getState().toggleJournal();
+    if (this.input.wasTapped('KeyG')) this.mount.toggle();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
     // Enter releases spirit on death.
@@ -336,8 +352,19 @@ export class Game {
     this.accumulator += dt;
     let ticks = 0;
     while (this.accumulator >= TICK_DT && ticks < 5) {
+      // Mount rules + ground-speed multiplier, from the pre-tick context. Mounts
+      // are outdoor-only and drop the instant combat starts (GDD §7); Trailblazer
+      // adds out-of-combat speed on top.
+      const pre = this.controller.physics;
+      const surfaceY = this.world.heightAt(Math.floor(pre.x), Math.floor(pre.z));
+      const underground = pre.y < surfaceY - UNDERGROUND_MARGIN;
+      const inCombat = this.combat.isInCombat();
+      this.mount.updateEnv(inCombat, underground, pre.inWater);
+      let speedMult = this.mount.speedMult();
+      if (!inCombat) speedMult *= 1 + this.meta.outOfCombatSpeedBonus;
+
       if (active) {
-        this.controller.tick(this.sampler, this.input, this.camera.yaw, TICK_DT);
+        this.controller.tick(this.sampler, this.input, this.camera.yaw, TICK_DT, speedMult);
       } else {
         // Keep the player settled (gravity only) while free-flying.
         this.controller.tick(this.sampler, freeInput, this.controller.physics.yaw, TICK_DT);
@@ -350,11 +377,13 @@ export class Game {
     const alpha = this.accumulator / TICK_DT;
     const rs = this.controller.renderState(alpha);
 
-    // Player model follows the interpolated state.
-    this.playerModel.setTransform(rs.x, rs.y, rs.z, rs.yaw);
+    // Player model follows the interpolated state, seated up on the mount if any.
+    const thirdPerson = this.camera.mode === 'thirdPerson';
+    this.playerModel.setTransform(rs.x, rs.y + this.mount.riderYOffset(), rs.z, rs.yaw);
     this.playerModel.setClip(rs.moveState);
-    this.playerModel.group.visible = this.camera.mode === 'thirdPerson';
+    this.playerModel.group.visible = thirdPerson;
     this.playerModel.update(dt);
+    this.mount.render(rs, dt, thirdPerson);
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
     this.env.update(dt, this.camera.camera.position);
@@ -469,6 +498,8 @@ export class Game {
       deeds: this.meta.state.deeds,
       pathPoints: this.meta.state.pathPoints,
       perks: this.meta.state.perks,
+      mounts: this.mount.state.mounts,
+      activeMount: this.mount.state.activeMount,
       x: ph.x,
       y: ph.y,
       z: ph.z,
@@ -487,6 +518,7 @@ export class Game {
     this.entities.dispose();
     this.combat.dispose();
     this.env.dispose();
+    this.mount.dispose();
     this.playerModel.dispose();
     this.renderer.dispose();
   }

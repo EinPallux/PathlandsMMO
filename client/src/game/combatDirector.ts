@@ -42,6 +42,7 @@ import {
   DEFAULT_VENDOR_TIER,
   SETTLEMENTS,
   isAlive,
+  inCombat,
   type CombatState,
   type SpawnerState,
   type SpawnRegion,
@@ -248,6 +249,18 @@ export class CombatDirector {
   }
   get characterWaystones(): string[] {
     return [...this.discovered];
+  }
+
+  /** True while the player is flagged in combat (drives mount dismount rules). */
+  isInCombat(): boolean {
+    return inCombat(this.player, this.state.tick);
+  }
+
+  /** Debit gold if affordable (mount purchase). Returns whether it was paid. */
+  spendGold(amount: number): boolean {
+    if (amount < 0 || this.gold < amount) return false;
+    this.gold -= amount;
+    return true;
   }
 
   /** Current bag capacity (base + Deep Pockets perk bonus). */

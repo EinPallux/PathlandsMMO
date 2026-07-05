@@ -107,6 +107,35 @@ describe('player movement', () => {
     expect(p.moveState).toBe('run');
   });
 
+  it('applies a mount/perk speed multiplier to ground movement', () => {
+    const sampler = makeSampler({ groundTop: 0 });
+    const dist = (mult: number): number => {
+      const p = makePlayerPhysics(0.5, 1, 0.5);
+      p.onGround = true;
+      const it = makeMoveIntent(1, 0, false, false, 0, mult);
+      for (let i = 0; i < 60; i++) stepPlayerMovement(sampler, p, it, TICK_DT);
+      return p.x - 0.5;
+    };
+    const walk = dist(1);
+    const mounted = dist(1.6);
+    expect(mounted).toBeGreaterThan(walk * 1.5);
+    // Absurd client values are clamped, not trusted.
+    expect(dist(100)).toBeLessThanOrEqual(dist(2) + 1e-6);
+  });
+
+  it('leaves swim speed unaffected by the ground multiplier', () => {
+    // Deep water with no surface in reach → the player stays fully submerged, so
+    // the mount/perk *ground* multiplier must not touch swim speed.
+    const sampler: VoxelSampler = { isSolid: () => false, isFluid: (_x, y) => y <= 200 };
+    const swim = (mult: number): number => {
+      const p = makePlayerPhysics(0.5, 100, 0.5);
+      const it = makeMoveIntent(1, 0, false, false, 0, mult);
+      for (let i = 0; i < 20; i++) stepPlayerMovement(sampler, p, it, TICK_DT);
+      return p.x - 0.5;
+    };
+    expect(swim(1.6)).toBeCloseTo(swim(1), 5);
+  });
+
   it('is fully deterministic across two runs', () => {
     const s1 = makeSampler({ groundTop: 0, wall: (x) => x >= 3 });
     const s2 = makeSampler({ groundTop: 0, wall: (x) => x >= 3 });

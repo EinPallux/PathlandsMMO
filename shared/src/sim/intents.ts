@@ -12,6 +12,12 @@ export interface MoveIntent {
   sprint: boolean;
   /** Facing yaw in radians (from the camera). */
   yaw: number;
+  /**
+   * Ground-speed multiplier from mounts / out-of-combat perks (1 = normal). The
+   * sim clamps it, so a bad client value can never grant absurd speed — in Phase 6
+   * the server recomputes it from the authoritative mount/combat state.
+   */
+  speedMult?: number;
 }
 
 /** Acquire (or clear) the current target. */
@@ -63,6 +69,7 @@ export function makeMoveIntent(
   jump: boolean,
   sprint: boolean,
   yaw: number,
+  speedMult = 1,
 ): MoveIntent {
-  return { type: 'Move', wishX, wishZ, jump, sprint, yaw };
+  return { type: 'Move', wishX, wishZ, jump, sprint, yaw, speedMult };
 }

@@ -6,8 +6,26 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 5: meta progression (Deeds & Path Points).**
-> Pathlands now rewards the long game. A pure Deed/perk engine (`shared/meta` +
+> **Phase 4 in progress (2026-07-05) — Part 6: mounts.** The level-20 **Wolf** rides
+> the roads. A code-authored, saddled Wolf voxel model (`shared/models` — base + Dire +
+> Frostfang skins, idle/walk/run/jump gaits) carries the rider at **+60% ground speed**;
+> the speed flows through the simulation as a clamped `MoveIntent.speedMult` (so the
+> Phase-6 server can recompute it), and Trailblazer's out-of-combat perk stacks on top.
+> A client `MountController` owns which mounts the character has, enforces the GDD §7
+> rules (level 20, 40-gold sink, **outdoor-only, instant dismount on entering combat** or
+> water/a Hollow), renders the Wolf under the rider, and hands the movement tick its
+> multiplier. `G` mounts/dismounts; the Character panel gained a **Mount** section (buy /
+> ride / pick skin); the Dire & Frostfang skins unlock from the Slayer / Pathfinder
+> Deeds. Save **v7** persists owned mounts + the active skin. **223 tests green** (6 mount
+> data/model + 2 movement-multiplier + save v6→v7); `pnpm typecheck && lint && build`
+> clean; in-browser, mounting is correctly gated ("Buy Grey Wolf · Requires level 20", a
+> "Can't mount — no mount" toast on `G`) with zero console errors. Next: the endgame
+> loop, supporting systems, and the remaining quest content.
+>
+> ---
+>
+> **Part 5 (2026-07-05): meta progression (Deeds & Path Points).**
+> A pure Deed/perk engine (`shared/meta` +
 > `shared/data/deeds.ts`/`perks.ts`) tracks **9 Deeds** across four categories
 > (exploration, combat, quests, professions) over shared, tiered metrics — attuning
 > Waystones feeds Wayfarer (3) and Pathfinder (8); slaying foes feeds First Blood (10)
@@ -172,6 +190,20 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 6 done (2026-07-05):** **mounts** — the level-20 **Wolf**. A code-authored,
+> saddled Wolf voxel model (`shared/models/creatures/mounts.ts`; base + Dire + Frostfang
+> skins, idle/walk/run/jump gaits) carries the rider at **+60% ground speed**, delivered
+> through the sim as a clamped `MoveIntent.speedMult` (Trailblazer's out-of-combat perk,
+> wired here too, stacks on top). A client `MountController` owns owned-mount state,
+> enforces the GDD §7 rules (level 20, 40-gold sink, outdoor-only, auto-dismount on
+> entering combat / water / a Hollow), renders the Wolf under the rider, and feeds the
+> movement tick its multiplier. **G** mounts/dismounts; the Character panel has a **Mount**
+> section (buy / ride / pick skin); the Dire & Frostfang skins unlock from the Slayer /
+> Pathfinder Deeds. Save **v7** persists owned mounts + the active skin. 223 tests green
+> (6 mount + 2 movement-multiplier + save v6→v7); in-browser the buy button is level-gated
+> and `G` toasts correctly with zero console errors. **Next:** the endgame loop, supporting
+> systems (bank/mailbox), and the remaining quest content.
+>
 > **Part 5 done (2026-07-05):** **meta progression** — Deeds & Path Points. A pure
 > Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`): **9 Deeds** across
 > four categories (exploration, combat, quests, professions) driven by shared, tiered
@@ -229,7 +261,7 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 - [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [~] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10. _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
-- [ ] **Mounts** — Wolf mount from its PNG (+60% speed, level 20, gold sink), mount/dismount rules, 2–3 palette-variant skins as Deed/endgame rewards.
+- [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
 - [ ] **Endgame loop v1** — daily bounties, named rare-elite hunt targets with Deed tracking, Hollow boss loot tables worth re-running, profession masteries, a repeatable "restore the final Waystone" world event stub (full multiplayer version in Phase 6).
 - [ ] **Supporting systems** — bank storage in Waymeet, mailbox stub (letters from quest NPCs; player mail comes with Phase 6), improved settings, keybind remapping.
 

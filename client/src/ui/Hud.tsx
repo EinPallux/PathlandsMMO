@@ -51,7 +51,7 @@ export function Hud(): JSX.Element {
           color: colors.inkDim,
         }}
       >
-        WASD move · Shift run · Space jump · Mouse look · Wheel zoom · M map · ` dev
+        WASD move · Shift run · Space jump · G mount · Mouse look · Wheel zoom · M map · ` dev
       </div>
     </>
   );

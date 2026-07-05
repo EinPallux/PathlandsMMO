@@ -11,13 +11,14 @@
 // material stash (gathered ore/herbs/fish, counted by id).
 // v4 → v5 (Phase 4): characters gained a consumables stash (crafted potions/elixirs).
 // v5 → v6 (Phase 4): characters gained Deed progress; the account gained Path perks.
+// v6 → v7 (Phase 4): characters gained owned mounts + the active mount skin.
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -77,24 +78,31 @@ export interface CharacterSaveV6 extends CharacterSaveV5 {
   perks: Record<string, number>;
 }
 
+export interface CharacterSaveV7 extends CharacterSaveV6 {
+  /** Owned mount + skin ids (GDD §7); the base Wolf plus any Deed-unlocked skins. */
+  mounts: string[];
+  /** The mount skin the player currently rides, or null if none is chosen. */
+  activeMount: string | null;
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
 }
 
-export interface SaveGameV6 {
-  version: 6;
+export interface SaveGameV7 {
+  version: 7;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV6[];
+  characters: CharacterSaveV7[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV6;
-export type CharacterSave = CharacterSaveV6;
+export type SaveGame = SaveGameV7;
+export type CharacterSave = CharacterSaveV7;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -202,7 +210,7 @@ function deedState(v: unknown): DeedState {
   return { progress, completed: strArray(v.completed) };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV6 | null {
+function migrateCharacter(v: unknown): CharacterSaveV7 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -227,6 +235,8 @@ function migrateCharacter(v: unknown): CharacterSaveV6 | null {
     deeds: deedState(v.deeds),
     pathPoints: Math.max(0, Math.floor(num(v.pathPoints, 0))),
     perks: materialMap(v.perks),
+    mounts: strArray(v.mounts),
+    activeMount: typeof v.activeMount === 'string' ? v.activeMount : null,
   };
 }
 
@@ -248,7 +258,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV6 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV7 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -271,7 +281,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV6 {
+): CharacterSaveV7 {
   return {
     id,
     name,
@@ -294,5 +304,7 @@ export function createCharacter(
     deeds: { progress: {}, completed: [] },
     pathPoints: 0,
     perks: {},
+    mounts: [],
+    activeMount: null,
   };
 }

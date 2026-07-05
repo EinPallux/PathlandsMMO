@@ -209,6 +209,20 @@ export interface JournalUi {
   }>;
 }
 
+export interface MountUi {
+  ownsAny: boolean;
+  mounted: boolean;
+  activeId: string | null;
+  reqLevel: number;
+  cost: number;
+  /** Whether the base Wolf can be bought right now (level + gold met). */
+  canBuy: boolean;
+  /** Short reason/price line for the buy button. */
+  buyHint: string;
+  baseName: string;
+  owned: Array<{ id: string; name: string; description: string; active: boolean }>;
+}
+
 export type WeatherKind = 'clear' | 'overcast' | 'rain';
 
 export interface GameCommands {
@@ -237,6 +251,10 @@ export interface GameCommands {
   useConsumable(id: string): void;
   /** Meta: buy a rank of a Path perk. */
   buyPerk(id: string): void;
+  /** Mounts: buy the Wolf, mount/dismount, pick which owned skin to ride. */
+  buyMount(): void;
+  toggleMount(): void;
+  selectMount(id: string): void;
   /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
   acceptQuest(id: string): void;
   turnInQuest(id: string, choiceIndex: number): void;
@@ -308,6 +326,7 @@ export interface UiState {
   showCrafting: boolean;
   journal: JournalUi | null;
   showJournal: boolean;
+  mount: MountUi | null;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -336,6 +355,7 @@ export interface UiState {
   toggleCrafting: () => void;
   setJournal: (j: JournalUi) => void;
   toggleJournal: () => void;
+  setMount: (m: MountUi) => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -400,6 +420,7 @@ export const useStore = create<UiState>((set) => ({
   showCrafting: false,
   journal: null,
   showJournal: false,
+  mount: null,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -428,6 +449,7 @@ export const useStore = create<UiState>((set) => ({
   toggleCrafting: () => set((st) => ({ showCrafting: !st.showCrafting })),
   setJournal: (journal) => set({ journal }),
   toggleJournal: () => set((st) => ({ showJournal: !st.showJournal })),
+  setMount: (mount) => set({ mount }),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

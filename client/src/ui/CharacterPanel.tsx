@@ -3,7 +3,7 @@
 // unequip, right-click a bag item to sell. Reads the inventory slice the
 // CombatDirector publishes; actions go through GameCommands.
 
-import { useStore } from '../game/store.js';
+import { useStore, type MountUi } from '../game/store.js';
 import { EQUIP_SLOTS, RARITY_COLOR, type ItemDef } from '@pathlands/shared';
 import { colors, panel } from './theme.js';
 
@@ -89,6 +89,7 @@ export function CharacterPanel(): JSX.Element | null {
   const inv = useStore((s) => s.inventory);
   const combat = useStore((s) => s.combat);
   const cmd = useStore((s) => s.commands);
+  const mount = useStore((s) => s.mount);
   const toggle = useStore((s) => s.toggleChar);
   if (!show || !inv) return null;
 
@@ -185,6 +186,101 @@ export function CharacterPanel(): JSX.Element | null {
           </div>
         </div>
       </div>
+
+      <MountSection
+        mount={mount}
+        onBuy={() => cmd?.buyMount()}
+        onToggle={() => cmd?.toggleMount()}
+        onSelect={(id) => cmd?.selectMount(id)}
+      />
+    </div>
+  );
+}
+
+function MountSection({
+  mount,
+  onBuy,
+  onToggle,
+  onSelect,
+}: {
+  mount: MountUi | null;
+  onBuy: () => void;
+  onToggle: () => void;
+  onSelect: (id: string) => void;
+}): JSX.Element | null {
+  if (!mount) return null;
+  return (
+    <div style={{ marginTop: 12, borderTop: `1px solid ${colors.panelBorder}`, paddingTop: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: mount.ownsAny ? 6 : 0,
+        }}
+      >
+        <span style={{ color: colors.inkDim, fontSize: 11 }}>
+          MOUNT{' '}
+          <span style={{ color: mount.mounted ? colors.gold : colors.inkDim }}>
+            {mount.mounted ? '· riding' : mount.ownsAny ? '· on foot' : ''}
+          </span>
+        </span>
+        {mount.ownsAny ? (
+          <button
+            onClick={onToggle}
+            style={{
+              background: '#3a2c1e',
+              border: `1px solid ${colors.gold}`,
+              borderRadius: 5,
+              color: colors.gold,
+              cursor: 'pointer',
+              fontSize: 11,
+              padding: '3px 10px',
+            }}
+          >
+            {mount.mounted ? 'Dismount (G)' : 'Ride (G)'}
+          </button>
+        ) : (
+          <button
+            disabled={!mount.canBuy}
+            onClick={onBuy}
+            title={`Requires level ${mount.reqLevel}`}
+            style={{
+              background: mount.canBuy ? '#3a2c1e' : 'transparent',
+              border: `1px solid ${mount.canBuy ? colors.gold : colors.panelBorder}`,
+              borderRadius: 5,
+              color: mount.canBuy ? colors.gold : colors.inkDim,
+              cursor: mount.canBuy ? 'pointer' : 'not-allowed',
+              fontSize: 11,
+              padding: '3px 10px',
+            }}
+          >
+            Buy {mount.baseName} · {mount.buyHint}
+          </button>
+        )}
+      </div>
+      {mount.owned.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {mount.owned.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => onSelect(m.id)}
+              title={m.description}
+              style={{
+                background: m.active ? '#3a2c1e' : '#1c1610',
+                border: `1px solid ${m.active ? colors.gold : colors.panelBorder}`,
+                borderRadius: 5,
+                color: m.active ? colors.gold : colors.ink,
+                cursor: 'pointer',
+                fontSize: 11,
+                padding: '2px 8px',
+              }}
+            >
+              {m.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

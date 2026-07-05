@@ -14,3 +14,4 @@ export * from './professions.js';
 export * from './recipes.js';
 export * from './deeds.js';
 export * from './perks.js';
+export * from './mounts.js';

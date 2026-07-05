@@ -4,6 +4,32 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 6 — mounts (2026-07-05)
+
+- **`shared/data/mounts`** — the mount catalog: the level-20, 40-gold **Grey Wolf**
+  (+60% ground speed) plus two Deed-unlocked skins (Dire Wolf ← Slayer, Frostfang Wolf
+  ← Pathfinder). `MOUNT_MIN_LEVEL`, `mountById`, `mountForDeed`, `BASE_MOUNT` helpers.
+- **`shared/models/creatures/mounts`** — a rideable, saddled Wolf voxel model authored
+  in code (ART_GUIDE §2), stockier than the enemy wolf, with idle/walk/run/jump gaits
+  and three palette skins; `buildMountModel` registry + cache.
+- **Movement** — `MoveIntent.speedMult` (optional, default 1) applies a **clamped**
+  ground-speed multiplier in `stepPlayerMovement` (`MIN/MAX_SPEED_MULT`); swimming is
+  unaffected. Deterministic and server-recomputable, so no client value can grant
+  absurd speed.
+- **Save v7** — characters gained `mounts` (owned ids) + `activeMount` (the ridden
+  skin); `migrate()` walks v6 saves forward with no mounts.
+- **`client/game/mountController`** — owns owned-mount state, mount/dismount and its
+  rules (level 20, outdoor-only via an underground check, **instant dismount on entering
+  combat**/water/a Hollow), renders the Wolf under the interpolated rider, and hands the
+  movement tick a speed multiplier. Buys the Wolf (debiting gold via a new
+  `CombatDirector.spendGold`), and grants a skin when its Deed completes
+  (`MetaDirector.onDeedComplete`). Trailblazer's out-of-combat move-speed perk is now
+  wired through the same multiplier.
+- **`client/ui`** — the Character panel gained a **Mount** section (buy / ride / pick
+  skin); `G` toggles the mount; the controls hint lists "G mount".
+- **Tests** — +9 (6 mount data/model + 2 movement-multiplier, save v6→v7 migration);
+  223 total.
+
 ### Part 5 — meta progression: Deeds & Path Points (2026-07-05)
 
 - **`shared/data/deeds` / `shared/data/perks`** — **9 Deeds** across four categories
