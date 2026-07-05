@@ -21,6 +21,7 @@ import {
   skillsKnownAt,
   levelProgressFromTotalXp,
   totalXpToReachLevel,
+  xpToCompleteLevel,
   baseStatsAtLevel,
   addStats,
   canEquip,
@@ -28,6 +29,10 @@ import {
   buildEnemyLootTable,
   EquipSlot,
   RING_SLOTS,
+  nearestWaystone,
+  nearestActivated,
+  waystoneById,
+  travelFee,
   isAlive,
   type CombatState,
   type SpawnerState,
@@ -47,6 +52,7 @@ import {
   type HotbarSlot,
   type InventoryUi,
   type Nameplate,
+  type WaystoneUi,
 } from './store.js';
 
 const PLAYER_ID = 'player';
@@ -55,6 +61,8 @@ const DYING_SECONDS = 1.2;
 const PICK_SCREEN_RADIUS = 0.22; // NDC distance for crosshair target picking
 const BAG_SIZE = 24;
 
+const WAYSTONE_RANGE = 7; // metres to attune / use a Waystone
+
 /** Progression a character carries into the world (from the save). */
 export interface Progression {
   level: number;
@@ -62,6 +70,7 @@ export interface Progression {
   gold: number;
   inventory: ItemStackSave[];
   equipment: Record<string, ItemDef>;
+  discoveredWaystones: string[];
 }
 
 interface RenderEnemy {
@@ -105,6 +114,7 @@ export class CombatDirector {
   private gold: number;
   private inventory: ItemStackSave[];
   private equipment: Record<string, ItemDef>;
+  private discovered: Set<string>;
 
   private readonly renders = new Map<string, RenderEnemy>();
   private dying: Dying[] = [];
@@ -132,6 +142,7 @@ export class CombatDirector {
     this.gold = progression?.gold ?? 0;
     this.inventory = progression?.inventory ? [...progression.inventory] : [];
     this.equipment = progression?.equipment ? { ...progression.equipment } : {};
+    this.discovered = new Set(progression?.discoveredWaystones ?? []);
     this.spawnX = spawnX;
     this.spawnZ = spawnZ;
     this.respawnAt = respawnAt;
@@ -216,6 +227,9 @@ export class CombatDirector {
   }
   get characterEquipment(): Record<string, ItemDef> {
     return this.equipment;
+  }
+  get characterWaystones(): string[] {
+    return [...this.discovered];
   }
 
   setClass(cls: CharacterClass): void {
@@ -338,9 +352,68 @@ export class CombatDirector {
   releaseSpirit(): void {
     const p = this.player;
     if (!p.dead) return;
-    this.respawnAt(this.spawnX, this.spawnZ);
-    const fresh = this.makePlayer(this.spawnX, this.spawnZ);
+    // Respawn at the nearest activated Waystone, else the starting plaza (GDD §7).
+    const ws = nearestActivated(p.x, p.z, this.discovered);
+    const rx = ws ? ws.x : this.spawnX;
+    const rz = ws ? ws.z : this.spawnZ;
+    this.respawnAt(rx, rz);
+    const fresh = this.makePlayer(rx, rz);
     this.state.entities.set(PLAYER_ID, fresh);
+  }
+
+  /** The Waystone within reach of the player, or null (for the interact prompt). */
+  private nearbyWaystone(): ReturnType<typeof nearestWaystone> {
+    const p = this.player;
+    return nearestWaystone(p.x, p.z, WAYSTONE_RANGE);
+  }
+
+  /**
+   * Attune to a nearby Waystone if new (discovery XP), then open the travel list.
+   * Returns true if a Waystone was in reach.
+   */
+  interactWaystone(): boolean {
+    const ws = this.nearbyWaystone();
+    if (!ws) return false;
+    if (!this.discovered.has(ws.id)) {
+      this.discovered.add(ws.id);
+      const bonus = Math.round(xpToCompleteLevel(this.level) * 0.05);
+      this.totalXp += bonus;
+      this.pushFloater(this.player, `Waystone attuned! +${bonus} XP`, 'xp');
+      this.relevelIfNeeded();
+    }
+    useStore.getState().openTravel();
+    return true;
+  }
+
+  /** Pay the fee and teleport to a discovered Waystone (must stand at one). */
+  travelTo(id: string): void {
+    const from = this.nearbyWaystone();
+    const to = waystoneById(id);
+    if (!from || !to || from.id === to.id) return;
+    if (!this.discovered.has(id)) return;
+    const fee = travelFee(from, to, this.level);
+    if (this.gold < fee) {
+      this.pushFloater(this.player, 'Not enough gold', 'miss');
+      return;
+    }
+    this.gold -= fee;
+    this.respawnAt(to.x, to.z);
+    const p = this.player;
+    p.x = to.x;
+    p.z = to.z;
+  }
+
+  /** Level up the player if accumulated XP crossed a threshold (shared with kills). */
+  private relevelIfNeeded(): void {
+    const prog = levelProgressFromTotalXp(this.totalXp);
+    if (prog.level <= this.level) return;
+    this.level = prog.level;
+    const cur = this.player;
+    const leveled = this.makePlayer(cur.x, cur.z);
+    leveled.targetId = cur.targetId;
+    leveled.autoAttack = cur.autoAttack;
+    this.state.entities.set(PLAYER_ID, leveled);
+    this.pushFloater(leveled, `Level ${this.level}!`, 'xp');
   }
 
   private dist(a: CombatEntity, b: CombatEntity): number {
@@ -560,6 +633,7 @@ export class CombatDirector {
     };
     useStore.getState().setCombat(combat);
     useStore.getState().setInventory(this.inventoryUi(p));
+    useStore.getState().setWaystone(this.waystoneUi());
 
     // Enemy HP nameplates (merged with NPC plates by the game).
     const plates: Nameplate[] = [];
@@ -583,6 +657,25 @@ export class CombatDirector {
 
   /** Latest projected enemy nameplates (the game merges these with NPC plates). */
   enemyPlates: Nameplate[] = [];
+
+  /** Waystone prompt + travel list (activated stones, with the fee from here). */
+  private waystoneUi(): WaystoneUi {
+    const here = this.nearbyWaystone();
+    const discovered = [...this.discovered]
+      .map((id) => waystoneById(id))
+      .filter((w): w is NonNullable<typeof w> => !!w)
+      .map((w) => ({
+        id: w.id,
+        name: w.name,
+        fee: here && here.id !== w.id ? travelFee(here, w, this.level) : 0,
+      }));
+    return {
+      nearbyName: here ? here.name : null,
+      nearbyNew: here ? !this.discovered.has(here.id) : false,
+      atWaystone: !!here,
+      discovered,
+    };
+  }
 
   /** Build the character-sheet payload (primary + derived stats, bag, equipment). */
   private inventoryUi(p: CombatEntity): InventoryUi {

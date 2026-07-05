@@ -118,6 +118,7 @@ export class Game {
             gold: character.gold,
             inventory: character.inventory,
             equipment: character.equipment,
+            discoveredWaystones: character.discoveredWaystones,
           }
         : undefined,
     );
@@ -167,6 +168,8 @@ export class Game {
       equipItem: (index) => this.combat.equipItem(index),
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
+      interactWaystone: () => void this.combat.interactWaystone(),
+      travelTo: (id) => this.combat.travelTo(id),
     };
     useStore.getState().setCommands(commands);
   }
@@ -221,12 +224,12 @@ export class Game {
       if (this.input.wasTapped(code)) this.combat.castSlot(i);
     }
 
-    // Talk to nearby NPCs with E (advances dialogue if already open).
+    // Interact with E: advance dialogue → attune/use a Waystone → talk to an NPC.
     if (this.input.wasTapped('KeyE')) {
       const store = useStore.getState();
       if (store.dialogue) {
         store.advanceDialogue();
-      } else {
+      } else if (!this.combat.interactWaystone()) {
         const npc = this.entities.interactNearest(
           this.controller.physics.x,
           this.controller.physics.z,
@@ -234,7 +237,10 @@ export class Game {
         if (npc) store.openDialogue(npc.name, npc.dialogue);
       }
     }
-    if (this.input.wasTapped('Escape')) useStore.getState().closeDialogue();
+    if (this.input.wasTapped('Escape')) {
+      useStore.getState().closeDialogue();
+      useStore.getState().closeTravel();
+    }
 
     if (this.camera.mode === 'freeFly') {
       const sp = FREE_FLY_SPEED * dt * (this.input.isDown('ShiftLeft') ? 3 : 1);
@@ -371,6 +377,7 @@ export class Game {
       gold: this.combat.characterGold,
       inventory: this.combat.characterInventory,
       equipment: this.combat.characterEquipment,
+      discoveredWaystones: this.combat.characterWaystones,
       x: ph.x,
       y: ph.y,
       z: ph.z,

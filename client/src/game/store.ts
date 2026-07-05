@@ -87,6 +87,17 @@ export interface InventoryUi {
   stats: CharStats;
 }
 
+export interface WaystoneUi {
+  /** Name of the Waystone within reach, or null. */
+  nearbyName: string | null;
+  /** Whether the nearby Waystone is not yet attuned. */
+  nearbyNew: boolean;
+  /** Whether the player is standing at any Waystone (can travel). */
+  atWaystone: boolean;
+  /** Activated Waystones + the fee to travel there from here (0 = current/none). */
+  discovered: Array<{ id: string; name: string; fee: number }>;
+}
+
 export interface DialogueState {
   name: string;
   lines: string[];
@@ -112,6 +123,9 @@ export interface GameCommands {
   equipItem(index: number): void;
   unequipItem(slot: string): void;
   sellItem(index: number): void;
+  /** Waystones: attune/open the nearby stone, fast-travel to a discovered one. */
+  interactWaystone(): void;
+  travelTo(id: string): void;
 }
 
 export interface UiState {
@@ -154,6 +168,8 @@ export interface UiState {
   floaters: Floater[];
   inventory: InventoryUi | null;
   showChar: boolean;
+  waystone: WaystoneUi | null;
+  showTravel: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -166,6 +182,9 @@ export interface UiState {
   setCombat: (c: CombatUi) => void;
   setFloaters: (f: Floater[]) => void;
   setInventory: (i: InventoryUi) => void;
+  setWaystone: (w: WaystoneUi) => void;
+  openTravel: () => void;
+  closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
   advanceDialogue: () => void;
   closeDialogue: () => void;
@@ -209,6 +228,8 @@ export const useStore = create<UiState>((set) => ({
   floaters: [],
   inventory: null,
   showChar: false,
+  waystone: null,
+  showTravel: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -221,6 +242,9 @@ export const useStore = create<UiState>((set) => ({
   setCombat: (combat) => set({ combat }),
   setFloaters: (floaters) => set({ floaters }),
   setInventory: (inventory) => set({ inventory }),
+  setWaystone: (waystone) => set({ waystone }),
+  openTravel: () => set({ showTravel: true }),
+  closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),
   advanceDialogue: () =>
     set((st) => {
