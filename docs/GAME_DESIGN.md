@@ -279,6 +279,19 @@ Title screen → (Phase 6: login/register) → character list → creation (clas
 
 HUD (frames, hotbar, XP, buffs, minimap, tracker, chat[P6]) · Character sheet · Inventory/bags · Skill book · Path (spec) picker · Quest log · World map · Wayfarer's Journal (Deeds/titles/perks/stats) · Professions & crafting · Vendor · Trainer · Bank · Mailbox · Settings (graphics/audio/keybinds/interface) · Title/character screens · (P6) Social panel, party/guild frames, trade, login. Style per ART_GUIDE §UI.
 
+> **Implementation (Phase 4 Part 7) — Bank & Mailbox.** The **Waymeet Bank** is a
+> single `BankPanel` (opened with **B**) with two tabs: a **Vault** (shared item storage,
+> `BANK_SIZE` = 50 slots; click to move stacks between bag and vault) and **Mail** (an
+> inbox of letters from world NPCs, each with an optional gold gift claimed once). Bank +
+> mail persist per-character in **save v8**; mail is seeded from `STARTER_MAIL`
+> (`shared/data/mail.ts`), and reaching **level 5** (the Waymeet band, WORLD.md) delivers
+> the Steward's welcome letter. Provisional for now: the panel is key-toggled from anywhere
+> rather than gated to the physical bank building / mailbox prop (like the crafting panel —
+> station-proximity gating is a later pass); mail gifts are gold-only (item attachments and
+> player-to-player mail arrive with Phase 6); the vault is per-character (account-shared
+> storage is a Phase-6 consideration). **Settings & keybind remapping** from the deliverable
+> remain for a later part / Phase 5 polish.
+
 ## 15. Tuning Targets (Phase 5 checklist)
 
 - Time-to-kill, at-level solo: normal mob 8–15 s; elite 25–45 s; Hollow boss 90–180 s.

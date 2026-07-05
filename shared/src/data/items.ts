@@ -39,6 +39,9 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
 /** The two interchangeable ring slots (for auto-placing a ring). */
 export const RING_SLOTS: readonly EquipSlot[] = [EquipSlot.Ring1, EquipSlot.Ring2];
 
+/** Waymeet vault capacity — the shared bank storage (GDD §Supporting systems). */
+export const BANK_SIZE = 50;
+
 export enum Rarity {
   Common = 'common',
   Uncommon = 'uncommon',

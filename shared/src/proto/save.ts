@@ -12,13 +12,16 @@
 // v4 → v5 (Phase 4): characters gained a consumables stash (crafted potions/elixirs).
 // v5 → v6 (Phase 4): characters gained Deed progress; the account gained Path perks.
 // v6 → v7 (Phase 4): characters gained owned mounts + the active mount skin.
+// v7 → v8 (Phase 4): characters gained the Waymeet bank vault + a mail inbox.
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
+import type { MailLetterSave } from '../data/mail.js';
+import { starterInbox } from '../data/mail.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -85,24 +88,31 @@ export interface CharacterSaveV7 extends CharacterSaveV6 {
   activeMount: string | null;
 }
 
+export interface CharacterSaveV8 extends CharacterSaveV7 {
+  /** Waymeet vault contents (shared storage, up to BANK_SIZE). */
+  bank: ItemStackSave[];
+  /** Mail inbox: letters from world NPCs with optional (claimable) gold gifts. */
+  mail: MailLetterSave[];
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
 }
 
-export interface SaveGameV7 {
-  version: 7;
+export interface SaveGameV8 {
+  version: 8;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV7[];
+  characters: CharacterSaveV8[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV7;
-export type CharacterSave = CharacterSaveV7;
+export type SaveGame = SaveGameV8;
+export type CharacterSave = CharacterSaveV8;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -198,6 +208,20 @@ function materialMap(v: unknown): Record<string, number> {
   return out;
 }
 
+function mailInbox(v: unknown): MailLetterSave[] {
+  if (!Array.isArray(v)) return starterInbox();
+  return v
+    .filter((m): m is Record<string, unknown> => isRecord(m) && typeof m.id === 'string')
+    .map((m) => ({
+      id: str(m.id, ''),
+      sender: str(m.sender, 'Unknown'),
+      subject: str(m.subject, ''),
+      body: str(m.body, ''),
+      ...(typeof m.gold === 'number' && m.gold > 0 ? { gold: Math.floor(m.gold) } : {}),
+      claimed: m.claimed === true,
+    }));
+}
+
 function deedState(v: unknown): DeedState {
   if (!isRecord(v)) return { progress: {}, completed: [] };
   const progress: Record<string, number> = {};
@@ -210,7 +234,7 @@ function deedState(v: unknown): DeedState {
   return { progress, completed: strArray(v.completed) };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV7 | null {
+function migrateCharacter(v: unknown): CharacterSaveV8 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -237,6 +261,8 @@ function migrateCharacter(v: unknown): CharacterSaveV7 | null {
     perks: materialMap(v.perks),
     mounts: strArray(v.mounts),
     activeMount: typeof v.activeMount === 'string' ? v.activeMount : null,
+    bank: itemStacks(v.bank),
+    mail: mailInbox(v.mail),
   };
 }
 
@@ -258,7 +284,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV7 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV8 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -281,7 +307,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV7 {
+): CharacterSaveV8 {
   return {
     id,
     name,
@@ -306,5 +332,7 @@ export function createCharacter(
     perks: {},
     mounts: [],
     activeMount: null,
+    bank: [],
+    mail: starterInbox(),
   };
 }

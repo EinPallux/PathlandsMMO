@@ -6,7 +6,19 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 6: mounts.** The level-20 **Wolf** rides
+> **Phase 4 in progress (2026-07-05) — Part 7: supporting systems (Bank & Mailbox).**
+> The **Waymeet Bank** opens with **B**: a two-tab panel with a **Vault** (a 50-slot shared
+> item store — click to move stacks between bag and vault) and **Mail** (an inbox of letters
+> from world NPCs, each with an optional gold gift claimed once). A new character starts with
+> two welcome letters (`shared/data/mail.ts`), and reaching **level 5** — the Waymeet band
+> per WORLD.md — delivers the Steward's stipend. Bank + mail persist per-character in **save
+> v8**. **228 tests green** (mail data/validity + save v7→v8); `pnpm typecheck && lint &&
+build` clean; in-browser, `B` opens the bank with both starter letters and a working "Take
+> 25g" claim, zero console errors. Next: the endgame loop and the remaining quest content.
+>
+> ---
+>
+> **Part 6 (2026-07-05): mounts.** The level-20 **Wolf** rides
 > the roads. A code-authored, saddled Wolf voxel model (`shared/models` — base + Dire +
 > Frostfang skins, idle/walk/run/jump gaits) carries the rider at **+60% ground speed**;
 > the speed flows through the simulation as a clamped `MoveIntent.speedMult` (so the
@@ -190,6 +202,17 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 7 done (2026-07-05):** **supporting systems** — the **Waymeet Bank & Mailbox**.
+> A single `BankPanel` (**B**) with two tabs: a **Vault** (`BANK_SIZE` = 50 shared storage
+> slots; click a bag item to deposit, a vault item to withdraw) and **Mail** (an inbox of
+> letters from world NPCs, each with a claim-once gold gift). Mail is data
+> (`shared/data/mail.ts`): new characters open with two welcome letters, and reaching level 5
+> delivers the Waymeet Steward's stipend. Bank deposit/withdraw + mail claim/deliver live on
+> the `CombatDirector` (they move items + gold); save **v8** persists the vault + inbox. 228
+> tests green (mail validity + save v7→v8); in-browser `B` opens the bank with both starter
+> letters + a working "Take 25g" claim, zero console errors. **Next:** the endgame loop and
+> the remaining quest content.
+>
 > **Part 6 done (2026-07-05):** **mounts** — the level-20 **Wolf**. A code-authored,
 > saddled Wolf voxel model (`shared/models/creatures/mounts.ts`; base + Dire + Frostfang
 > skins, idle/walk/run/jump gaits) carries the rider at **+60% ground speed**, delivered
@@ -263,7 +286,7 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 - [~] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10. _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
 - [ ] **Endgame loop v1** — daily bounties, named rare-elite hunt targets with Deed tracking, Hollow boss loot tables worth re-running, profession masteries, a repeatable "restore the final Waystone" world event stub (full multiplayer version in Phase 6).
-- [ ] **Supporting systems** — bank storage in Waymeet, mailbox stub (letters from quest NPCs; player mail comes with Phase 6), improved settings, keybind remapping.
+- [~] **Supporting systems** — the **Waymeet Bank** (a 50-slot shared vault + a mailbox) as a single `BankPanel` (**B**) with Vault / Mail tabs: move stacks between bag and vault; read letters from world NPCs and claim their gold gifts; the Steward's welcome letter is delivered on reaching level 5. Save v8 persists the vault + inbox. _(Remaining: bank-building/mailbox-prop gating, item mail attachments, improved settings, and keybind remapping.)_
 
 ### Acceptance Criteria
 

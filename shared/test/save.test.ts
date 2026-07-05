@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 7,
+      version: 8,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -55,12 +55,37 @@ describe('save schema', () => {
           perks: { deepPockets: 2 },
           mounts: ['wolf', 'frostWolf'],
           activeMount: 'frostWolf',
+          bank: [{ item: { id: 'stored', name: 'Stored Blade' } as never, qty: 1 }],
+          mail: [
+            {
+              id: 'mail_welcome',
+              sender: 'Elder Rowan of Brookhollow',
+              subject: 'The Road Awaits',
+              body: 'Take this purse.',
+              gold: 25,
+              claimed: false,
+            },
+          ],
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v7 (pre-bank/mail) save, defaulting a vault + starter inbox', () => {
+    const v7 = {
+      version: 7,
+      account: { pathPoints: 0 },
+      characters: [{ name: 'Vaultless', class: 'mage', mounts: ['wolf'], activeMount: 'wolf' }],
+    };
+    const c = migrate(v7).characters[0]!;
+    expect(c.bank).toEqual([]);
+    // Pre-mail saves receive the starter inbox on upgrade.
+    expect(c.mail.length).toBeGreaterThan(0);
+    expect(c.mail.every((m) => m.claimed === false)).toBe(true);
+    expect(c.mail.some((m) => m.id === 'mail_welcome')).toBe(true);
   });
 
   it('migrates a v6 (pre-mount) save, defaulting no mounts', () => {

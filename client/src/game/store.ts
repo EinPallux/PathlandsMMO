@@ -209,6 +209,24 @@ export interface JournalUi {
   }>;
 }
 
+export interface BankUi {
+  size: number;
+  items: ItemStackSave[];
+}
+
+export interface MailUi {
+  letters: Array<{
+    id: string;
+    sender: string;
+    subject: string;
+    body: string;
+    gold: number;
+    claimed: boolean;
+  }>;
+  /** Letters with an unclaimed gold gift (drives the mail badge). */
+  unread: number;
+}
+
 export interface MountUi {
   ownsAny: boolean;
   mounted: boolean;
@@ -255,6 +273,10 @@ export interface GameCommands {
   buyMount(): void;
   toggleMount(): void;
   selectMount(id: string): void;
+  /** Bank + mail: deposit a bag item, withdraw a vault item, claim a letter's gift. */
+  depositItem(index: number): void;
+  withdrawItem(index: number): void;
+  claimMail(id: string): void;
   /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
   acceptQuest(id: string): void;
   turnInQuest(id: string, choiceIndex: number): void;
@@ -327,6 +349,9 @@ export interface UiState {
   journal: JournalUi | null;
   showJournal: boolean;
   mount: MountUi | null;
+  bank: BankUi | null;
+  mail: MailUi | null;
+  showBank: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -356,6 +381,9 @@ export interface UiState {
   setJournal: (j: JournalUi) => void;
   toggleJournal: () => void;
   setMount: (m: MountUi) => void;
+  setBank: (b: BankUi) => void;
+  setMail: (m: MailUi) => void;
+  toggleBank: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -421,6 +449,9 @@ export const useStore = create<UiState>((set) => ({
   journal: null,
   showJournal: false,
   mount: null,
+  bank: null,
+  mail: null,
+  showBank: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -450,6 +481,9 @@ export const useStore = create<UiState>((set) => ({
   setJournal: (journal) => set({ journal }),
   toggleJournal: () => set((st) => ({ showJournal: !st.showJournal })),
   setMount: (mount) => set({ mount }),
+  setBank: (bank) => set({ bank }),
+  setMail: (mail) => set({ mail }),
+  toggleBank: () => set((st) => ({ showBank: !st.showBank })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

@@ -132,6 +132,8 @@ export class Game {
             inventory: character.inventory,
             equipment: character.equipment,
             discoveredWaystones: character.discoveredWaystones,
+            bank: character.bank,
+            mail: character.mail,
           }
         : undefined,
     );
@@ -231,6 +233,9 @@ export class Game {
       buyMount: () => this.mount.buyMount(),
       toggleMount: () => this.mount.toggle(),
       selectMount: (id) => this.mount.selectMount(id),
+      depositItem: (index) => this.combat.depositItem(index),
+      withdrawItem: (index) => this.combat.withdrawItem(index),
+      claimMail: (id) => this.combat.claimMail(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -280,6 +285,7 @@ export class Game {
     if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
     if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
     if (this.input.wasTapped('KeyJ')) useStore.getState().toggleJournal();
+    if (this.input.wasTapped('KeyB')) useStore.getState().toggleBank();
     if (this.input.wasTapped('KeyG')) this.mount.toggle();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
@@ -500,6 +506,8 @@ export class Game {
       perks: this.meta.state.perks,
       mounts: this.mount.state.mounts,
       activeMount: this.mount.state.activeMount,
+      bank: this.combat.characterBank,
+      mail: this.combat.characterMail,
       x: ph.x,
       y: ph.y,
       z: ph.z,

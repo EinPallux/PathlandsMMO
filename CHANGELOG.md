@@ -4,6 +4,23 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 7 — supporting systems: Bank & Mailbox (2026-07-05)
+
+- **`shared/data/mail`** — the mailbox stub: a `MailLetter` schema, the `STARTER_MAIL`
+  inbox (a Brookhollow welcome + a Waymeet-Steward intro), the level-5 `WAYMEET_WELCOME`
+  stipend letter, and `starterInbox()` / `mailById` helpers. `BANK_SIZE` (50) added to
+  `shared/data/items`.
+- **Save v8** — characters gained a `bank` (vault item stacks) and a `mail` inbox;
+  `migrate()` walks v7 forward, seeding the starter inbox for pre-mail saves.
+- **`client/game/combatDirector`** — bank `depositItem` / `withdrawItem` (moving stacks
+  between bag and vault with capacity checks) and mail `claimMail` (grants the gold gift
+  once) / `deliverMail` (append a letter, deduped). Reaching level 5 delivers the Waymeet
+  welcome letter. Publishes bank + mail store slices.
+- **`client/ui`** — a **BankPanel** (`B`) with **Vault** and **Mail** tabs: the vault shows
+  the stored stacks + the bag side-by-side (click to move), and the mail tab lists letters
+  with sender/subject/body and a claim button; the tab shows an unread-gift badge.
+- **Tests** — +5 (mail content/inbox validity + a save v7→v8 migration check); 228 total.
+
 ### Part 6 — mounts (2026-07-05)
 
 - **`shared/data/mounts`** — the mount catalog: the level-20, 40-gold **Grey Wolf**
