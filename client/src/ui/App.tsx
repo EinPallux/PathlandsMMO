@@ -7,6 +7,7 @@ import { DevOverlay } from './DevOverlay.js';
 import { DebugMap } from './DebugMap.js';
 import { Nameplates } from './Nameplates.js';
 import { Dialogue } from './Dialogue.js';
+import { Minimap } from './Minimap.js';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,6 +30,7 @@ export function App(): JSX.Element {
       <canvas id="game-canvas" ref={canvasRef} />
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         {ready && <Nameplates />}
+        {ready && <Minimap />}
         {ready && <Hud />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}

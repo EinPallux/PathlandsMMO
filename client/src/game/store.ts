@@ -44,6 +44,13 @@ export interface UiState {
   moveState: string;
   timeOfDay: number;
 
+  /** Mutable per-frame player transform for the minimap (read imperatively, no re-render). */
+  live: { x: number; z: number; yaw: number };
+
+  /** Fog-of-discovery grid (revealed cells), and its dimension. Set once by the game. */
+  discovery: Uint8Array | null;
+  discoveryN: number;
+
   freeFly: boolean;
   showMap: boolean;
   showDev: boolean;
@@ -83,6 +90,11 @@ export const useStore = create<UiState>((set) => ({
   biome: '—',
   moveState: 'idle',
   timeOfDay: 0.36,
+
+  live: { x: 0, z: 0, yaw: 0 },
+
+  discovery: null,
+  discoveryN: 0,
 
   freeFly: false,
   showMap: false,

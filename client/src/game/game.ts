@@ -21,6 +21,7 @@ import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
 import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
+import { Discovery } from './discovery.js';
 import { useStore, type GameCommands } from './store.js';
 
 // Brookhollow plaza, just north of the fountain (which sits at 1536,1536).
@@ -44,6 +45,7 @@ export class Game {
   private controller: PlayerController;
   private playerModel: ModelObject;
   private currentClass: CharacterClass;
+  private readonly discovery: Discovery;
 
   private accumulator = 0;
   private lastTime = 0;
@@ -75,6 +77,11 @@ export class Game {
     this.chunks = new ChunkManager(this.scene, WORLD_SEED, viewDist, this.propRenderer);
     this.entities = new EntityManager(this.scene, this.world);
     this.env = new Environment(this.scene, viewDist);
+
+    this.discovery = new Discovery(WORLD_SEED);
+    useStore
+      .getState()
+      .setSnapshot({ discovery: this.discovery.grid, discoveryN: this.discovery.n });
 
     this.input = new Input(canvas);
 
@@ -224,6 +231,13 @@ export class Game {
       this.canvas.clientHeight,
     );
     useStore.getState().setNameplates(this.entities.nameplates);
+
+    this.discovery.reveal(rs.x, rs.z);
+    this.discovery.tick(dt);
+    const live = useStore.getState().live;
+    live.x = rs.x;
+    live.z = rs.z;
+    live.yaw = rs.yaw;
 
     this.renderer.render(this.scene, this.camera.camera);
 
