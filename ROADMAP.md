@@ -13,10 +13,13 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > wildlife (deer/stag/rabbit/bird/fish); a live minimap and a world atlas with
 > POIs, roads and fog-of-discovery; five carved Hollow entrances with themed
 > portals; and weather (clear/overcast/rain) with night-emissive windows.
-> Verified via `pnpm typecheck && lint && test (70) && build` and headless-Chromium
+> Verified via `pnpm typecheck && lint && test (71) && build` and headless-Chromium
 > passes (Brookhollow with NPCs, world map with all settlements, Briarhollow in the
-> rain). Also landed the Phase-1 adversarial-review fixes (border culling, chunk
-> streaming robustness, deterministic movement).
+> rain). A four-dimension adversarial review of the Phase-2 code landed six fixes:
+> deterministic `sqrt` in the authored layer, settlement plateaus rebuilt from the
+> building grid (no more floating/buried outer-ring houses), a shared `deepStone`
+> helper so collision matches meshing on Peaks crystal veins, robust chunk-worker
+> error recovery, and Hollow-bowl prop exclusion.
 > Next up: **Phase 3 — Combat, Classes & Character Growth**.
 > _(Update this block at the end of every session.)_
 
