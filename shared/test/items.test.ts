@@ -9,12 +9,15 @@ import {
   weaponDps,
   armorRating,
   canEquip,
+  canWearArmor,
+  rollItemStats,
   generateItem,
   rollLoot,
   statTotal,
   makeRng,
   CharacterClass,
   WORLD_SEED,
+  FAVORED_STATS,
   type ItemDef,
   type LootTable,
 } from '../src/index.js';
@@ -188,5 +191,54 @@ describe('Loot rolls (GDD §6)', () => {
       r.items.filter((s) => s.item.slot === EquipSlot.Ring1 || s.item.slot === EquipSlot.Amulet)
         .length,
     ).toBe(1);
+  });
+});
+
+describe('Equip-restriction regressions (GDD §6)', () => {
+  it('a generated shield is gated to plate-wearers (casters cannot equip it)', () => {
+    const shield = generateItem(makeRng(WORLD_SEED, 'shield'), {
+      slot: EquipSlot.OffHand,
+      rarity: Rarity.Common,
+      reqLevel: 10,
+      forClass: CharacterClass.Warrior,
+    });
+    expect(shield.armorClass).toBe(ArmorClass.Plate);
+    expect((shield.armor ?? 0) > 0).toBe(true);
+    expect(canEquip(CharacterClass.Warrior, 10, shield)).toBe(true);
+    expect(canEquip(CharacterClass.Mage, 30, shield)).toBe(false); // was true — free armor exploit
+  });
+
+  it('Warriors may wear mail and plate; others only their class armor', () => {
+    expect(canWearArmor(CharacterClass.Warrior, ArmorClass.Plate)).toBe(true);
+    expect(canWearArmor(CharacterClass.Warrior, ArmorClass.Mail)).toBe(true); // was false — dead content
+    expect(canWearArmor(CharacterClass.Warrior, ArmorClass.Cloth)).toBe(false);
+    expect(canWearArmor(CharacterClass.Ranger, ArmorClass.Leather)).toBe(true);
+    expect(canWearArmor(CharacterClass.Mage, ArmorClass.Plate)).toBe(false);
+    const mailChest: ItemDef = {
+      id: 'm',
+      name: 'Mail Chest',
+      slot: EquipSlot.Chest,
+      rarity: Rarity.Common,
+      ilvl: 12,
+      reqLevel: 12,
+      armorClass: ArmorClass.Mail,
+      stats: {},
+      value: 10,
+    };
+    expect(canEquip(CharacterClass.Warrior, 12, mailChest)).toBe(true);
+  });
+
+  it('rollItemStats never exceeds the budget, even at ilvl 1', () => {
+    const rng = makeRng(WORLD_SEED, 'budget2');
+    for (let budget = 1; budget <= 40; budget++) {
+      for (let i = 0; i < 6; i++) {
+        const stats = rollItemStats(rng, budget, FAVORED_STATS[CharacterClass.Priest]);
+        const total = statTotal(stats);
+        const nonZero = Object.values(stats).filter((v) => (v ?? 0) > 0).length;
+        expect(total, `budget ${budget}`).toBe(budget); // exact, no overshoot
+        expect(nonZero).toBeLessThanOrEqual(Math.min(3, budget));
+        expect(nonZero).toBeGreaterThanOrEqual(1);
+      }
+    }
   });
 });

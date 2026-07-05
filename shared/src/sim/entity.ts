@@ -114,13 +114,6 @@ export interface CombatEntity {
   abilities?: string[];
 }
 
-let auraCounter = 0;
-/** Deterministic-per-run aura instance id (counter, not wall-clock/random). */
-export function nextAuraUid(): string {
-  auraCounter = (auraCounter + 1) | 0;
-  return `a${auraCounter}`;
-}
-
 const S = (seconds: number): number => Math.round(seconds * TICK_RATE);
 
 /** Build a player combat entity from class + level (+ optional gear stats/equip). */

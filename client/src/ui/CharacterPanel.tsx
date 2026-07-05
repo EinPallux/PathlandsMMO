@@ -30,6 +30,8 @@ const STAT_LABEL: Array<[string, string]> = [
 ];
 
 const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
+/** Rarity color with a safe fallback for unknown/corrupt rarities (old saves). */
+const rarityHex = (item: ItemDef): string => hex(RARITY_COLOR[item.rarity] ?? 0x888888);
 
 function itemSummary(item: ItemDef): string {
   const parts = [item.name, `Item Level ${item.ilvl} · requires level ${item.reqLevel}`];
@@ -50,7 +52,7 @@ function ItemCell({
   onClick?: () => void;
   onContext?: () => void;
 }): JSX.Element {
-  const border = item ? hex(RARITY_COLOR[item.rarity]) : colors.panelBorder;
+  const border = item ? rarityHex(item) : colors.panelBorder;
   return (
     <button
       title={item ? itemSummary(item) : undefined}
@@ -140,7 +142,7 @@ export function CharacterPanel(): JSX.Element | null {
                 <ItemCell item={item} onClick={item ? () => cmd?.unequipItem(slot) : undefined} />
                 <div style={{ fontSize: 11 }}>
                   <div style={{ color: colors.inkDim }}>{SLOT_LABEL[slot]}</div>
-                  <div style={{ color: item ? hex(RARITY_COLOR[item.rarity]) : colors.inkDim }}>
+                  <div style={{ color: item ? rarityHex(item) : colors.inkDim }}>
                     {item ? item.name : '—'}
                   </div>
                 </div>

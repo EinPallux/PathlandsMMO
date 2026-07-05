@@ -223,10 +223,11 @@ export class CombatDirector {
     return this.gold;
   }
   get characterInventory(): ItemStackSave[] {
-    return this.inventory;
+    // Return a copy so the save never embeds a live, still-mutating reference.
+    return this.inventory.map((s) => ({ item: s.item, qty: s.qty }));
   }
   get characterEquipment(): Record<string, ItemDef> {
-    return this.equipment;
+    return { ...this.equipment };
   }
   get characterWaystones(): string[] {
     return [...this.discovered];
@@ -235,17 +236,22 @@ export class CombatDirector {
   setClass(cls: CharacterClass): void {
     if (cls === this.cls) return;
     this.cls = cls;
-    // A class change clears gear that the new class can't use.
+    // A class change sheds gear the new class can't use — but only when the bag
+    // has room, so items are never silently destroyed.
     for (const [slot, item] of Object.entries(this.equipment)) {
-      if (!canEquip(cls, this.level, item)) {
+      if (!canEquip(cls, this.level, item) && this.inventory.length < BAG_SIZE) {
         delete this.equipment[slot];
-        if (this.inventory.length < BAG_SIZE) this.inventory.push({ item, qty: 1 });
+        this.inventory.push({ item, qty: 1 });
       }
     }
     this.state.entities.set(PLAYER_ID, this.makePlayer(this.player.x, this.player.z));
   }
 
-  /** Rebuild the player entity after a gear change, preserving HP%/resource/target. */
+  /**
+   * Rebuild the player entity after a gear change, preserving HP%/resource and all
+   * live combat state (cooldowns, GCD, auras, in-progress cast, threat, combat
+   * timers). Without this, equip-swapping would reset cooldowns and strip DoTs.
+   */
   private rebuildPlayer(): void {
     const cur = this.player;
     const hpFrac = cur.hp / cur.maxHP;
@@ -258,6 +264,14 @@ export class CombatDirector {
     next.targetId = cur.targetId;
     next.autoAttack = cur.autoAttack;
     next.dead = cur.dead;
+    next.cooldowns = cur.cooldowns;
+    next.gcdReadyTick = cur.gcdReadyTick;
+    next.autoReadyTick = cur.autoReadyTick;
+    next.auras = cur.auras;
+    next.cast = cur.cast;
+    next.threat = cur.threat;
+    next.inCombatUntil = cur.inCombatUntil;
+    next.stance = cur.stance;
     this.state.entities.set(PLAYER_ID, next);
   }
 
@@ -276,7 +290,9 @@ export class CombatDirector {
     }
     const prev = this.equipment[slot];
     this.equipment[slot] = item;
-    this.inventory.splice(index, 1);
+    // Consume one from the stack (equipment is single items).
+    if (stack.qty > 1) stack.qty -= 1;
+    else this.inventory.splice(index, 1);
     if (prev) this.inventory.push({ item: prev, qty: 1 });
     this.rebuildPlayer();
   }
@@ -640,7 +656,13 @@ export class CombatDirector {
     for (const e of this.state.entities.values()) {
       if (e.faction !== 'enemy' || !isAlive(e)) continue;
       this.tmp.set(e.x, e.y + 2.4, e.z).project(camera);
-      if (this.tmp.z > 1 || Math.abs(this.tmp.x) > 1.1 || Math.abs(this.tmp.y) > 1.1) continue;
+      if (
+        !Number.isFinite(this.tmp.x) ||
+        this.tmp.z > 1 ||
+        Math.abs(this.tmp.x) > 1.1 ||
+        Math.abs(this.tmp.y) > 1.1
+      )
+        continue;
       plates.push({
         id: `c:${e.id}`,
         name: e.name,
@@ -713,7 +735,7 @@ export class CombatDirector {
       if (f.age > 1.1) continue;
       keep.push(f);
       this.tmp.set(f.wx, f.wy + f.age * 1.2, f.wz).project(camera);
-      if (this.tmp.z > 1 || Math.abs(this.tmp.x) > 1.1) continue;
+      if (!Number.isFinite(this.tmp.x) || this.tmp.z > 1 || Math.abs(this.tmp.x) > 1.1) continue;
       out.push({
         id: f.id,
         text: f.text,

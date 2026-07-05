@@ -86,9 +86,23 @@ export function stepEnemyAI(state: CombatState, ctx: CombatContext = {}): void {
       continue;
     }
 
-    // Pick the highest-threat attacker, else acquire a nearby player.
-    let target = e.targetId ? state.entities.get(e.targetId) : undefined;
-    if (!isAlive(target)) target = undefined;
+    // Target the highest-threat living attacker (Taunt sets threat above the top);
+    // else keep the current target; else acquire a nearby player.
+    let target: CombatEntity | undefined;
+    let topThreat = 0;
+    for (const [id, thr] of Object.entries(e.threat)) {
+      if (thr > topThreat) {
+        const cand = state.entities.get(id);
+        if (isAlive(cand)) {
+          topThreat = thr;
+          target = cand;
+        }
+      }
+    }
+    if (!target) {
+      const cur = e.targetId ? state.entities.get(e.targetId) : undefined;
+      if (isAlive(cur)) target = cur;
+    }
     if (!target && (e.aggroRadius ?? 0) > 0) {
       const p = nearestPlayer(state, e.x, e.z, e.aggroRadius ?? 0);
       if (p) {

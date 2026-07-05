@@ -14,12 +14,11 @@ import {
   levelDeltaDamageMultiplier,
   mitigatePhysical,
   threatFromDamage,
-  PULL_THRESHOLD_MELEE,
 } from '../combat/formulas.js';
 import { killXp } from '../combat/xp.js';
 import { weaponDamage } from '../combat/formulas.js';
 import { skillById, GCD_TICKS, type SkillDef, type SkillEffect } from '../data/skills.js';
-import { type CombatEntity, type Aura, autoAttackDamage, isAlive, nextAuraUid } from './entity.js';
+import { type CombatEntity, type Aura, autoAttackDamage, isAlive } from './entity.js';
 import type { CastSkillIntent, Intent } from './intents.js';
 
 export type CombatEvent =
@@ -58,10 +57,19 @@ export interface CombatState {
   entities: Map<string, CombatEntity>;
   rng: Rng;
   events: CombatEvent[];
+  /** Monotonic counter for aura instance ids — lives in the state so a given seed
+   * reproduces byte-identical snapshots (not a module global). */
+  auraSeq: number;
 }
 
 export function createCombatState(seed = WORLD_SEED): CombatState {
-  return { tick: 0, entities: new Map(), rng: makeRng(seed, 'combat'), events: [] };
+  return { tick: 0, entities: new Map(), rng: makeRng(seed, 'combat'), events: [], auraSeq: 0 };
+}
+
+/** Deterministic-per-state aura instance id. */
+function auraUid(state: CombatState): string {
+  state.auraSeq = (state.auraSeq + 1) | 0;
+  return `a${state.auraSeq}`;
 }
 
 export function addEntity(state: CombatState, e: CombatEntity): CombatEntity {
@@ -128,6 +136,8 @@ export function applyDamage(
 
   let amount = rawAmount;
   amount *= 1 + modifier(attacker, 'damageDealt', tick);
+  // Shield Wall stance: attacker deals −15%, target takes −20% (GDD §3.1).
+  if (attacker.stance['shieldWallStance']) amount *= 0.85;
   amount *= levelDeltaDamageMultiplier(attacker.level, target.level);
 
   const crit = isCritRoll(attacker.stats.critChance, state.rng.next());
@@ -136,8 +146,9 @@ export function applyDamage(
   if (school === 'physical') {
     amount = mitigatePhysical(amount, target.stats.armor, attacker.level);
   }
-  // Target damage-taken modifiers (Hunter's Mark +, Shield Wall −, Sanctuary −).
+  // Target damage-taken modifiers (Hunter's Mark +, Sanctuary −) + Shield Wall stance.
   amount *= Math.max(0, 1 + modifier(target, 'damageTaken', tick));
+  if (target.stance['shieldWallStance']) amount *= 0.8;
 
   amount = Math.max(1, Math.round(amount));
 
@@ -313,6 +324,12 @@ export function tryCast(
     if (needsEnemy && !hostile(caster, target)) return fail('badTarget');
     if (dist2D(caster, target) > skill.range) return fail('range');
   }
+  // Ground-placed skills must land within range of the caster.
+  if (skill.target === 'ground' && intent.groundX !== undefined && intent.groundZ !== undefined) {
+    const dx = caster.x - intent.groundX;
+    const dz = caster.z - intent.groundZ;
+    if (Math.sqrt(dx * dx + dz * dz) > skill.range) return fail('range');
+  }
 
   // Commit: spend resource, start GCD + cooldown.
   spendResource(caster, cost, state);
@@ -334,7 +351,7 @@ export function tryCast(
       endTick: caster.cast.endTick,
     });
   } else {
-    resolveSkill(state, caster, skill, targetId, intent.groundX, intent.groundZ);
+    resolveSkill(state, caster, skill, targetId, intent.groundX, intent.groundZ, cost);
   }
   return true;
 }
@@ -381,6 +398,8 @@ export function resolveSkill(
   targetId: string | null,
   groundX?: number,
   groundZ?: number,
+  /** Resource actually spent (for Execute-style scaling); 0 for cast-finish path. */
+  spent = 0,
 ): void {
   const tick = state.tick;
   const primary = targetId ? state.entities.get(targetId) : undefined;
@@ -413,7 +432,7 @@ export function resolveSkill(
   }
 
   for (const effect of skill.effects)
-    applyEffect(state, caster, skill, effect, targets, primary ?? null, tick);
+    applyEffect(state, caster, skill, effect, targets, primary ?? null, tick, spent);
 }
 
 function applyEffect(
@@ -424,6 +443,7 @@ function applyEffect(
   targets: CombatEntity[],
   primary: CombatEntity | null,
   tick: number,
+  spent: number,
 ): void {
   switch (effect.kind) {
     case 'damage':
@@ -442,7 +462,7 @@ function applyEffect(
       const nTicks = Math.max(1, Math.round(effect.durationTicks / DOT_INTERVAL));
       for (const t of targets) {
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: 'dot',
@@ -464,7 +484,7 @@ function applyEffect(
       const nTicks = Math.max(1, Math.round(effect.durationTicks / DOT_INTERVAL));
       for (const t of targets) {
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: 'hot',
@@ -479,7 +499,7 @@ function applyEffect(
     case 'shield':
       for (const t of targets) {
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: 'shield',
@@ -491,7 +511,7 @@ function applyEffect(
     case 'buff':
       for (const t of targets) {
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: 'buff',
@@ -504,7 +524,7 @@ function applyEffect(
     case 'debuff':
       for (const t of targets) {
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: 'debuff',
@@ -517,7 +537,7 @@ function applyEffect(
     case 'slow':
       for (const t of targets)
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: 'slow',
@@ -528,18 +548,24 @@ function applyEffect(
     case 'stun':
     case 'root':
     case 'silence':
-      for (const t of targets)
+      for (const t of targets) {
         addAura(t, {
-          uid: nextAuraUid(),
+          uid: auraUid(state),
           sourceId: caster.id,
           skillId: skill.id,
           kind: effect.kind,
           expiresTick: tick + effect.durationTicks,
         });
+        // Stun and silence interrupt an in-progress cast (root does not).
+        if ((effect.kind === 'stun' || effect.kind === 'silence') && t.cast) {
+          state.events.push({ type: 'castInterrupt', entityId: t.id, skillId: t.cast.skillId });
+          t.cast = null;
+        }
+      }
       break;
     case 'immune':
       addAura(caster, {
-        uid: nextAuraUid(),
+        uid: auraUid(state),
         sourceId: caster.id,
         skillId: skill.id,
         kind: 'immune',
@@ -569,7 +595,9 @@ function applyEffect(
       for (const t of targets) {
         let n = effect.count;
         t.auras = t.auras.filter((a) => {
-          if (n > 0 && a.kind === 'debuff') {
+          // Purify removes debuffs and nature poisons/diseases (DoTs), not bleeds.
+          const removable = a.kind === 'debuff' || (a.kind === 'dot' && a.school === 'nature');
+          if (n > 0 && removable) {
             n--;
             return false;
           }
@@ -589,8 +617,9 @@ function applyEffect(
     case 'execute':
       for (const t of targets) {
         if (t.hp / t.maxHP > effect.hpThreshold) continue;
-        // Damage scales with resource available between coefMin and coefMax.
-        const frac = skill.resourceMax ? caster.resource / skill.resourceMax : 1;
+        // Damage scales with the resource actually SPENT this cast (GDD §3.1),
+        // between coefMin and coefMax.
+        const frac = skill.resourceMax ? spent / skill.resourceMax : 1;
         const coef = effect.coefMin + (effect.coefMax - effect.coefMin) * Math.min(1, frac);
         const power = weaponDamage(
           caster.weaponBaseRoll,
@@ -606,7 +635,7 @@ function applyEffect(
         caster.z = primary.z;
         if (effect.stunTicks)
           addAura(primary, {
-            uid: nextAuraUid(),
+            uid: auraUid(state),
             sourceId: caster.id,
             skillId: skill.id,
             kind: 'stun',
@@ -688,11 +717,13 @@ export function resolveTick(state: CombatState, ctx: CombatContext = {}): void {
 function tickAuras(state: CombatState, e: CombatEntity, tick: number): void {
   if (e.auras.length === 0) return;
   for (const a of e.auras) {
-    if (a.expiresTick <= tick) continue;
+    // Fire scheduled ticks up to AND including the expiry tick (so an N-tick DoT
+    // delivers all N ticks, not N−1). `nextTickAt <= expiresTick` stops over-ticking.
     if (
       (a.kind === 'dot' || a.kind === 'hot') &&
       a.nextTickAt !== undefined &&
-      tick >= a.nextTickAt
+      tick >= a.nextTickAt &&
+      a.nextTickAt <= a.expiresTick
     ) {
       a.nextTickAt += a.tickInterval ?? DOT_INTERVAL;
       const src = state.entities.get(a.sourceId);
@@ -711,6 +742,8 @@ function tickAuras(state: CombatState, e: CombatEntity, tick: number): void {
 
 function tickAutoAttack(state: CombatState, e: CombatEntity, tick: number): void {
   if (tick < e.autoReadyTick) return;
+  // A stunned combatant cannot swing (root/slow still allow attacks).
+  if (e.auras.some((a) => a.kind === 'stun' && a.expiresTick > tick)) return;
   const target = e.targetId ? state.entities.get(e.targetId) : undefined;
   if (!isAlive(target) || !hostile(e, target)) return;
   const range = e.autoSource === 'weapon' && e.autoSchool === 'physical' ? 5.5 : 30;
@@ -750,20 +783,6 @@ export function moveSpeedMultiplier(e: CombatEntity, tick: number): number {
     if (a.kind === 'slow') mult *= 1 - (a.slowPct ?? 0);
   }
   return Math.max(0, mult);
-}
-
-/** The id an enemy should attack: its highest-threat player past the pull threshold. */
-export function topThreatTarget(enemy: CombatEntity): string | null {
-  let best: string | null = null;
-  let bestThreat = 0;
-  for (const [id, threat] of Object.entries(enemy.threat)) {
-    if (threat > bestThreat) {
-      bestThreat = threat;
-      best = id;
-    }
-  }
-  void PULL_THRESHOLD_MELEE;
-  return best;
 }
 
 export { CharacterClass };

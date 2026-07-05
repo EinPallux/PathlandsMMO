@@ -209,10 +209,16 @@ export function armorClassFor(cls: CharacterClass): ArmorClass {
   }
 }
 
+/** Armor classes a character may wear (Warriors wear mail AND plate, GDD §6). */
+export function canWearArmor(cls: CharacterClass, ac: ArmorClass): boolean {
+  if (cls === CharacterClass.Warrior) return ac === ArmorClass.Plate || ac === ArmorClass.Mail;
+  return ac === armorClassFor(cls);
+}
+
 /** True if `cls` may equip `item` (armor-class lock + level + weapon type). */
 export function canEquip(cls: CharacterClass, level: number, item: ItemDef): boolean {
   if (level < item.reqLevel) return false;
-  if (item.armorClass !== undefined && item.armorClass !== armorClassFor(cls)) return false;
+  if (item.armorClass !== undefined && !canWearArmor(cls, item.armorClass)) return false;
   if (item.slot === EquipSlot.MainHand && item.weapon && item.weapon.kind !== CLASS_WEAPON[cls]) {
     return false;
   }
@@ -233,8 +239,10 @@ export const FAVORED_STATS: Record<CharacterClass, StatKey[]> = {
  */
 export function rollItemStats(rng: Rng, budget: number, favored: StatKey[]): Partial<StatBlock> {
   const pool = favored.length > 0 ? favored : [...STAT_KEYS];
-  const count = Math.min(pool.length, rng.int(1, Math.min(3, pool.length)));
-  // Pick `count` distinct stats.
+  // Never pick more stats than the budget can cover (≥1 each) — this avoids
+  // over-budget drops at very low ilvl.
+  const maxPicks = Math.min(3, pool.length, Math.max(1, budget));
+  const count = rng.int(1, maxPicks);
   const picks: StatKey[] = [];
   const bag = [...pool];
   for (let i = 0; i < count && bag.length > 0; i++) {
@@ -242,17 +250,18 @@ export function rollItemStats(rng: Rng, budget: number, favored: StatKey[]): Par
     picks.push(bag[idx]!);
     bag.splice(idx, 1);
   }
-  // Split the budget across picks with slight variance, then floor.
+  // Floor each pick at 1, then distribute the remainder by weight so the total is
+  // exactly `budget` (floor for non-last picks keeps the leftover non-negative).
+  const remainder = Math.max(0, budget - picks.length);
   const weights = picks.map(() => rng.float(0.7, 1.3));
   const wSum = weights.reduce((a, b) => a + b, 0) || 1;
   const out: Partial<StatBlock> = {};
   let assigned = 0;
   picks.forEach((k, i) => {
-    const share =
-      i === picks.length - 1 ? budget - assigned : Math.round((budget * weights[i]!) / wSum);
-    const v = Math.max(1, share);
-    out[k] = v;
-    assigned += v;
+    const extra =
+      i === picks.length - 1 ? remainder - assigned : Math.floor((remainder * weights[i]!) / wSum);
+    assigned += extra;
+    out[k] = 1 + extra;
   });
   return out;
 }
@@ -323,7 +332,9 @@ export function generateItem(rng: Rng, spec: GeneratedItemSpec): ItemDef {
     item.armor = armorRating(ilvl, slot, ac);
   } else if (slot === EquipSlot.OffHand) {
     // Off-hand shields carry armor (Warrior); casters use tomes (spell stats only).
+    // The armorClass gates the shield to plate-wearers so casters can't equip it.
     if (forClass === CharacterClass.Warrior) {
+      item.armorClass = ArmorClass.Plate;
       item.armor = armorRating(ilvl, slot, ArmorClass.Plate);
       item.weapon = { kind: WeaponKind.Shield, speed: 0, baseRoll: 0, dps: 0 };
     }
