@@ -7,12 +7,14 @@
 // block (Path Points).
 // v2 → v3 (Phase 4): characters gained a quest log (active quests + progress +
 // turned-in ids).
+// v3 → v4 (Phase 4): characters gained profession skills (1–100 each) and a
+// material stash (gathered ore/herbs/fish, counted by id).
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
 import type { QuestLogState } from '../quests/log.js';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -51,24 +53,39 @@ export interface CharacterSaveV3 extends CharacterSaveV2 {
   quests: QuestLogState;
 }
 
+export interface CharacterSaveV4 extends CharacterSaveV3 {
+  /** Profession skill 1–100 by profession id (GDD §9). */
+  professions: Record<string, number>;
+  /** Gathered materials counted by material id. */
+  materials: Record<string, number>;
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10). */
   pathPoints: number;
 }
 
-export interface SaveGameV3 {
-  version: 3;
+export interface SaveGameV4 {
+  version: 4;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV3[];
+  characters: CharacterSaveV4[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV3;
-export type CharacterSave = CharacterSaveV3;
+export type SaveGame = SaveGameV4;
+export type CharacterSave = CharacterSaveV4;
+
+const DEFAULT_SKILLS = (): Record<string, number> => ({
+  mining: 1,
+  herbalism: 1,
+  fishing: 1,
+  blacksmithing: 1,
+  alchemy: 1,
+});
 
 export const DEFAULT_SETTINGS: SettingsV1 = {
   viewDistance: 8,
@@ -135,7 +152,28 @@ function questLog(v: unknown): QuestLogState {
   };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV3 | null {
+function skillMap(v: unknown): Record<string, number> {
+  const out = DEFAULT_SKILLS();
+  if (isRecord(v)) {
+    for (const [k, val] of Object.entries(v)) {
+      if (k in out) out[k] = Math.max(1, Math.min(100, Math.floor(num(val, 1))));
+    }
+  }
+  return out;
+}
+
+function materialMap(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (isRecord(v)) {
+    for (const [k, val] of Object.entries(v)) {
+      const n = Math.floor(num(val, 0));
+      if (n > 0) out[k] = n;
+    }
+  }
+  return out;
+}
+
+function migrateCharacter(v: unknown): CharacterSaveV4 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -154,6 +192,8 @@ function migrateCharacter(v: unknown): CharacterSaveV3 | null {
     equipment: equipment(v.equipment),
     discoveredWaystones: strArray(v.discoveredWaystones),
     quests: questLog(v.quests),
+    professions: skillMap(v.professions),
+    materials: materialMap(v.materials),
   };
 }
 
@@ -175,7 +215,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV3 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV4 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -198,7 +238,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV3 {
+): CharacterSaveV4 {
   return {
     id,
     name,
@@ -215,5 +255,7 @@ export function createCharacter(
     equipment: {},
     discoveredWaystones: [],
     quests: { active: [], turnedIn: [] },
+    professions: DEFAULT_SKILLS(),
+    materials: {},
   };
 }

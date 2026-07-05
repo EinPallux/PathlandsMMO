@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 3,
+      version: 4,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -41,12 +41,36 @@ describe('save schema', () => {
             active: [{ id: 'q_boar_trouble', counts: [3], pinned: true }],
             turnedIn: ['q_find_feet'],
           },
+          professions: {
+            mining: 12,
+            herbalism: 8,
+            fishing: 3,
+            blacksmithing: 1,
+            alchemy: 1,
+          },
+          materials: { copperOre: 14, meadowbloom: 5 },
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v3 (pre-profession) save, defaulting skills + empty materials', () => {
+    const v3 = {
+      version: 3,
+      characters: [{ name: 'Gatherless', class: 'ranger', quests: { active: [], turnedIn: [] } }],
+    };
+    const c = migrate(v3).characters[0]!;
+    expect(c.professions).toEqual({
+      mining: 1,
+      herbalism: 1,
+      fishing: 1,
+      blacksmithing: 1,
+      alchemy: 1,
+    });
+    expect(c.materials).toEqual({});
   });
 
   it('migrates a v2 (pre-quest) save, defaulting an empty quest log', () => {

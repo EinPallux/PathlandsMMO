@@ -166,6 +166,20 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 3 done (2026-07-05):** **gathering professions** (Mining, Herbalism, Fishing).
+> A pure skill/gather engine (`shared/professions` + `shared/data/professions`): skill
+> 1–100 with the orange/yellow/green/gray skill-up curve, tiered materials, seeded
+> gather yields (ore + stone + rare gem; herbs; fish + oil + big-catch proc), and a
+> fishing-catch roll. The client `GatherDirector` finds nodes by re-running the
+> deterministic worldgen scatter near the player, drives a mining/herbalism **channel**
+> (cancels on movement) and a **fishing minigame** (cast → bite window → reel), banks
+> materials into a per-character stash, and levels the profession. New UI: a gather
+> prompt + channel bar, and a **Professions panel (P)** with the five skill bars and
+> the material stash. Save **v4** persists profession skills + materials. 195 tests
+> green (8 profession-engine + save v3→v4 migration); in-browser the panel renders with
+> zero console errors. **Next:** crafting (Blacksmithing/Alchemy), then meta
+> progression, mounts, and the endgame loop.
+>
 > **Part 2 done (2026-07-05):** the early-zone **questing spine** — main-story chapters
 > 1–3 of "The Waymaker's Path" (Brookhollow → Millstead → the Weald blight-wells → the
 > Foothills gnoll caves, a level-ordered prereq chain) plus side arcs across Heartmead
@@ -179,7 +193,7 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
 - [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Part 2 done: the early-zone spine — main-story chapters 1–3 + Vale/Weald/Foothills side arcs, ~21 quests across 8 givers, levels 1–14. Remaining zones, professions intros, and dailies fill in later parts.)_
-- [ ] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100, node placement activated across all zones (deterministic spawns + respawn timers), tiered materials per zone level band, gathering cast/channel + fishing timing minigame, tool items.
+- [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
 - [ ] **Crafting professions** — Blacksmithing (weapons/armor incl. several best-pre-boss items) and Alchemy (combat/utility/profession potions, flasks); recipe books, trainers, discovery recipes, crafting UI with material requirements; economy-consistent material flows (mining→smithing, herbalism→alchemy).
 - [ ] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on account-wide perks (rested-XP bonus, bag slot, mount discount, Waystone fee reduction, starter-gear upgrades for alts) per GDD §Meta; titles displayed at nameplate.
 - [ ] **Mounts** — Wolf mount from its PNG (+60% speed, level 20, gold sink), mount/dismount rules, 2–3 palette-variant skins as Deed/endgame rewards.

@@ -26,6 +26,7 @@ import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
 import { CombatDirector } from './combatDirector.js';
 import { QuestDirector } from './questDirector.js';
+import { GatherDirector } from './gatherDirector.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
@@ -53,7 +54,10 @@ export class Game {
   private readonly discovery: Discovery;
   private readonly combat: CombatDirector;
   private readonly quests: QuestDirector;
+  private readonly gather: GatherDirector;
   private readonly character: CharacterSave | null;
+  private lastGx = 0;
+  private lastGz = 0;
 
   private accumulator = 0;
   private lastTime = 0;
@@ -129,6 +133,7 @@ export class Game {
     this.quests = new QuestDirector(this.combat, character?.quests);
     // Share the live indicator map so giver nameplates show "!/?" markers.
     this.entities.giverIndicators = this.quests.indicators;
+    this.gather = new GatherDirector(this.world, character?.professions, character?.materials);
 
     this.registerCommands();
     window.addEventListener('resize', this.onResize);
@@ -229,6 +234,7 @@ export class Game {
       useStore.getState().toggleChar();
     }
     if (this.input.wasTapped('KeyL')) useStore.getState().toggleQuestLog();
+    if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
     // Enter releases spirit on death.
@@ -252,7 +258,10 @@ export class Game {
         this.quests.closeDialog();
       } else if (store.vendor) {
         this.combat.closeVendor();
-      } else if (!this.combat.interactWaystone()) {
+      } else if (
+        !this.combat.interactWaystone() &&
+        !this.gather.interact(px, this.controller.physics.y, pz)
+      ) {
         const npc = this.entities.interactNearest(px, pz);
         if (npc && questGiverById(npc.id)) {
           this.quests.openGiver(npc.id, npc.name);
@@ -349,6 +358,12 @@ export class Game {
     // Quest explore-objective checks (throttled inside).
     this.quests.tickExplore(dt, rs.x, rs.z);
 
+    // Gathering: node proximity, channel/fishing progress (cancels on movement).
+    const gMoved = Math.hypot(rs.x - this.lastGx, rs.z - this.lastGz) > 0.04;
+    this.lastGx = rs.x;
+    this.lastGz = rs.z;
+    this.gather.update(dt, rs.x, rs.y, rs.z, gMoved);
+
     this.discovery.reveal(rs.x, rs.z);
     this.discovery.tick(dt);
     const live = useStore.getState().live;
@@ -418,6 +433,8 @@ export class Game {
       equipment: this.combat.characterEquipment,
       discoveredWaystones: this.combat.characterWaystones,
       quests: this.quests.state,
+      professions: this.gather.state.professions,
+      materials: this.gather.state.materials,
       x: ph.x,
       y: ph.y,
       z: ph.z,

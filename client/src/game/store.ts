@@ -156,6 +156,20 @@ export interface QuestToast {
   kind: 'accept' | 'progress' | 'complete';
 }
 
+export interface GatherStatus {
+  /** Channel label, e.g. "Mining…" / "Fishing…" / "A bite!". */
+  label: string;
+  /** Progress 0..1 (or 1 during a fishing bite). */
+  frac: number;
+  /** Action hint, e.g. "Press E to reel in!". */
+  hint: string;
+}
+
+export interface ProfessionsUi {
+  skills: Array<{ id: string; name: string; skill: number; max: number }>;
+  materials: Array<{ id: string; name: string; qty: number }>;
+}
+
 export type WeatherKind = 'clear' | 'overcast' | 'rain';
 
 export interface GameCommands {
@@ -242,6 +256,11 @@ export interface UiState {
   questToasts: QuestToast[];
   showQuestLog: boolean;
 
+  nearbyNode: { label: string; kind: string } | null;
+  gatherStatus: GatherStatus | null;
+  professions: ProfessionsUi | null;
+  showProfessions: boolean;
+
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   toggleMap: () => void;
@@ -261,6 +280,10 @@ export interface UiState {
   setQuestDialog: (q: QuestDialogUi | null) => void;
   setQuestToasts: (t: QuestToast[]) => void;
   toggleQuestLog: () => void;
+  setNearbyNode: (n: { label: string; kind: string } | null) => void;
+  setGatherStatus: (g: GatherStatus | null) => void;
+  setProfessions: (p: ProfessionsUi) => void;
+  toggleProfessions: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -317,6 +340,11 @@ export const useStore = create<UiState>((set) => ({
   questToasts: [],
   showQuestLog: false,
 
+  nearbyNode: null,
+  gatherStatus: null,
+  professions: null,
+  showProfessions: false,
+
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
@@ -336,6 +364,10 @@ export const useStore = create<UiState>((set) => ({
   setQuestDialog: (questDialog) => set({ questDialog }),
   setQuestToasts: (questToasts) => set({ questToasts }),
   toggleQuestLog: () => set((st) => ({ showQuestLog: !st.showQuestLog })),
+  setNearbyNode: (nearbyNode) => set({ nearbyNode }),
+  setGatherStatus: (gatherStatus) => set({ gatherStatus }),
+  setProfessions: (professions) => set({ professions }),
+  toggleProfessions: () => set((st) => ({ showProfessions: !st.showProfessions })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

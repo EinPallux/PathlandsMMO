@@ -4,6 +4,26 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 3 — gathering professions (2026-07-05)
+
+- **`shared/data/professions`** — the five professions, the four material tiers
+  (skill 1/25/50/75), the material catalog (ore + stone/gem, herbs, fish + oil), and
+  the worldgen-prop → profession/tier mapping (`NODE_INFO`).
+- **`shared/professions`** — a pure skill/gather engine: the orange/yellow/green/gray
+  difficulty curve, `skillUp` (+1 at orange/yellow, ~half at green, capped at 100),
+  `gatherNode` (seeded ore/herb yields with a rare gem proc), and the fishing
+  minigame's `fishBiteDelaySeconds` + `rollFish` (fish + oil + big-catch proc).
+- **Save v4** — characters gained profession skills (1–100 each, all five start at 1)
+  and a material stash (counts by id); `migrate()` walks v3 saves forward.
+- **`client/game/gatherDirector`** — finds gather nodes by re-running the deterministic
+  `world.scatterChunk` near the player (with a client-side depletion/respawn set),
+  drives the mining/herbalism channel (cancels on movement) and the fishing minigame
+  (cast → bite window → reel), banks materials + skill-ups, and publishes the gather
+  prompt / channel bar / Professions panel.
+- **`client/ui`** — a **GatherPrompt** ("Press E to mine/gather/fish") + channel bar,
+  and a **ProfessionsPanel** (P) with five skill bars and the material stash.
+- **Tests** — +8 profession-engine + a save v3→v4 migration check (195 total).
+
 ### Part 2 — the early-zone questing spine (2026-07-05)
 
 - **`shared/data/quests`** — grew the starter arc into a real 1→14 spine: the main story

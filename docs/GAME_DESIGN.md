@@ -191,6 +191,15 @@ Each character learns **all five** (no pick restrictions — indie population is
 - ~12 recipes per crafting tier; each tier includes 2–3 genuinely best-at-that-level items ("smith's pride" pieces) and a discovery recipe (crafting X unlocks X+).
 - Trainers in Waymeet + intro trainers in Brookhollow; profession intro quests in Phase 4.
 
+> **Implementation (Phase 4 Part 3 — gathering).** Skill + gather rules are pure in
+> `shared/professions/skill.ts` (difficulty curve, `skillUp`, `gatherNode`, `rollFish`);
+> materials + tiers + the worldgen-prop→node mapping are data in
+> `shared/data/professions.ts`. The client `GatherDirector` finds nodes by re-running the
+> deterministic `world.scatterChunk` (nodes have no stored state, so depletion/respawn is
+> tracked client-side), drives the mining/herbalism channel and the fishing minigame, and
+> banks materials into a per-character stash (save v4). Higher-tier herb node placement,
+> tool items, and trainers are follow-up work; Blacksmithing/Alchemy (craft) come next.
+
 ## 10. Meta Progression — Deeds & Path Points
 
 - **Deeds** = achievements across exploration (Waystones, subzones), combat (named rares, Hollow bosses, solo-boss Deeds), quests (chapters, zone completion), professions (50/100 skill, rare catches), and collection (mount skins, titles).

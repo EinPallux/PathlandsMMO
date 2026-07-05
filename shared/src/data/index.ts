@@ -10,3 +10,4 @@ export * from './enemies.js';
 export * from './spawns.js';
 export * from './vendors.js';
 export * from './quests/index.js';
+export * from './professions.js';
