@@ -201,6 +201,10 @@ export class CombatDirector {
     this.regions = [...WORLD_SPAWNS];
 
     this.state.entities.set(PLAYER_ID, this.makePlayer(spawnX, spawnZ));
+    // A character who is already past the Waymeet band (migrated/high-level save)
+    // never crosses level 5 in-session, so back-fill the Steward's letter here.
+    // deliverMail dedups by id, so this is a no-op if it was already received.
+    if (this.level >= 5) this.deliverMail({ ...WAYMEET_WELCOME, claimed: false });
     this.publishBankMail();
   }
 

@@ -399,8 +399,7 @@ export class World {
           }
           const rh = hashFloat2(wx, wz, salt(0x5c2));
           if (rh < 0.0016) {
-            const herb = s.biome === Biome.Trollmoor ? 'herbFen' : 'herbMeadow';
-            out.push(inst(herb, wx, y, wz, yaw, wx, wz, this.seed));
+            out.push(inst(herbForBiome(s.biome), wx, y, wz, yaw, wx, wz, this.seed));
           }
         } else if (s.surface === Voxel.Rock || s.surface === Voxel.CrystalRock) {
           const rr = hashFloat2(wx, wz, salt(0x55f));
@@ -508,6 +507,25 @@ function rockForBiome(biome: Biome, x: number, z: number, seed: number): PropId 
 function oreForBiome(biome: Biome, x: number, z: number, seed: number): PropId {
   if (biome === Biome.Peaks) return pick3('oreSilver', 'oreCrystal', 'oreIron', x, z, seed);
   return pick3('oreCopper', 'oreIron', 'oreCopper', x, z, seed);
+}
+
+/**
+ * Herb node by biome, spanning all four Herbalism tiers so the profession is
+ * levelable 1→100 from world nodes (GDD §9): Meadowbloom (Vale/Coast), Fenweed
+ * (Weald), Cavemoss (Foothills/Peaks), Duskpetal (Trollmoor).
+ */
+function herbForBiome(biome: Biome): PropId {
+  switch (biome) {
+    case Biome.Weald:
+      return 'herbFen';
+    case Biome.Foothills:
+    case Biome.Peaks:
+      return 'herbCavemoss';
+    case Biome.Trollmoor:
+      return 'herbDuskpetal';
+    default:
+      return 'herbMeadow';
+  }
 }
 
 function inst(

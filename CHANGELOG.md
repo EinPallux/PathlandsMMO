@@ -4,6 +4,37 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 10 — acceptance pass: review + fixes (2026-07-05)
+
+#### Fixed
+
+- **Critical — main story was blocked at chapter 1.** Quest `use` objectives and
+  `waystoneUnlock` rewards used **bare** Waystone ids (`brookhollow`, `elderGlade`, …) while
+  the client emits and stores the canonical `ws-<id>` on attune. Attuning the Brookhollow
+  Waystone therefore never satisfied _Light the Way_, blocking the whole `waymakers-path`
+  chain; quest-granted stones were also never usable for travel/respawn. All eight quest
+  Waystone ids are now `ws-`-namespaced, with a regression test asserting every quest
+  Waystone id resolves to a real `WAYSTONES` entry.
+- **Herbalism could not reach 100.** The worldgen scatter only placed tier-0/1 herbs
+  (Meadowbloom/Fenweed). Added the tier-2/3 herb nodes — **Cavemoss** (Foothills/Peaks) and
+  **Duskpetal** (Trollmoor) — with prop models + `NODE_INFO` entries, so all four Herbalism
+  tiers exist in the world (criterion #2).
+- **Mount buy-hint went stale at level 20.** The `MountController` republish key ignored the
+  hint's blocking-reason, so crossing level 20 while still short on gold kept showing
+  "Requires level 20" instead of "Costs 40 gold". The key now includes the hint.
+- **Level-5 Waymeet letter was unreachable for high-level saves.** It only fired on the
+  in-session 4→5 crossing; the `CombatDirector` now back-fills it at construction for any
+  character already past level 5 (deduped by id).
+
+#### Added
+
+- **`shared/test/acceptance-p4.test.ts`** — encodes the pure-`shared` acceptance checks:
+  quests blanket the whole 1→30 band with no dead zone (no grinding wall), rewards scale with
+  level, the main story is a complete chain to a level-30 boss finale, and the meta / mount /
+  crafting systems satisfy their criteria. 243 tests total.
+- **GDD §15** — recorded the quest-vs-kill **XP-source split** discrepancy (the curve makes
+  kills dominant vs §5's ~55% quest target) as a Phase-5 tuning item.
+
 ### Part 9 — the complete main story (chapters 4–6) (2026-07-05)
 
 - **`shared/data/quests/content`** — extended "The Waymaker's Path" from chapter 3 to the

@@ -213,12 +213,14 @@ export const QUESTS: readonly QuestDef[] = [
     giver: 'elderMaris',
     minLevel: 1,
     prereq: ['q_find_feet'],
-    objectives: [{ kind: 'use', target: 'brookhollow', label: 'Attune the Brookhollow Waystone' }],
+    objectives: [
+      { kind: 'use', target: 'ws-brookhollow', label: 'Attune the Brookhollow Waystone' },
+    ],
     reward: {
       xp: 320,
       gold: 10,
       items: [spec(EquipSlot.Trinket, Rarity.Uncommon, 2)],
-      waystoneUnlock: 'brookhollow',
+      waystoneUnlock: 'ws-brookhollow',
     },
     intro:
       'The old Waystones have gone dark, one by one. Ours still answers a true hand — lay yours on the Brookhollow stone and wake it. That is where your path begins.',
@@ -300,7 +302,7 @@ export const QUESTS: readonly QuestDef[] = [
       xp: 620,
       gold: 30,
       items: [spec(EquipSlot.Head, Rarity.Uncommon, 8)],
-      waystoneUnlock: 'elderGlade',
+      waystoneUnlock: 'ws-elderGlade',
     },
     intro:
       'You came from Millstead? Then you have seen the edge of it. Here in the Weald the Blight walks — spriggans, thick with it. Burn six and bring me four of their caps; I will read what the rot is doing.',
@@ -447,7 +449,7 @@ export const QUESTS: readonly QuestDef[] = [
       xp: 1100,
       gold: 55,
       items: [spec(EquipSlot.Amulet, Rarity.Rare, 13)],
-      waystoneUnlock: 'gulchBottom',
+      waystoneUnlock: 'ws-gulchBottom',
     },
     intro:
       'Roswald’s word, is it? Aye — the gnolls took an old Waymaker survey map from Shaft Three, and they’ve daubed it into their fetishes. Break eight of the brutes and bring me three fetishes; I’ll piece the map back together.',
@@ -605,7 +607,7 @@ export const QUESTS: readonly QuestDef[] = [
       xp: 1500,
       gold: 70,
       items: [spec(EquipSlot.Hands, Rarity.Rare, 18)],
-      waystoneUnlock: 'crystalOverlook',
+      waystoneUnlock: 'ws-crystalOverlook',
     },
     intro:
       'You’re the Wayfarer chasing the Blight? Then look closer at our crystal — it rings hollow where it never used to. The lizards feed on the marrow of it. Slay eight and bring me four scales; I’ll show you what’s being eaten.',
@@ -720,7 +722,7 @@ export const QUESTS: readonly QuestDef[] = [
       xp: 2200,
       gold: 110,
       items: [spec(EquipSlot.Chest, Rarity.Rare, 24)],
-      waystoneUnlock: 'theSentinels',
+      waystoneUnlock: 'ws-theSentinels',
     },
     intro:
       'A Wayfarer, this far north? Good — I’m short of those. The Ironhide war-band carries carved tusks older than Cairnwick, and Keld swears the carvings are Waymaker script. Break eight of the brutes and bring me four tusks. Let’s learn what the trolls kept.',
@@ -835,7 +837,7 @@ export const QUESTS: readonly QuestDef[] = [
       xp: 3000,
       gold: 150,
       items: [spec(EquipSlot.Hands, Rarity.Epic, 28)],
-      waystoneUnlock: 'cryptwatch',
+      waystoneUnlock: 'ws-cryptwatch',
     },
     intro:
       'So you’re the one who walked the whole Old Road. The coast is the end of it — and the dead won’t stay down. Every night more drowned crawl from the shallows toward the crypt. Put eight to rest and bring me four of the brine-pearls they carry; the Archivist reads them like pages.',
@@ -861,7 +863,7 @@ export const QUESTS: readonly QuestDef[] = [
         spec(EquipSlot.Chest, Rarity.Epic, 30),
         spec(EquipSlot.Head, Rarity.Epic, 30),
       ],
-      waystoneUnlock: 'pierside',
+      waystoneUnlock: 'ws-pierside',
     },
     intro:
       'The pearls tell it all, Wayfarer. The last Waymaker did not die down there — she stayed, and she has been unmaking the network ever since, draining the marrow to hold one drowned tomb against time. The Blight is her grief made law. Go down into the Sunken Crypt. End it, however you can. The whole road has led you here.',

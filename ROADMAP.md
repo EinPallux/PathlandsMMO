@@ -6,7 +6,24 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 9: the complete main story (chapters 4–6).**
+> **Phase 4 in progress (2026-07-05) — Part 10: the acceptance pass.** A verification +
+> adversarial-review sweep over the Phase-4 systems, which caught two genuine gaps and one
+> **critical bug**: quest `use`/`waystoneUnlock` ids used bare names (`brookhollow`) while
+> the world emits and stores the canonical `ws-<id>` — so attuning the Brookhollow Waystone
+> never satisfied chapter 1's objective, **silently blocking the entire main story**, and
+> quest-granted stones were never travel/respawn-usable. Fixed (all quest waystone ids
+> namespaced to `ws-<id>`, with a regression test asserting every one resolves). Also placed
+> the higher-tier **herb nodes** (Cavemoss in Foothills/Peaks, Duskpetal in Trollmoor) so
+> **Herbalism is now levelable to 100** (criterion #2), and fixed two minor client desyncs
+> (mount buy-hint staleness at level 20; the level-5 Waymeet letter for already-past-5
+> saves). New `shared/test/acceptance-p4.test.ts` encodes the testable criteria. **243 tests
+> green**; `pnpm typecheck && lint && build` clean; boots with zero console errors. The pass
+> confirms criteria **#1 and #2 now pass**; **#3 (map markers) and #4 (account-wide perks)
+> remain open** — Phase 4 is **not yet complete** (see the acceptance-criteria status below).
+>
+> ---
+>
+> **Part 9 (2026-07-05): the complete main story (chapters 4–6).**
 > "The Waymaker's Path" now runs end to end. The chain that opened at the Brookhollow
 > fountain continues up into the **Glimmerpeaks** (ch.4 — the crystal is Waystone marrow,
 > and something is draining it), across the **Trollmoor Highlands** (ch.5 — the trolls
@@ -234,6 +251,17 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 10 done (2026-07-05):** **the acceptance pass** — verification + adversarial
+> review of the Phase-4 systems. Caught and fixed a **critical** waystone-id bug (quests
+> used bare ids vs the world's canonical `ws-<id>`) that had **blocked the whole main story
+> at chapter 1** and broke quest-granted stones; closed the **Herbalism-to-100** gap by
+> placing Cavemoss/Duskpetal nodes; fixed two minor client desyncs (mount buy-hint at level
+> 20; the level-5 letter for high-level saves). Added `shared/test/acceptance-p4.test.ts`
+> (band-coverage + system cross-checks) and a waystone-id regression guard. 243 tests green.
+> **Outcome:** criteria #1 (main story 1→30) and #2 (professions/crafting) now pass; #3 (quest
+> map markers) and #4 (account-wide perks) remain open, so **Phase 4 is not yet complete**.
+> The quest-vs-kill XP share is routed to Phase-5 tuning (GDD §15).
+>
 > **Part 9 done (2026-07-05):** **the complete main story** — chapters 4–6 of "The
 > Waymaker's Path". The chain extends from the Foothills up through the **Glimmerpeaks**
 > (crystal-marrow ch.4), the **Trollmoor Highlands** (buried-forge ch.5), and the **Sunlit
@@ -334,7 +362,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
 - [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Parts 2 + 9 done: the **complete main story — all six chapters, Brookhollow tutorial → the Sunken Crypt finale (levels 1–30)** — plus side arcs and Hollow boss lead-ins (Bramblegut, Gnarlmaw, Prismhide, Forgewarden Urzul, the Last Waymaker) across all six zones, ~39 quests from 14 givers. Part 8 added the daily bounty boards. Remaining: the bulk of the zone side-quest budget + profession intro quests toward ~110.)_
-- [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
+- [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed/**Cavemoss/Duskpetal**, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Part 10 placed the higher-tier herb nodes (Cavemoss in Foothills/Peaks, Duskpetal in Trollmoor) so all four Herbalism tiers exist in the world → Herbalism is now levelable to 100, matching Mining. Remaining: tool items and profession trainers.)_
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [~] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10. _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
@@ -343,11 +371,15 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 
 ### Acceptance Criteria
 
-1. A fresh character can quest 1→30 with no XP gaps (quest+kill XP suffices without grinding walls), finishing the main story solo.
-2. All five professions are levelable 1→100 within the existing world's nodes/recipes; at least 10 crafted items are genuinely useful at-level; fishing minigame works.
-3. Quest tracker, map markers, and NPC indicators behave correctly across chains, multi-objectives, and abandons; quest state survives save/load.
-4. Deeds fire correctly, Path Points accrue and spend, perks apply account-wide across local characters; mount works everywhere outdoors.
-5. Playtest checklist in docs (leveling pace table) roughly matches: reaching cap in ~25–35 played hours as a quest-follower.
+_Status after the Part-10 acceptance pass (2026-07-05). Phase 4 is **not yet complete** — two criteria have open gaps below._
+
+1. ✅ **A fresh character can quest 1→30, finishing the main story solo.** The main story is complete and reachable — the Part-10 review caught and fixed a critical waystone-id mismatch (`use`/`waystoneUnlock` used bare ids while the world emits `ws-<id>`) that had silently **blocked chapter 1**; quests now blanket the whole 1→30 band with no dead zone (`shared/test/acceptance-p4.test.ts`). _(The quest-vs-kill XP *share* leans grindier than GDD §5 intends — a Phase-5 tuning item, recorded in GDD §15; it changes pace, not reachability.)_
+2. ✅ **All five professions levelable 1→100; ≥10 useful crafted items; fishing works.** Part 10 placed the higher-tier herb nodes so all four Herbalism tiers exist in the world (Mining already had all four); 10+ recipes/consumables; the fishing minigame works. _(Tool items + trainers are polish, not levelability gates.)_
+3. 🚧 **Quest tracker, map markers, NPC indicators; save/load.** Tracker, `!`/`?` indicators, and save/load (v9, round-trip tested) all work — **but quest markers on the world map are not yet drawn** (deferred). Open gap before phase close.
+4. 🚧 **Deeds, Path Points, perks (account-wide); mount outdoors.** Deeds fire, Path Points accrue/spend, perks apply live, and the mount works everywhere outdoors — **but perks/Path Points are per-character, not account-wide** (deliberate deferral). Open gap before phase close.
+5. ⏳ **~25–35 h to cap as a quest-follower.** A soft playtest target, gated on the Phase-5 XP-source tuning (criterion #1 note).
+
+> **Remaining before Phase 4 can be marked complete:** quest **map markers** (criterion #3), **account-wide** Path Points/perks (criterion #4), plus the outstanding content breadth (the zone side-quest budget toward ~110, named rare-elite hunts) and the deferred supporting-systems polish (station gating, settings, keybinds).
 
 ---
 

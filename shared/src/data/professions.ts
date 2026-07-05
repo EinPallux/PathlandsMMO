@@ -133,6 +133,8 @@ export const NODE_INFO: Record<string, NodeInfo> = {
   oreCrystal: { profession: Profession.Mining, tier: 3 },
   herbMeadow: { profession: Profession.Herbalism, tier: 0 },
   herbFen: { profession: Profession.Herbalism, tier: 1 },
+  herbCavemoss: { profession: Profession.Herbalism, tier: 2 },
+  herbDuskpetal: { profession: Profession.Herbalism, tier: 3 },
 };
 
 /** Gather info for a worldgen prop id, or undefined if it isn't a node. */

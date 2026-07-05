@@ -21,6 +21,7 @@ import {
   enemyById,
   EQUIP_SLOTS,
   settlementById,
+  waystoneById,
   type QuestLogState,
 } from '../src/index.js';
 
@@ -80,10 +81,12 @@ describe('Quest state machine (GDD §8)', () => {
     // Now Light the Way is available; a Waystone `use` completes it.
     expect(isAvailable(questById('q_light_the_way')!, log, 1)).toBe(true);
     acceptQuest(log, 'q_light_the_way', 1);
-    applyQuestEvent(log, { kind: 'use', objectId: 'brookhollow' });
+    // The client emits the Waystone's canonical id (ws-<id>) on attune; the
+    // objective target must be that exact id or the main story blocks here.
+    applyQuestEvent(log, { kind: 'use', objectId: 'ws-brookhollow' });
     const reward = turnInQuest(log, 'q_light_the_way');
     expect(reward).not.toBeNull();
-    expect(reward!.waystoneUnlock).toBe('brookhollow');
+    expect(reward!.waystoneUnlock).toBe('ws-brookhollow');
     expect(log.turnedIn).toContain('q_light_the_way');
   });
 
@@ -168,6 +171,20 @@ describe('Quest content validity', () => {
     for (const g of QUEST_GIVERS) {
       expect(settlementById(g.settlement), g.id).toBeDefined();
       expect(questGiverById(g.id)).toBe(g);
+    }
+  });
+
+  it('every Waystone id used by a quest resolves to a real Waystone', () => {
+    // Regression guard: the client emits/stores the canonical `ws-<id>` on attune,
+    // so both `use` objective targets and `waystoneUnlock` rewards must be that same
+    // id — a bare id silently blocks the quest / makes the unlocked stone unusable.
+    for (const q of QUESTS) {
+      if (q.reward.waystoneUnlock) {
+        expect(waystoneById(q.reward.waystoneUnlock), `${q.id} unlock`).toBeDefined();
+      }
+      for (const o of q.objectives) {
+        if (o.kind === 'use') expect(waystoneById(o.target), `${q.id} use`).toBeDefined();
+      }
     }
   });
 
