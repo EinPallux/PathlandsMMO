@@ -21,6 +21,13 @@ import {
   skillsKnownAt,
   levelProgressFromTotalXp,
   totalXpToReachLevel,
+  baseStatsAtLevel,
+  addStats,
+  canEquip,
+  rollLoot,
+  buildEnemyLootTable,
+  EquipSlot,
+  RING_SLOTS,
   isAlive,
   type CombatState,
   type SpawnerState,
@@ -28,14 +35,34 @@ import {
   type CombatEntity,
   type CombatEvent,
   type SkillDef,
+  type StatBlock,
+  type ItemDef,
+  type ItemStackSave,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
-import { useStore, type CombatUi, type Floater, type HotbarSlot, type Nameplate } from './store.js';
+import {
+  useStore,
+  type CombatUi,
+  type Floater,
+  type HotbarSlot,
+  type InventoryUi,
+  type Nameplate,
+} from './store.js';
 
 const PLAYER_ID = 'player';
 const START_LEVEL = 6;
 const DYING_SECONDS = 1.2;
 const PICK_SCREEN_RADIUS = 0.22; // NDC distance for crosshair target picking
+const BAG_SIZE = 24;
+
+/** Progression a character carries into the world (from the save). */
+export interface Progression {
+  level: number;
+  xp: number;
+  gold: number;
+  inventory: ItemStackSave[];
+  equipment: Record<string, ItemDef>;
+}
 
 interface RenderEnemy {
   obj: ModelObject;
@@ -75,6 +102,9 @@ export class CombatDirector {
   private cls: CharacterClass;
   private level: number;
   private totalXp: number;
+  private gold: number;
+  private inventory: ItemStackSave[];
+  private equipment: Record<string, ItemDef>;
 
   private readonly renders = new Map<string, RenderEnemy>();
   private dying: Dying[] = [];
@@ -92,14 +122,16 @@ export class CombatDirector {
     spawnX: number,
     spawnZ: number,
     respawnAt: (x: number, z: number) => void,
-    level = START_LEVEL,
-    totalXp?: number,
+    progression?: Progression,
   ) {
     this.scene = scene;
     this.world = world;
     this.cls = cls;
-    this.level = Math.max(1, level);
-    this.totalXp = totalXp ?? totalXpToReachLevel(this.level);
+    this.level = Math.max(1, progression?.level ?? START_LEVEL);
+    this.totalXp = progression?.xp ?? totalXpToReachLevel(this.level);
+    this.gold = progression?.gold ?? 0;
+    this.inventory = progression?.inventory ? [...progression.inventory] : [];
+    this.equipment = progression?.equipment ? { ...progression.equipment } : {};
     this.spawnX = spawnX;
     this.spawnZ = spawnZ;
     this.respawnAt = respawnAt;
@@ -133,9 +165,35 @@ export class CombatDirector {
     this.state.entities.set(PLAYER_ID, this.makePlayer(spawnX, spawnZ));
   }
 
+  /** Sum equipped items into a stat block + armor/crit (fed to deriveCombatStats). */
+  private equipDerived(): { gear: StatBlock; armor: number; crit: number } {
+    const items = Object.values(this.equipment);
+    const gear = addStats(...items.map((i) => i.stats));
+    let armor = 0;
+    let crit = 0;
+    for (const i of items) {
+      armor += i.armor ?? 0;
+      crit += i.bonusCritChance ?? 0;
+    }
+    return { gear, armor, crit };
+  }
+
   private makePlayer(x: number, z: number): CombatEntity {
     const y = this.world.heightAt(Math.floor(x), Math.floor(z));
-    const e = makePlayerEntity(PLAYER_ID, CLASS_INFO[this.cls].name, this.cls, this.level, x, y, z);
+    const { gear, armor, crit } = this.equipDerived();
+    const weaponIlvl = this.equipment[EquipSlot.MainHand]?.ilvl ?? this.level;
+    const e = makePlayerEntity(
+      PLAYER_ID,
+      CLASS_INFO[this.cls].name,
+      this.cls,
+      this.level,
+      x,
+      y,
+      z,
+      gear,
+      { armor, bonusCritChance: crit },
+      weaponIlvl,
+    );
     return e;
   }
 
@@ -150,12 +208,84 @@ export class CombatDirector {
   get characterXp(): number {
     return this.totalXp;
   }
+  get characterGold(): number {
+    return this.gold;
+  }
+  get characterInventory(): ItemStackSave[] {
+    return this.inventory;
+  }
+  get characterEquipment(): Record<string, ItemDef> {
+    return this.equipment;
+  }
 
   setClass(cls: CharacterClass): void {
     if (cls === this.cls) return;
     this.cls = cls;
-    const p = this.player;
-    this.state.entities.set(PLAYER_ID, this.makePlayer(p.x, p.z));
+    // A class change clears gear that the new class can't use.
+    for (const [slot, item] of Object.entries(this.equipment)) {
+      if (!canEquip(cls, this.level, item)) {
+        delete this.equipment[slot];
+        if (this.inventory.length < BAG_SIZE) this.inventory.push({ item, qty: 1 });
+      }
+    }
+    this.state.entities.set(PLAYER_ID, this.makePlayer(this.player.x, this.player.z));
+  }
+
+  /** Rebuild the player entity after a gear change, preserving HP%/resource/target. */
+  private rebuildPlayer(): void {
+    const cur = this.player;
+    const hpFrac = cur.hp / cur.maxHP;
+    const resFrac = cur.maxResource > 0 ? cur.resource / cur.maxResource : 0;
+    const next = this.makePlayer(cur.x, cur.z);
+    next.y = cur.y;
+    next.yaw = cur.yaw;
+    next.hp = Math.max(1, Math.round(next.maxHP * hpFrac));
+    next.resource = Math.round(next.maxResource * resFrac);
+    next.targetId = cur.targetId;
+    next.autoAttack = cur.autoAttack;
+    next.dead = cur.dead;
+    this.state.entities.set(PLAYER_ID, next);
+  }
+
+  /** Equip the inventory item at `index` (rings auto-pick a free finger). */
+  equipItem(index: number): void {
+    const stack = this.inventory[index];
+    if (!stack) return;
+    const item = stack.item;
+    if (!canEquip(this.cls, this.level, item)) {
+      this.pushFloater(this.player, 'Cannot equip', 'miss');
+      return;
+    }
+    let slot: string = item.slot;
+    if (slot === EquipSlot.Ring1 || slot === EquipSlot.Ring2) {
+      slot = RING_SLOTS.find((s) => !this.equipment[s]) ?? EquipSlot.Ring1;
+    }
+    const prev = this.equipment[slot];
+    this.equipment[slot] = item;
+    this.inventory.splice(index, 1);
+    if (prev) this.inventory.push({ item: prev, qty: 1 });
+    this.rebuildPlayer();
+  }
+
+  /** Unequip the item in `slot` back to the bag. */
+  unequipItem(slot: string): void {
+    const item = this.equipment[slot];
+    if (!item) return;
+    if (this.inventory.length >= BAG_SIZE) {
+      this.pushFloater(this.player, 'Bag full', 'miss');
+      return;
+    }
+    delete this.equipment[slot];
+    this.inventory.push({ item, qty: 1 });
+    this.rebuildPlayer();
+  }
+
+  /** Sell the inventory item at `index` for a quarter of its value. */
+  sellItem(index: number): void {
+    const stack = this.inventory[index];
+    if (!stack) return;
+    this.gold += Math.max(1, Math.floor((stack.item.value / 4) * stack.qty));
+    this.inventory.splice(index, 1);
   }
 
   /** The skills mapped to hotbar slots (learn order, up to 10). */
@@ -240,9 +370,10 @@ export class CombatDirector {
     }
 
     stepSim(this.state, this.ctx);
-    for (const region of this.regions) stepSpawner(this.state, this.spawner, region, this.ctx);
-
+    // Consume events (incl. loot on death) BEFORE the spawner reaps corpses, so a
+    // freshly-killed enemy is still in the state when we roll its loot table.
     this.consumeEvents();
+    for (const region of this.regions) stepSpawner(this.state, this.spawner, region, this.ctx);
   }
 
   private consumeEvents(): void {
@@ -272,6 +403,31 @@ export class CombatDirector {
         this.state.entities.set(PLAYER_ID, leveled);
         this.pushFloater(leveled, `Level ${this.level}!`, 'xp');
       }
+    } else if (ev.type === 'death') {
+      this.lootFrom(ev.entityId, ev.killerId);
+    }
+  }
+
+  /** Roll a slain enemy's loot table into the player's gold + bag (GDD §6). */
+  private lootFrom(victimId: string, killerId: string | null): void {
+    if (killerId !== PLAYER_ID) return;
+    const victim = this.state.entities.get(victimId);
+    if (!victim || victim.faction !== 'enemy' || !victim.enemyId) return;
+    const def = enemyById(victim.enemyId);
+    if (!def) return;
+    const table = buildEnemyLootTable(def, victim.level);
+    const result = rollLoot(table, this.state.rng, { forClass: this.cls });
+    if (result.gold > 0) {
+      this.gold += result.gold;
+      this.pushFloater(this.player, `+${result.gold}c`, 'xp');
+    }
+    for (const stack of result.items) {
+      if (this.inventory.length >= BAG_SIZE) {
+        this.pushFloater(this.player, 'Bag full', 'miss');
+        break;
+      }
+      this.inventory.push(stack);
+      this.pushFloater(victim, stack.item.name, 'heal');
     }
   }
 
@@ -403,6 +559,7 @@ export class CombatDirector {
       autoAttack: p.autoAttack,
     };
     useStore.getState().setCombat(combat);
+    useStore.getState().setInventory(this.inventoryUi(p));
 
     // Enemy HP nameplates (merged with NPC plates by the game).
     const plates: Nameplate[] = [];
@@ -426,6 +583,29 @@ export class CombatDirector {
 
   /** Latest projected enemy nameplates (the game merges these with NPC plates). */
   enemyPlates: Nameplate[] = [];
+
+  /** Build the character-sheet payload (primary + derived stats, bag, equipment). */
+  private inventoryUi(p: CombatEntity): InventoryUi {
+    const primary = addStats(baseStatsAtLevel(this.cls, this.level), this.equipDerived().gear);
+    return {
+      gold: this.gold,
+      bag: this.inventory,
+      bagSize: BAG_SIZE,
+      equipment: this.equipment,
+      stats: {
+        might: primary.might,
+        agility: primary.agility,
+        intellect: primary.intellect,
+        spirit: primary.spirit,
+        stamina: primary.stamina,
+        maxHP: p.maxHP,
+        attackPower: p.stats.attackPower,
+        spellPower: p.stats.spellPower,
+        critChance: p.stats.critChance,
+        armor: p.stats.armor,
+      },
+    };
+  }
 
   private publishFloaters(
     dt: number,

@@ -111,8 +111,15 @@ export class Game {
       SPAWN_X,
       SPAWN_Z,
       (x, z) => this.teleportPlayer(x, z),
-      character?.level,
-      character?.xp,
+      character
+        ? {
+            level: character.level,
+            xp: character.xp,
+            gold: character.gold,
+            inventory: character.inventory,
+            equipment: character.equipment,
+          }
+        : undefined,
     );
 
     this.registerCommands();
@@ -157,6 +164,9 @@ export class Game {
       cycleTarget: () => this.combat.cycleTarget(),
       toggleAutoAttack: () => this.combat.toggleAutoAttack(),
       releaseSpirit: () => this.combat.releaseSpirit(),
+      equipItem: (index) => this.combat.equipItem(index),
+      unequipItem: (slot) => this.combat.unequipItem(slot),
+      sellItem: (index) => this.combat.sellItem(index),
     };
     useStore.getState().setCommands(commands);
   }
@@ -197,6 +207,9 @@ export class Game {
     if (this.input.wasTapped('KeyF')) this.toggleFreeFly();
     if (this.input.wasTapped('KeyM')) useStore.getState().toggleMap();
     if (this.input.wasTapped('Backquote')) useStore.getState().toggleDev();
+    if (this.input.wasTapped('KeyI') || this.input.wasTapped('KeyC')) {
+      useStore.getState().toggleChar();
+    }
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
     // Enter releases spirit on death.
@@ -355,6 +368,9 @@ export class Game {
       class: this.currentClass,
       level: this.combat.characterLevel,
       xp: this.combat.characterXp,
+      gold: this.combat.characterGold,
+      inventory: this.combat.characterInventory,
+      equipment: this.combat.characterEquipment,
       x: ph.x,
       y: ph.y,
       z: ph.z,

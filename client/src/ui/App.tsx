@@ -11,6 +11,7 @@ import { Nameplates } from './Nameplates.js';
 import { Dialogue } from './Dialogue.js';
 import { Minimap } from './Minimap.js';
 import { CombatHud } from './CombatHud.js';
+import { CharacterPanel } from './CharacterPanel.js';
 import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
@@ -54,6 +55,7 @@ export function App(): JSX.Element {
         {ready && <Minimap />}
         {ready && <Hud />}
         {ready && <CombatHud />}
+        {ready && <CharacterPanel />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}

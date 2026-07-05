@@ -3,7 +3,7 @@
 // call back into the game via the registered command handlers.
 
 import { create } from 'zustand';
-import { CharacterClass } from '@pathlands/shared';
+import { CharacterClass, type ItemDef, type ItemStackSave } from '@pathlands/shared';
 
 export interface Nameplate {
   id: string;
@@ -66,6 +66,27 @@ export interface Floater {
   kind: 'damage' | 'heal' | 'crit' | 'xp' | 'miss';
 }
 
+export interface CharStats {
+  might: number;
+  agility: number;
+  intellect: number;
+  spirit: number;
+  stamina: number;
+  maxHP: number;
+  attackPower: number;
+  spellPower: number;
+  critChance: number;
+  armor: number;
+}
+
+export interface InventoryUi {
+  gold: number;
+  bag: ItemStackSave[];
+  bagSize: number;
+  equipment: Record<string, ItemDef>;
+  stats: CharStats;
+}
+
 export interface DialogueState {
   name: string;
   lines: string[];
@@ -87,6 +108,10 @@ export interface GameCommands {
   cycleTarget(): void;
   toggleAutoAttack(): void;
   releaseSpirit(): void;
+  /** Inventory: equip a bag item, unequip a slot, sell a bag item. */
+  equipItem(index: number): void;
+  unequipItem(slot: string): void;
+  sellItem(index: number): void;
 }
 
 export interface UiState {
@@ -127,16 +152,20 @@ export interface UiState {
 
   combat: CombatUi | null;
   floaters: Floater[];
+  inventory: InventoryUi | null;
+  showChar: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   toggleMap: () => void;
   toggleDev: () => void;
+  toggleChar: () => void;
   setSelectedClass: (cls: CharacterClass) => void;
   setCommands: (c: GameCommands) => void;
   setNameplates: (n: Nameplate[]) => void;
   setCombat: (c: CombatUi) => void;
   setFloaters: (f: Floater[]) => void;
+  setInventory: (i: InventoryUi) => void;
   openDialogue: (name: string, lines: string[]) => void;
   advanceDialogue: () => void;
   closeDialogue: () => void;
@@ -178,16 +207,20 @@ export const useStore = create<UiState>((set) => ({
 
   combat: null,
   floaters: [],
+  inventory: null,
+  showChar: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
+  toggleChar: () => set((st) => ({ showChar: !st.showChar })),
   setSelectedClass: (selectedClass) => set({ selectedClass }),
   setCommands: (commands) => set({ commands }),
   setNameplates: (nameplates) => set({ nameplates }),
   setCombat: (combat) => set({ combat }),
   setFloaters: (floaters) => set({ floaters }),
+  setInventory: (inventory) => set({ inventory }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),
   advanceDialogue: () =>
     set((st) => {
