@@ -18,18 +18,25 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 1,
+      version: 2,
       worldSeed: WORLD_SEED,
+      account: { pathPoints: 3 },
       characters: [
         {
           id: 'c1',
           name: 'Bramble',
           class: 'ranger',
           appearance: { skin: 2, hair: 5 },
+          level: 14,
+          xp: 12345,
+          gold: 420,
           x: 1536.5,
           y: 60,
           z: 1536.5,
           yaw: 1.23,
+          inventory: [],
+          equipment: {},
+          discoveredWaystones: ['brookhollow', 'waymeet'],
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
@@ -38,14 +45,26 @@ describe('save schema', () => {
     expect(normalizeSave(save)).toEqual(save);
   });
 
-  it('fills defaults for a partial/legacy save', () => {
-    const legacy = { characters: [{ name: 'Old', class: 'mage' }] };
-    const migrated = migrate(legacy);
+  it('migrates a v1 (pre-combat) save, defaulting the new fields', () => {
+    const v1 = {
+      version: 1,
+      characters: [{ name: 'Old', class: 'mage', x: 10, y: 20, z: 30 }],
+    };
+    const migrated = migrate(v1);
     expect(migrated.version).toBe(SAVE_VERSION);
     expect(migrated.worldSeed).toBe(WORLD_SEED);
-    expect(migrated.settings.viewDistance).toBeGreaterThan(0);
-    expect(migrated.characters[0]!.name).toBe('Old');
-    expect(migrated.characters[0]!.appearance).toEqual({ skin: 0, hair: 0 });
+    expect(migrated.account.pathPoints).toBe(0);
+    const c = migrated.characters[0]!;
+    expect(c.name).toBe('Old');
+    expect(c.appearance).toEqual({ skin: 0, hair: 0 });
+    expect(c.level).toBe(1);
+    expect(c.xp).toBe(0);
+    expect(c.gold).toBe(0);
+    expect(c.inventory).toEqual([]);
+    expect(c.equipment).toEqual({});
+    expect(c.discoveredWaystones).toEqual([]);
+    // Position is preserved through the migration.
+    expect(c.x).toBe(10);
   });
 
   it('drops malformed character entries instead of crashing', () => {

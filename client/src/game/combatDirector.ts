@@ -73,8 +73,8 @@ export class CombatDirector {
   private spawner: SpawnerState;
   private readonly regions: SpawnRegion[];
   private cls: CharacterClass;
-  private level = START_LEVEL;
-  private totalXp = totalXpToReachLevel(START_LEVEL);
+  private level: number;
+  private totalXp: number;
 
   private readonly renders = new Map<string, RenderEnemy>();
   private dying: Dying[] = [];
@@ -92,10 +92,14 @@ export class CombatDirector {
     spawnX: number,
     spawnZ: number,
     respawnAt: (x: number, z: number) => void,
+    level = START_LEVEL,
+    totalXp?: number,
   ) {
     this.scene = scene;
     this.world = world;
     this.cls = cls;
+    this.level = Math.max(1, level);
+    this.totalXp = totalXp ?? totalXpToReachLevel(this.level);
     this.spawnX = spawnX;
     this.spawnZ = spawnZ;
     this.respawnAt = respawnAt;
@@ -137,6 +141,14 @@ export class CombatDirector {
 
   private get player(): CombatEntity {
     return this.state.entities.get(PLAYER_ID)!;
+  }
+
+  /** Live progression for autosave (level derives from totalXp). */
+  get characterLevel(): number {
+    return this.level;
+  }
+  get characterXp(): number {
+    return this.totalXp;
   }
 
   setClass(cls: CharacterClass): void {

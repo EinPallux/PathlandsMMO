@@ -10,7 +10,9 @@ import {
   TICK_DT,
   buildCharacterModel,
   BIOMES,
-  type CharacterClass,
+  CHARACTER_CLASSES,
+  CharacterClass,
+  type CharacterSave,
   type VoxelSampler,
 } from '@pathlands/shared';
 import { ChunkManager } from '../engine/chunkManager.js';
@@ -48,6 +50,7 @@ export class Game {
   private currentClass: CharacterClass;
   private readonly discovery: Discovery;
   private readonly combat: CombatDirector;
+  private readonly character: CharacterSave | null;
 
   private accumulator = 0;
   private lastTime = 0;
@@ -57,8 +60,9 @@ export class Game {
   private running = true;
   private started = false;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, character: CharacterSave | null = null) {
     this.canvas = canvas;
+    this.character = character;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -87,10 +91,16 @@ export class Game {
 
     this.input = new Input(canvas);
 
-    const spawnY = this.world.heightAt(Math.floor(SPAWN_X), Math.floor(SPAWN_Z)) + 2;
-    this.controller = new PlayerController(SPAWN_X, spawnY, SPAWN_Z);
+    // Spawn from the character (falls back to the Brookhollow plaza for dev boots).
+    const spawnX = character?.x ?? SPAWN_X;
+    const spawnZ = character?.z ?? SPAWN_Z;
+    const spawnY = this.world.heightAt(Math.floor(spawnX), Math.floor(spawnZ)) + 2;
+    this.controller = new PlayerController(spawnX, spawnY, spawnZ);
 
-    this.currentClass = useStore.getState().selectedClass;
+    this.currentClass = character
+      ? (CHARACTER_CLASSES.find((c) => c === character.class) ?? CharacterClass.Warrior)
+      : useStore.getState().selectedClass;
+    useStore.getState().setSelectedClass(this.currentClass);
     this.playerModel = new ModelObject(buildCharacterModel(this.currentClass));
     this.scene.add(this.playerModel.group);
 
@@ -101,6 +111,8 @@ export class Game {
       SPAWN_X,
       SPAWN_Z,
       (x, z) => this.teleportPlayer(x, z),
+      character?.level,
+      character?.xp,
     );
 
     this.registerCommands();
@@ -333,6 +345,22 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.camera.setAspect(w / h);
   };
+
+  /** Merge live progression + position back into the character for autosave. */
+  snapshotCharacter(): CharacterSave | null {
+    if (!this.character) return null;
+    const ph = this.controller.physics;
+    return {
+      ...this.character,
+      class: this.currentClass,
+      level: this.combat.characterLevel,
+      xp: this.combat.characterXp,
+      x: ph.x,
+      y: ph.y,
+      z: ph.z,
+      yaw: ph.yaw,
+    };
+  }
 
   dispose(): void {
     this.running = false;

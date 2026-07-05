@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { CharacterSave } from '@pathlands/shared';
 import { Game } from '../game/game.js';
 import { useStore } from '../game/store.js';
+import { upsertCharacter } from '../platform/saveStore.js';
 import { LoadingScreen } from './LoadingScreen.js';
 import { Hud } from './Hud.js';
 import { DevOverlay } from './DevOverlay.js';
@@ -9,22 +11,40 @@ import { Nameplates } from './Nameplates.js';
 import { Dialogue } from './Dialogue.js';
 import { Minimap } from './Minimap.js';
 import { CombatHud } from './CombatHud.js';
+import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
+  const [character, setCharacter] = useState<CharacterSave | null>(null);
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
 
   useEffect(() => {
-    if (!canvasRef.current || gameRef.current) return;
-    gameRef.current = new Game(canvasRef.current);
+    if (!character || !canvasRef.current || gameRef.current) return;
+    const game = new Game(canvasRef.current, character);
+    gameRef.current = game;
+
+    const save = (): void => {
+      const snap = game.snapshotCharacter();
+      if (snap) void upsertCharacter(snap);
+    };
+    const autosave = window.setInterval(save, 30_000);
+    window.addEventListener('beforeunload', save);
+
     return () => {
-      gameRef.current?.dispose();
+      window.clearInterval(autosave);
+      window.removeEventListener('beforeunload', save);
+      save();
+      game.dispose();
       gameRef.current = null;
     };
-  }, []);
+  }, [character]);
+
+  if (!character) {
+    return <Onboarding onEnter={setCharacter} />;
+  }
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
