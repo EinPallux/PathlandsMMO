@@ -86,11 +86,25 @@ Skills: 1 Frostbolt (dmg + 20% slow); 2 Fire Blast (instant, off-GCD); 4 Arcane 
 - Level difference: ±5% dmg per level delta (capped ±25%); mobs 4+ levels higher get a hit-chance penalty against — the classic "don't fight red mobs" signal
 - **Threat**: dmg = 1 threat/pt, heals = 0.5 threat/pt split among enemies; tank-stance multiplier ×2; pull when exceeding current target's threat by 10% (melee) / 30% (ranged)
 
+### Class base stats & growth (implementation — `shared/data/classes.ts`)
+
+Primary stats at a level = `base + floor(growth · (level−1))`. Max HP = `baseHP + Stamina·10`.
+Resource: Rage/Focus cap 100; Mana = `120 + Intellect·15`. Armor class is equip-locked.
+
+| Class   | Resource | Armor   | baseHP | base M/A/I/Sp/St | growth/lvl M/A/I/Sp/St |
+| ------- | -------- | ------- | ------ | ---------------- | ---------------------- |
+| Warrior | Rage     | Plate   | 60     | 11/6/4/5/11      | 1.8/0.5/0.2/0.5/1.8    |
+| Ranger  | Focus    | Leather | 45     | 8/11/4/6/8       | 1.1/1.8/0.2/0.6/1.1    |
+| Priest  | Mana     | Cloth   | 35     | 4/5/11/10/7      | 0.3/0.4/1.8/1.5/0.9    |
+| Mage    | Mana     | Cloth   | 30     | 4/6/12/8/6       | 0.3/0.6/2.0/1.0/0.8    |
+
+Armor-class mitigation multipliers: cloth 1.0 · leather 1.6 · mail 2.4 · plate 3.2. Ranger gets `+0.5 AP per Agility`. Resource regen: Focus +10/s always; Mana `Spirit·0.35`/s in combat, `maxMana/10`/s out; Rage builds from damage, decays 4/s out of combat.
+
 ### Enemy baseline (level L)
 
 - HP: `35 + 22·L + 1.10^L·8` — normal; **Elite** ×3 HP ×1.6 dmg (Hollows, named); **Boss** ×8 HP ×2 dmg + mechanics
 - Damage per 2 s swing: `6 + 4·L`
-- XP on kill: `12 + 6·L` (same-level; ±20%/level delta, zero at gray −6)
+- XP on kill: `12 + 6·L` (same-level). Delta `d = enemyLvl − playerLvl`: tougher mobs `×min(1 + 0.2·d, 1.4)`; below level fades linearly `×(1 + d/6)` to **zero at gray (d ≤ −6)**.
 
 ### Group scaling (built Phase 3, meaningful Phase 6)
 
@@ -98,7 +112,7 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 
 ## 5. Leveling & XP
 
-- Cap **30**. XP to complete level L: `XP(L) = 400 · L^1.55` (≈400 at 1, ≈76k at 29; total ≈530k, tuned for ~25–35 h with quests).
+- Cap **30**. XP to complete level L: `XP(L) = 400 · L^1.55` (≈400 at 1, ≈74k at 29; **total ≈878k** across 1→30 — the summed curve, corrected from an earlier ≈530k estimate). XP sources (quests ~55%, kills ~35%, discovery ~10%) supply this over a target ~25–35 h; Phase 5 tunes the coefficient/exponent if the pace misses.
 - Sources: quests (~55%), kills (~35%), discovery/Deeds (~10%). Discovery XP on first entering named subzones and activating Waystones.
 - **Rested XP** (meta-friendly, solo-friendly): logging out in an inn or near a Waystone accrues a pool granting +100% kill XP, up to 1.5 levels. Path Points can raise the cap.
 - Level-up: full heal, fanfare VFX, stat gains toast, new-skill notification pointing to the trainer.
