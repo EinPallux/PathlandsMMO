@@ -36,6 +36,13 @@ One landmass, **~3072×3072 voxels** (1 voxel = 1 m), height 0–192. No zone li
 
 ## 3. Zones
 
+> **Implementation status (Phase 4 Part 9).** The main story **"The Waymaker's Path" is
+> authored end to end — all six chapters, levels 1–30** (`shared/data/quests/content.ts`),
+> from the Brookhollow tutorial to the Sunken Crypt finale, with side arcs and Hollow boss
+> lead-ins in every zone (~39 quests, 14 givers). The per-zone side-quest budgets below are
+> still being filled toward the ~110 total; named-rare hunt targets (§4) and profession
+> intro quests remain to be authored.
+
 ### 3.1 Heartmead Vale — starter zone (levels 1–6)
 
 Rolling flower meadows, brooks, orchards, wheat fields. Safe, golden, tutorializing.

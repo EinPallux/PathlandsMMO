@@ -1,8 +1,9 @@
-// Quest content (GDD §8, WORLD.md §3). The early-game questing spine: the
-// Brookhollow tutorial, the main story "The Waymaker's Path" chapters 1–3, and side
-// arcs across Heartmead Vale, Mossfang Weald, and the Stonejaw Foothills (roughly
-// levels 1–14). Later parts fill the remaining zones toward the ~110-quest budget.
-// Pure data — objective/reward types come from schema.ts.
+// Quest content (GDD §8, WORLD.md §3). The full main-story spine "The Waymaker's
+// Path" — chapters 1–6 from the Brookhollow tutorial to the Sunken Crypt finale
+// (levels 1–30) — plus side arcs and Hollow boss lead-ins across all six zones:
+// Heartmead Vale, Mossfang Weald, the Stonejaw Foothills, the Glimmerpeaks, the
+// Trollmoor Highlands, and the Sunlit Coast. Later parts widen the zone side-quest
+// arcs toward the ~110-quest budget. Pure data — types come from schema.ts.
 
 import { EquipSlot, Rarity } from '../items.js';
 import type { QuestDef, QuestGiver } from './schema.js';
@@ -41,6 +42,57 @@ export const QUEST_GIVERS: readonly QuestGiver[] = [
     dz: 4,
     seed: 108,
   },
+  // Glimmerpeaks
+  {
+    id: 'prospectorVayle',
+    name: 'Prospector Vayle',
+    settlement: 'glimmercamp',
+    dx: 4,
+    dz: 3,
+    seed: 109,
+  },
+  {
+    id: 'shrinekeeperIsold',
+    name: 'Shrinekeeper Isold',
+    settlement: 'glimmercamp',
+    dx: -5,
+    dz: 4,
+    seed: 110,
+  },
+  // Trollmoor Highlands
+  {
+    id: 'castellanBrenna',
+    name: 'Castellan Brenna',
+    settlement: 'cairnwick',
+    dx: 4,
+    dz: 3,
+    seed: 111,
+  },
+  {
+    id: 'loremasterKeld',
+    name: 'Loremaster Keld',
+    settlement: 'cairnwick',
+    dx: -5,
+    dz: 4,
+    seed: 112,
+  },
+  // Waymeet & the Sunlit Coast
+  {
+    id: 'harbormasterCole',
+    name: 'Harbormaster Cole',
+    settlement: 'waymeet',
+    dx: 6,
+    dz: -4,
+    seed: 113,
+  },
+  {
+    id: 'archivistSelwynMar',
+    name: 'Archivist Selwyn-Mar',
+    settlement: 'waymeet',
+    dx: -6,
+    dz: -3,
+    seed: 114,
+  },
 ];
 
 /**
@@ -53,6 +105,9 @@ export const QUEST_DROP_TAGS: Record<string, string> = {
   briarGoblin: 'goblinEar',
   caveGnoll: 'gnollFetish',
   stonejawGrub: 'grubPlate',
+  crystalbackLizard: 'crystalScale',
+  ironhideTroll: 'trollTusk',
+  drownedDead: 'brinePearl',
 };
 
 // Class-agnostic item specs (the client fills `forClass` from the player at grant).
@@ -502,5 +557,355 @@ export const QUESTS: readonly QuestDef[] = [
     progress: 'Warlord Bramblegut holds Briarhollow Warrens, at the great stump east of Fernwick.',
     complete:
       'Bramblegut, dead by your hand. You have the makings of a real Wayfarer. The Elder chose well.',
+  },
+
+  // =====================================================================
+  // Gloomroot Cavern — Hollow lead-in (Foothills, boss objective)
+  // =====================================================================
+  {
+    id: 'q_mother_gnarlmaw',
+    name: 'The Thing Under Shaft Three',
+    giver: 'foremanDurn',
+    minLevel: 15,
+    prereq: ['q_the_gnoll_dens'],
+    objectives: [{ kind: 'boss', target: 'bossGloommother', label: 'Defeat Mother Gnarlmaw' }],
+    reward: {
+      xp: 1200,
+      gold: 60,
+      choices: [
+        spec(EquipSlot.Chest, Rarity.Rare, 16),
+        spec(EquipSlot.MainHand, Rarity.Rare, 16),
+        spec(EquipSlot.Trinket, Rarity.Rare, 16),
+      ],
+    },
+    intro:
+      'The grubs answered to something, Wayfarer — a great blighted mother, Gnarlmaw, burrowed in Gloomroot where the caves drink the Blight. She erupts and she poisons the ground. Kill her before she seeds the whole hill.',
+    progress:
+      'Mother Gnarlmaw burrows in Gloomroot Cavern, west of Grubbers’ Rest. Mind the pools.',
+    complete:
+      'Gnarlmaw is carrion. The mines can breathe. Whatever wakes the Blight, it is deeper still — up in the crystal peaks, they say the very stone is being eaten. Take the high road to Glimmercamp.',
+  },
+
+  // =====================================================================
+  // Main story chapter 4 — Glimmerpeaks (crystal marrow)
+  // =====================================================================
+  {
+    id: 'q_crystal_marrow',
+    name: 'Crystal Marrow',
+    chapter: 4,
+    chain: 'waymakers-path',
+    giver: 'prospectorVayle',
+    minLevel: 18,
+    prereq: ['q_the_gnoll_dens'],
+    objectives: [
+      { kind: 'kill', target: 'crystalbackLizard', count: 8, label: 'Crystalback Lizards slain' },
+      { kind: 'collect', target: 'crystalScale', count: 4, label: 'Resonant scales gathered' },
+    ],
+    reward: {
+      xp: 1500,
+      gold: 70,
+      items: [spec(EquipSlot.Hands, Rarity.Rare, 18)],
+      waystoneUnlock: 'crystalOverlook',
+    },
+    intro:
+      'You’re the Wayfarer chasing the Blight? Then look closer at our crystal — it rings hollow where it never used to. The lizards feed on the marrow of it. Slay eight and bring me four scales; I’ll show you what’s being eaten.',
+    progress: 'Crystalback Lizards bask in the glowing canyons above Glimmercamp.',
+    complete:
+      'See how the marrow’s gone from these? This isn’t ore, Wayfarer — it’s Waystone-stuff, the same as the old stones. Something is draining the mountains dry. Isold at the shrine has heard it singing.',
+  },
+  {
+    id: 'q_songs_in_the_crystal',
+    name: 'Songs in the Crystal',
+    chapter: 4,
+    chain: 'waymakers-path',
+    giver: 'shrinekeeperIsold',
+    minLevel: 20,
+    prereq: ['q_crystal_marrow'],
+    objectives: [
+      {
+        kind: 'explore',
+        target: 'crystalDeepsMouth',
+        label: 'Trace the song to the Crystal Deeps',
+        x: 770,
+        z: 780,
+        radius: 14,
+      },
+    ],
+    reward: { xp: 1300, gold: 60, items: [spec(EquipSlot.Feet, Rarity.Rare, 20)] },
+    intro:
+      'The crystal sings, Wayfarer — a low grief, from deep in the mountain. Follow it to its source. I would go myself, but my knees are older than these peaks.',
+    progress: 'The song swells toward the Crystal Deeps, in the high canyons north-west of camp.',
+    complete:
+      'A drinking-sound, you say — something lapping the marrow from within the Deeps. Prismhide, the old wyrm, coils around it and won’t let the miners near. That grief will not stop until the wyrm does.',
+  },
+
+  // =====================================================================
+  // Glimmerpeaks — side arc + Hollow lead-in
+  // =====================================================================
+  {
+    id: 'q_shardback_cull',
+    name: 'The Shardback Cull',
+    giver: 'prospectorVayle',
+    minLevel: 19,
+    objectives: [
+      { kind: 'kill', target: 'crystalbackLizard', count: 10, label: 'Shardbacks culled' },
+    ],
+    reward: { xp: 900, gold: 40, choices: [spec(EquipSlot.Legs, Rarity.Rare, 19)] },
+    intro:
+      'The lizards have grown thick as the marrow’s thinned — a whole shardback brood on the overlook trail. Cull ten and my prospectors can work the seam again.',
+    progress: 'Crystalback Lizards swarm the trail to the Crystal Overlook.',
+    complete: 'The seam’s clear. You swing a fair pick for a Wayfarer. Here’s your due.',
+  },
+  {
+    id: 'q_frostgate_vigil',
+    name: 'The Frostgate Vigil',
+    giver: 'shrinekeeperIsold',
+    minLevel: 21,
+    objectives: [
+      {
+        kind: 'explore',
+        target: 'crystalOverlookShrine',
+        label: 'Keep the vigil at the Crystal Overlook',
+        x: 820,
+        z: 820,
+        radius: 10,
+      },
+    ],
+    reward: { xp: 780, gold: 34, items: [spec(EquipSlot.Amulet, Rarity.Uncommon, 21)] },
+    intro:
+      'An old rite: stand the dawn vigil at the Crystal Overlook and let the peaks take your measure. Humor an old shrinekeeper — the mountain remembers those who greet it.',
+    progress: 'The Crystal Overlook stands on the high ridge north-west of Glimmercamp.',
+    complete:
+      'The peaks know you now. That is no small thing up here. Go with the mountain’s blessing.',
+  },
+  {
+    id: 'q_prismhide',
+    name: 'The Grief of Prismhide',
+    giver: 'shrinekeeperIsold',
+    minLevel: 22,
+    prereq: ['q_songs_in_the_crystal'],
+    objectives: [{ kind: 'boss', target: 'bossCrystalWyrm', label: 'Defeat Prismhide' }],
+    reward: {
+      xp: 1900,
+      gold: 95,
+      choices: [
+        spec(EquipSlot.MainHand, Rarity.Rare, 22),
+        spec(EquipSlot.Head, Rarity.Rare, 22),
+        spec(EquipSlot.Chest, Rarity.Rare, 22),
+      ],
+    },
+    intro:
+      'Prismhide is no monster, Wayfarer — only old, and starving as the marrow fails. Its shield answers to the crystal pylons in the Deeps. Break those, then end its grief. Go gently, and go ready.',
+    progress: 'Prismhide coils in the Crystal Deeps; shatter the pylons before you strike.',
+    complete:
+      'The song has stopped. You gave the old wyrm peace — and the Deeps their quiet. But the marrow is being carried somewhere, north to the Trollmoor. Brenna holds Cairnwick; she’ll want word.',
+  },
+
+  // =====================================================================
+  // Main story chapter 5 — Trollmoor Highlands (what the trolls buried)
+  // =====================================================================
+  {
+    id: 'q_the_trolls_remember',
+    name: 'The Trolls Remember',
+    chapter: 5,
+    chain: 'waymakers-path',
+    giver: 'castellanBrenna',
+    minLevel: 24,
+    prereq: ['q_songs_in_the_crystal'],
+    objectives: [
+      { kind: 'kill', target: 'ironhideTroll', count: 8, label: 'Ironhide Trolls broken' },
+      { kind: 'collect', target: 'trollTusk', count: 4, label: 'Carved war-tusks taken' },
+    ],
+    reward: {
+      xp: 2200,
+      gold: 110,
+      items: [spec(EquipSlot.Chest, Rarity.Rare, 24)],
+      waystoneUnlock: 'theSentinels',
+    },
+    intro:
+      'A Wayfarer, this far north? Good — I’m short of those. The Ironhide war-band carries carved tusks older than Cairnwick, and Keld swears the carvings are Waymaker script. Break eight of the brutes and bring me four tusks. Let’s learn what the trolls kept.',
+    progress: 'The Ironhide war-band roams the cairns and bogs of the high moor.',
+    complete:
+      'Keld will weep over these. The carvings are a warning — the trolls guard something the Waymakers buried under the moor, in the forge-vault at Ironvein. They’ve remembered it for a thousand years. Speak to Keld.',
+  },
+  {
+    id: 'q_the_buried_forge',
+    name: 'The Buried Forge',
+    chapter: 5,
+    chain: 'waymakers-path',
+    giver: 'loremasterKeld',
+    minLevel: 26,
+    prereq: ['q_the_trolls_remember'],
+    objectives: [
+      {
+        kind: 'explore',
+        target: 'ironveinMouth',
+        label: 'Find the mouth of Ironvein Halls',
+        x: 1400,
+        z: 640,
+        radius: 14,
+      },
+    ],
+    reward: { xp: 1800, gold: 90, items: [spec(EquipSlot.Legs, Rarity.Rare, 26)] },
+    intro:
+      'The tusks name a place: Ironvein, a Waymaker forge-vault the trolls have squatted on since the fall. If the marrow is being carried anywhere, it’s there — to forge something. Find the vault mouth, but do not enter alone.',
+    progress: 'Ironvein Halls open in the ridges north of Cairnwick, held by the trolls.',
+    complete:
+      'A forge that never cooled — and the Ironhides feeding it stolen marrow under a warden, Urzul, who wields a Waymaker hammer. Whatever they’re making, it isn’t for us. This is the last road before the coast, Wayfarer.',
+  },
+
+  // =====================================================================
+  // Trollmoor Highlands — side arc + Hollow lead-in
+  // =====================================================================
+  {
+    id: 'q_bog_drakes',
+    name: 'Drakes in the Peat',
+    giver: 'castellanBrenna',
+    minLevel: 26,
+    objectives: [{ kind: 'kill', target: 'bogDrake', count: 6, label: 'Bog Drakes slain' }],
+    reward: { xp: 1400, gold: 62, choices: [spec(EquipSlot.Feet, Rarity.Rare, 26)] },
+    intro:
+      'Bog drakes have nested in the peat cuts and taken two of my rangers. Slay six and the moor patrols can ride the low road again.',
+    progress: 'Bog Drakes lair in the peat bogs south of Cairnwick.',
+    complete:
+      'Six drakes down. Cairnwick’s low road is ours again. You’ve earned the keep’s thanks.',
+  },
+  {
+    id: 'q_the_standing_stones',
+    name: 'The Standing Stones',
+    giver: 'loremasterKeld',
+    minLevel: 25,
+    objectives: [
+      {
+        kind: 'explore',
+        target: 'theSentinelsCircle',
+        label: 'Read the Sentinels stone circle',
+        x: 1720,
+        z: 560,
+        radius: 12,
+      },
+      { kind: 'kill', target: 'ironhideTroll', count: 4, label: 'Cairn-trolls driven off' },
+    ],
+    reward: { xp: 1250, gold: 58, items: [spec(EquipSlot.Amulet, Rarity.Rare, 25)] },
+    intro:
+      'The Sentinels — a Waymaker stone circle the trolls have half-toppled. I need the standing-stone glyphs copied before they’re lost, but the cairn-trolls won’t make it easy. Read the circle, and clear four of them for me.',
+    progress: 'The Sentinels stand on the high moor north-east of Cairnwick.',
+    complete:
+      'You’ve given me a page of the oldest speech on the continent. The circle points down the Old Road, to the coast — to where the last Waymaker went. It always comes back to that.',
+  },
+  {
+    id: 'q_forgewarden_urzul',
+    name: 'The Forgewarden',
+    giver: 'loremasterKeld',
+    minLevel: 27,
+    prereq: ['q_the_buried_forge'],
+    objectives: [{ kind: 'boss', target: 'bossIronvein', label: 'Defeat Forgewarden Urzul' }],
+    reward: {
+      xp: 2600,
+      gold: 130,
+      choices: [
+        spec(EquipSlot.MainHand, Rarity.Epic, 27),
+        spec(EquipSlot.Chest, Rarity.Epic, 27),
+        spec(EquipSlot.Head, Rarity.Epic, 27),
+      ],
+    },
+    intro:
+      'Urzul must not finish what he’s forging. The vault floor runs with forge-flame at his call — keep moving, break the hammer’s rhythm, and put the warden down. Take this, and end it.',
+    progress: 'Forgewarden Urzul holds the deepest hall of Ironvein; beware the forge-flame floor.',
+    complete:
+      'The hammer is cold, the forge is dark. Whatever Urzul was making went unfinished — and the marrow he hoarded was bound for the coast, for the crypt. This is the Waymaker’s Path’s end, Wayfarer. Go to Waymeet.',
+  },
+
+  // =====================================================================
+  // Main story chapter 6 — Sunlit Coast & the Sunken Crypt (finale)
+  // =====================================================================
+  {
+    id: 'q_the_drowned_road',
+    name: 'The Drowned Road',
+    chapter: 6,
+    chain: 'waymakers-path',
+    giver: 'harbormasterCole',
+    minLevel: 28,
+    prereq: ['q_the_buried_forge'],
+    objectives: [
+      { kind: 'kill', target: 'drownedDead', count: 8, label: 'Drowned Dead put to rest' },
+      { kind: 'collect', target: 'brinePearl', count: 4, label: 'Brine-pearls recovered' },
+    ],
+    reward: {
+      xp: 3000,
+      gold: 150,
+      items: [spec(EquipSlot.Hands, Rarity.Epic, 28)],
+      waystoneUnlock: 'cryptwatch',
+    },
+    intro:
+      'So you’re the one who walked the whole Old Road. The coast is the end of it — and the dead won’t stay down. Every night more drowned crawl from the shallows toward the crypt. Put eight to rest and bring me four of the brine-pearls they carry; the Archivist reads them like pages.',
+    progress: 'The Drowned Dead haul themselves from the shallows below Waymeet toward the crypt.',
+    complete:
+      'The pearls are memories, Cole says — the crypt’s own. Take them to Archivist Selwyn-Mar at the old library. If anyone can tell you what waits in the Sunken Crypt, it’s her. This is the last door, Wayfarer.',
+  },
+  {
+    id: 'q_the_last_waymaker',
+    name: 'The Last Waymaker',
+    chapter: 6,
+    chain: 'waymakers-path',
+    giver: 'archivistSelwynMar',
+    minLevel: 30,
+    prereq: ['q_the_drowned_road'],
+    objectives: [{ kind: 'boss', target: 'bossLastWaymaker', label: 'Face the Last Waymaker' }],
+    reward: {
+      xp: 4500,
+      gold: 300,
+      items: [spec(EquipSlot.Trinket, Rarity.Epic, 30)],
+      choices: [
+        spec(EquipSlot.MainHand, Rarity.Epic, 30),
+        spec(EquipSlot.Chest, Rarity.Epic, 30),
+        spec(EquipSlot.Head, Rarity.Epic, 30),
+      ],
+      waystoneUnlock: 'pierside',
+    },
+    intro:
+      'The pearls tell it all, Wayfarer. The last Waymaker did not die down there — she stayed, and she has been unmaking the network ever since, draining the marrow to hold one drowned tomb against time. The Blight is her grief made law. Go down into the Sunken Crypt. End it, however you can. The whole road has led you here.',
+    progress:
+      'The Last Waymaker waits in the flooded tomb beneath the Sunlit Coast. Walk the path.',
+    complete:
+      'It is done. You walked the last path-tile and gave the Waymaker her rest — and as she faded, the Grand Waystone woke, and a hundred sleeping stones answered across the continent. The road is whole again, and you made it so. They will call you Wayfinder now. There is only the horizon left.',
+  },
+
+  // =====================================================================
+  // Sunlit Coast — side arc
+  // =====================================================================
+  {
+    id: 'q_wreck_scavengers',
+    name: 'Bones on the Beach',
+    giver: 'harbormasterCole',
+    minLevel: 28,
+    objectives: [
+      { kind: 'kill', target: 'cryptSkeleton', count: 8, label: 'Crypt Skeletons scattered' },
+    ],
+    reward: { xp: 1900, gold: 85, choices: [spec(EquipSlot.Legs, Rarity.Rare, 28)] },
+    intro:
+      'The wrecks along the strand are thick with walking bones since the crypt stirred. Scatter eight and my salvagers can work the tide-line without losing fingers.',
+    progress: 'Crypt Skeletons pick over the shipwrecks along the Sunlit Coast.',
+    complete:
+      'The strand’s clear enough to salvage. Here — pulled it from a wreck myself. It suits a Wayfarer.',
+  },
+  {
+    id: 'q_crypt_sentinels',
+    name: 'The Sentinels of the Deep',
+    giver: 'archivistSelwynMar',
+    minLevel: 29,
+    objectives: [
+      { kind: 'kill', target: 'cryptSentinel', count: 4, label: 'Crypt Sentinels shattered' },
+    ],
+    reward: {
+      xp: 2200,
+      gold: 100,
+      choices: [spec(EquipSlot.OffHand, Rarity.Epic, 29), spec(EquipSlot.Trinket, Rarity.Rare, 29)],
+    },
+    intro:
+      'Before you brave the crypt itself, blood the guardians at its threshold — the Sentinels the Waymaker set to keep the living out. Four of them ward the outer gate. Break them, and the way down opens.',
+    progress: 'Crypt Sentinels ward the flooded gate of the Sunken Crypt, at the coast’s edge.',
+    complete:
+      'The gate is unguarded now. What lies below is the Waymaker herself — and the end of the whole long road. Steel yourself, Wayfarer. History is holding its breath.',
   },
 ];

@@ -4,6 +4,26 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 9 — the complete main story (chapters 4–6) (2026-07-05)
+
+- **`shared/data/quests/content`** — extended "The Waymaker's Path" from chapter 3 to the
+  finale: **chapter 4** (Glimmerpeaks — _Crystal Marrow_ → _Songs in the Crystal_),
+  **chapter 5** (Trollmoor — _The Trolls Remember_ → _The Buried Forge_), and **chapter 6**
+  (Sunlit Coast → _The Drowned Road_ → _The Last Waymaker_ finale, levels 28–30). Added
+  higher-zone side arcs (shardback cull, Frostgate vigil, bog drakes, the standing stones,
+  wreck scavengers, crypt sentinels) and Hollow boss lead-ins (Mother Gnarlmaw, Prismhide,
+  Forgewarden Urzul, and the Last Waymaker) — ~15 new quests, bringing the world to ~39
+  quests and giving a gap-free 1→30 main-story path.
+- **Quest-givers** — 6 new named givers at Glimmercamp (Prospector Vayle, Shrinekeeper
+  Isold), Cairnwick (Castellan Brenna, Loremaster Keld), and Waymeet (Harbormaster Cole,
+  Archivist Selwyn-Mar), taking the roster to 14.
+- **Drop tags** — new collect tags for the higher enemies (crystal scales ← Crystalback
+  Lizard, troll tusks ← Ironhide Troll, brine-pearls ← Drowned Dead), emitted by the
+  existing data-driven kill→collect path.
+- **Tests** — +1 (chapters 1–6 present, level-30 boss finale, non-decreasing minLevel along
+  the chain); the existing chain-integrity / reachability / obtainability checks now cover
+  the full story. 236 total.
+
 ### Part 8 — endgame loop v1: daily bounties (2026-07-05)
 
 - **`shared/data/bounties`** — a data-driven bounty pool (16 across four hub towns:

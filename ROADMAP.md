@@ -6,7 +6,24 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 8: the endgame loop v1 (daily bounties).**
+> **Phase 4 in progress (2026-07-05) — Part 9: the complete main story (chapters 4–6).**
+> "The Waymaker's Path" now runs end to end. The chain that opened at the Brookhollow
+> fountain continues up into the **Glimmerpeaks** (ch.4 — the crystal is Waystone marrow,
+> and something is draining it), across the **Trollmoor Highlands** (ch.5 — the trolls
+> remember what the Waymakers buried), and down to the **Sunlit Coast & the Sunken Crypt**
+> (ch.6 finale — the last Waymaker never left, and her grief is the Blight). Six new
+> chain quests plus higher-zone side arcs and Hollow boss lead-ins (Mother Gnarlmaw,
+> Prismhide, Forgewarden Urzul, and the Last Waymaker herself) bring the world to **~39
+> quests from 14 givers**, giving a **gap-free 1→30 main-story path**. New quest-givers stand
+> at Glimmercamp, Cairnwick, and Waymeet; new collect drop-tags (crystal scales, troll tusks,
+> brine-pearls) feed the higher objectives. **236 tests green** (chain integrity + chapter
+> 1–6 coverage + level-ordering + reachability); `pnpm typecheck && lint && build` clean; the
+> game boots the full content set with the quest log open and zero console errors. Next:
+> named rare-elite hunts and the bulk zone side-quest budget.
+>
+> ---
+>
+> **Part 8 (2026-07-05): the endgame loop v1 (daily bounties).**
 > The hub towns now post a **daily Bounty Board** (**O**). A data-driven bounty pool
 > (`shared/data/bounties.ts`) is rotated deterministically each day — seeded by the world
 > seed + a day index taken once at bootstrap (the sim stays date-free) — so Brookhollow,
@@ -217,6 +234,16 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 9 done (2026-07-05):** **the complete main story** — chapters 4–6 of "The
+> Waymaker's Path". The chain extends from the Foothills up through the **Glimmerpeaks**
+> (crystal-marrow ch.4), the **Trollmoor Highlands** (buried-forge ch.5), and the **Sunlit
+> Coast → Sunken Crypt** finale (ch.6), with six new chain quests, higher-zone side arcs,
+> and Hollow boss lead-ins (Gnarlmaw / Prismhide / Forgewarden Urzul / the Last Waymaker).
+> 6 new quest-givers at Glimmercamp, Cairnwick, and Waymeet; new collect drop-tags for the
+> higher enemies. The main story is now a **gap-free level 1→30 path** (~39 quests, 14
+> givers). 236 tests green (adds chapter-1–6 coverage + level-ordering checks). **Next:**
+> named rare hunts and the bulk zone side-quest budget.
+>
 > **Part 8 done (2026-07-05):** **the endgame loop v1** — **daily bounty boards**. A
 > data-driven bounty pool (`shared/data/bounties.ts`) posts a deterministic daily slice at
 > each of the four hub towns, seeded by the world seed + a bootstrap day index (the sim
@@ -306,7 +333,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 ### Deliverables
 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
-- [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Part 2 done: the early-zone spine — main-story chapters 1–3 + Vale/Weald/Foothills side arcs, ~21 quests across 8 givers, levels 1–14. Part 8 added the daily bounty boards. Remaining zones and profession intros fill in later parts.)_
+- [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Parts 2 + 9 done: the **complete main story — all six chapters, Brookhollow tutorial → the Sunken Crypt finale (levels 1–30)** — plus side arcs and Hollow boss lead-ins (Bramblegut, Gnarlmaw, Prismhide, Forgewarden Urzul, the Last Waymaker) across all six zones, ~39 quests from 14 givers. Part 8 added the daily bounty boards. Remaining: the bulk of the zone side-quest budget + profession intro quests toward ~110.)_
 - [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [~] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10. _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_

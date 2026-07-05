@@ -216,4 +216,19 @@ describe('Quest content validity', () => {
     }
     expect(story.every((q) => log.turnedIn.includes(q.id))).toBe(true);
   });
+
+  it('the main story spans all six chapters and ends at a level-30 finale', () => {
+    const story = QUESTS.filter((q) => q.chain === 'waymakers-path');
+    const chapters = new Set(story.map((q) => q.chapter));
+    for (const ch of [1, 2, 3, 4, 5, 6]) expect(chapters.has(ch), `chapter ${ch}`).toBe(true);
+    const finale = story.find((q) => q.id === 'q_the_last_waymaker');
+    expect(finale?.chapter).toBe(6);
+    expect(finale?.minLevel).toBe(30);
+    expect(finale?.objectives.some((o) => o.kind === 'boss')).toBe(true);
+    // minLevel never decreases as the chapters advance (a gap-free 1→30 path).
+    const byChapter = [...story].sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0));
+    for (let i = 1; i < byChapter.length; i++) {
+      expect(byChapter[i]!.minLevel).toBeGreaterThanOrEqual(byChapter[i - 1]!.minLevel);
+    }
+  });
 });
