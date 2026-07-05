@@ -11,3 +11,4 @@ export * from './spawns.js';
 export * from './vendors.js';
 export * from './quests/index.js';
 export * from './professions.js';
+export * from './recipes.js';

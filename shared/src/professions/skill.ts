@@ -25,10 +25,9 @@ export function canGather(skill: number, tier: number): boolean {
 
 const TIER_SPAN = 25; // skill width of a tier band
 
-/** Difficulty colour of a node at the player's skill (drives the skill-up curve). */
-export function difficulty(skill: number, tier: number): Difficulty {
-  const req = tierReq(tier);
-  if (skill < req) return 'gray'; // can't gather — treated as no skill-up
+/** Difficulty colour at a skill relative to a skill requirement (gather or craft). */
+export function difficultyForReq(skill: number, req: number): Difficulty {
+  if (skill < req) return 'gray'; // can't do it — treated as no skill-up
   const over = skill - req;
   if (over >= TIER_SPAN) return 'gray';
   if (over < TIER_SPAN * 0.34) return 'orange';
@@ -36,14 +35,24 @@ export function difficulty(skill: number, tier: number): Difficulty {
   return 'green';
 }
 
-/** New skill after one gather: +1 at orange/yellow, ~half at green, none at gray. */
-export function skillUp(rng: Rng, skill: number, tier: number): number {
+/** Difficulty colour of a node at the player's skill (drives the skill-up curve). */
+export function difficulty(skill: number, tier: number): Difficulty {
+  return difficultyForReq(skill, tierReq(tier));
+}
+
+/** New skill after one action against a skill requirement (+1 orange/yellow, ~half green). */
+export function skillUpForReq(rng: Rng, skill: number, req: number): number {
   if (skill >= SKILL_MAX) return SKILL_MAX;
-  const d = difficulty(skill, tier);
+  const d = difficultyForReq(skill, req);
   let up = 0;
   if (d === 'orange' || d === 'yellow') up = 1;
   else if (d === 'green') up = rng.next() < 0.5 ? 1 : 0;
   return Math.min(SKILL_MAX, skill + up);
+}
+
+/** New skill after one gather at a node tier. */
+export function skillUp(rng: Rng, skill: number, tier: number): number {
+  return skillUpForReq(rng, skill, tierReq(tier));
 }
 
 export interface GatherYield {

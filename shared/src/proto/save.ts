@@ -9,12 +9,13 @@
 // turned-in ids).
 // v3 → v4 (Phase 4): characters gained profession skills (1–100 each) and a
 // material stash (gathered ore/herbs/fish, counted by id).
+// v4 → v5 (Phase 4): characters gained a consumables stash (crafted potions/elixirs).
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
 import type { QuestLogState } from '../quests/log.js';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -60,24 +61,29 @@ export interface CharacterSaveV4 extends CharacterSaveV3 {
   materials: Record<string, number>;
 }
 
+export interface CharacterSaveV5 extends CharacterSaveV4 {
+  /** Crafted consumables (potions/elixirs) counted by consumable id. */
+  consumables: Record<string, number>;
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10). */
   pathPoints: number;
 }
 
-export interface SaveGameV4 {
-  version: 4;
+export interface SaveGameV5 {
+  version: 5;
   worldSeed: number;
   account: AccountSaveV2;
-  characters: CharacterSaveV4[];
+  characters: CharacterSaveV5[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV4;
-export type CharacterSave = CharacterSaveV4;
+export type SaveGame = SaveGameV5;
+export type CharacterSave = CharacterSaveV5;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -173,7 +179,7 @@ function materialMap(v: unknown): Record<string, number> {
   return out;
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV4 | null {
+function migrateCharacter(v: unknown): CharacterSaveV5 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   return {
@@ -194,6 +200,7 @@ function migrateCharacter(v: unknown): CharacterSaveV4 | null {
     quests: questLog(v.quests),
     professions: skillMap(v.professions),
     materials: materialMap(v.materials),
+    consumables: materialMap(v.consumables),
   };
 }
 
@@ -215,7 +222,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV4 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV5 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -238,7 +245,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV4 {
+): CharacterSaveV5 {
   return {
     id,
     name,
@@ -257,5 +264,6 @@ export function createCharacter(
     quests: { active: [], turnedIn: [] },
     professions: DEFAULT_SKILLS(),
     materials: {},
+    consumables: {},
   };
 }

@@ -79,6 +79,17 @@ export const MATERIALS: readonly MaterialDef[] = [
     value: 30,
     secondary: true,
   },
+  // --- Smelted bars (Blacksmithing intermediates, crafted from ore) ---
+  { id: 'copperBar', name: 'Copper Bar', profession: Profession.Blacksmithing, tier: 0, value: 8 },
+  { id: 'ironBar', name: 'Iron Bar', profession: Profession.Blacksmithing, tier: 1, value: 20 },
+  { id: 'silverBar', name: 'Silver Bar', profession: Profession.Blacksmithing, tier: 2, value: 44 },
+  {
+    id: 'crystaliumBar',
+    name: 'Crystalium Bar',
+    profession: Profession.Blacksmithing,
+    tier: 3,
+    value: 95,
+  },
   // --- Herbalism ---
   { id: 'meadowbloom', name: 'Meadowbloom', profession: Profession.Herbalism, tier: 0, value: 3 },
   { id: 'fenweed', name: 'Fenweed', profession: Profession.Herbalism, tier: 1, value: 8 },

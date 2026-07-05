@@ -18,9 +18,17 @@ import {
   PROFESSION_NAME,
   SKILL_MAX,
   CHANNEL_SECONDS,
+  RECIPES,
+  canCraft,
+  craft,
+  recipeById,
+  consumableById,
   type World,
   type PropInstance,
+  type RecipeOutput,
+  type ConsumableEffect,
 } from '@pathlands/shared';
+import type { CombatDirector } from './combatDirector.js';
 import { useStore, type GatherStatus } from './store.js';
 
 interface Node {
@@ -56,8 +64,10 @@ const RESPAWN_SECONDS = 120; // node respawn (GDD §9: 90–180 s)
 
 export class GatherDirector {
   private readonly world: World;
+  private readonly combat: CombatDirector;
   private skills: Record<string, number>;
   private materials: Record<string, number>;
+  private consumables: Record<string, number>;
 
   private nodes: Node[] = [];
   private nodeCX = Infinity;
@@ -68,18 +78,82 @@ export class GatherDirector {
   private actionSeq = 1;
   private nearby: { label: string; kind: string } | null = null;
 
-  constructor(world: World, skills?: Record<string, number>, materials?: Record<string, number>) {
+  constructor(
+    world: World,
+    combat: CombatDirector,
+    skills?: Record<string, number>,
+    materials?: Record<string, number>,
+    consumables?: Record<string, number>,
+  ) {
     this.world = world;
+    this.combat = combat;
     this.skills = skills
       ? { ...skills }
       : { mining: 1, herbalism: 1, fishing: 1, blacksmithing: 1, alchemy: 1 };
     this.materials = materials ? { ...materials } : {};
+    this.consumables = consumables ? { ...consumables } : {};
     this.publishProfessions();
+    this.publishCrafting();
   }
 
   /** Progression for the character autosave. */
-  get state(): { professions: Record<string, number>; materials: Record<string, number> } {
-    return { professions: { ...this.skills }, materials: { ...this.materials } };
+  get state(): {
+    professions: Record<string, number>;
+    materials: Record<string, number>;
+    consumables: Record<string, number>;
+  } {
+    return {
+      professions: { ...this.skills },
+      materials: { ...this.materials },
+      consumables: { ...this.consumables },
+    };
+  }
+
+  // --- crafting + consumables -----------------------------------------------
+
+  /** Craft a recipe: consume materials, bank the output, level the profession. */
+  craftRecipe(id: string): void {
+    const recipe = recipeById(id);
+    if (!recipe) return;
+    const skill = this.skills[recipe.profession] ?? 1;
+    const rng = makeRng(this.world.seed, 'craft', id, String(this.actionSeq++));
+    const res = craft(rng, recipe, this.materials, skill);
+    if (!res) {
+      this.toast('You lack the materials or skill.');
+      return;
+    }
+    this.skills[recipe.profession] = res.newSkill;
+    this.applyOutput(res.output);
+    this.publishProfessions();
+    this.publishCrafting();
+  }
+
+  private applyOutput(output: RecipeOutput): void {
+    if (output.kind === 'material') {
+      this.materials[output.id] = (this.materials[output.id] ?? 0) + output.qty;
+      this.toast(`Crafted ${output.qty}× ${materialById(output.id)?.name ?? output.id}`);
+    } else if (output.kind === 'consumable') {
+      this.consumables[output.id] = (this.consumables[output.id] ?? 0) + output.qty;
+      this.toast(`Brewed ${consumableById(output.id)?.name ?? output.id}`);
+    } else {
+      this.combat.craftGear({
+        slot: output.slot,
+        rarity: output.rarity,
+        reqLevel: output.reqLevel,
+      });
+    }
+  }
+
+  /** Drink a consumable: apply its effect to the player and consume one. */
+  useConsumable(id: string): void {
+    const have = this.consumables[id] ?? 0;
+    if (have <= 0) return;
+    const def = consumableById(id);
+    if (!def) return;
+    if (have - 1 <= 0) delete this.consumables[id];
+    else this.consumables[id] = have - 1;
+    this.combat.applyConsumable(def.effect);
+    this.publishProfessions();
   }
 
   // --- per-frame ------------------------------------------------------------
@@ -200,6 +274,7 @@ export class GatherDirector {
     if (newSkill > oldSkill) msg += `  (${PROFESSION_NAME[prof]} ${newSkill})`;
     this.toast(msg);
     this.publishProfessions();
+    this.publishCrafting(); // new materials may unlock recipes
   }
 
   // --- node querying --------------------------------------------------------
@@ -356,6 +431,48 @@ export class GatherDirector {
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => ({ id, name: materialById(id)?.name ?? id, qty }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    useStore.getState().setProfessions({ skills, materials });
+    const consumables = Object.entries(this.consumables)
+      .filter(([, qty]) => qty > 0)
+      .map(([id, qty]) => {
+        const def = consumableById(id);
+        return { id, name: def?.name ?? id, qty, effect: effectLabel(def?.effect) };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    useStore.getState().setProfessions({ skills, materials, consumables });
   }
+
+  private publishCrafting(): void {
+    const recipes = RECIPES.map((r) => {
+      const skill = this.skills[r.profession] ?? 1;
+      return {
+        id: r.id,
+        name: r.name,
+        profession: PROFESSION_NAME[r.profession],
+        category: r.category,
+        output: outputLabel(r.output),
+        skillReq: r.skillReq,
+        craftable: canCraft(r, this.materials, skill),
+        inputs: r.inputs.map((i) => ({
+          name: materialById(i.id)?.name ?? i.id,
+          qty: i.qty,
+          have: this.materials[i.id] ?? 0,
+        })),
+      };
+    });
+    useStore.getState().setCrafting({ recipes });
+  }
+}
+
+function outputLabel(o: RecipeOutput): string {
+  if (o.kind === 'material') return `${o.qty}× ${materialById(o.id)?.name ?? o.id}`;
+  if (o.kind === 'consumable') return consumableById(o.id)?.name ?? o.id;
+  const r = o.rarity[0]!.toUpperCase() + o.rarity.slice(1);
+  return `${r} ${o.slot} (req ${o.reqLevel})`;
+}
+
+function effectLabel(e?: ConsumableEffect): string {
+  if (!e) return '';
+  if (e.kind === 'heal') return `Restore ${e.amount} HP`;
+  if (e.kind === 'resource') return `Restore ${e.amount} resource`;
+  return e.label;
 }

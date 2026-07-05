@@ -18,7 +18,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 4,
+      version: 5,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3 },
       characters: [
@@ -49,12 +49,31 @@ describe('save schema', () => {
             alchemy: 1,
           },
           materials: { copperOre: 14, meadowbloom: 5 },
+          consumables: { lesserHealthPotion: 3 },
         },
       ],
       settings: { viewDistance: 10, masterVolume: 0.5 },
       updatedAtTick: 999,
     };
     expect(normalizeSave(save)).toEqual(save);
+  });
+
+  it('migrates a v4 (pre-crafting) save, defaulting an empty consumables stash', () => {
+    const v4 = {
+      version: 4,
+      characters: [
+        {
+          name: 'Crafterless',
+          class: 'mage',
+          professions: { mining: 5 },
+          materials: { copperOre: 2 },
+        },
+      ],
+    };
+    const c = migrate(v4).characters[0]!;
+    expect(c.consumables).toEqual({});
+    expect(c.materials).toEqual({ copperOre: 2 });
+    expect(c.professions.mining).toBe(5);
   });
 
   it('migrates a v3 (pre-profession) save, defaulting skills + empty materials', () => {

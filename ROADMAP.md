@@ -166,6 +166,20 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > A starter arc (Brookhollow tutorial + main-story ch.1 "Light the Way" + the Millstead
 > chain into the Briarhollow boss) exercises every objective kind. 184 tests green.
 >
+> **Part 4 done (2026-07-05):** **crafting professions** (Blacksmithing + Alchemy),
+> closing the gather→craft→use loop. A pure craft engine (`shared/professions/craft.ts`)
+> validates a recipe against the material stash + skill, consumes the inputs, and yields
+> the output + a skill-up. Recipes + consumables are data (`shared/data/recipes.ts`):
+> smelt ore→bars→gear, and brew health/mana potions + might/warding elixirs. Crafting
+> runs through the client (materials → the stash / bag), a **Crafting panel (K)** shows
+> each recipe's inputs + craftable state, and **consumables are drinkable** from the
+> Professions panel — potions heal/restore, elixirs apply a timed combat buff via the
+> aura system (a first step toward the Phase-5 boss re-tuning). Save **v5** persists the
+> consumables stash. 204 tests green (8 craft-engine + save v4→v5 migration); in-browser
+> the crafting panel renders both professions' recipes with zero console errors.
+> **Next:** meta progression (Deeds & Path Points), mounts, the endgame loop, and the
+> remaining quest content.
+>
 > **Part 3 done (2026-07-05):** **gathering professions** (Mining, Herbalism, Fishing).
 > A pure skill/gather engine (`shared/professions` + `shared/data/professions`): skill
 > 1–100 with the orange/yellow/green/gray skill-up curve, tiered materials, seeded
@@ -194,7 +208,7 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
 - [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Part 2 done: the early-zone spine — main-story chapters 1–3 + Vale/Weald/Foothills side arcs, ~21 quests across 8 givers, levels 1–14. Remaining zones, professions intros, and dailies fill in later parts.)_
 - [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Remaining: higher-tier herb node placement (Cavemoss/Duskpetal), tool items, and profession trainers.)_
-- [ ] **Crafting professions** — Blacksmithing (weapons/armor incl. several best-pre-boss items) and Alchemy (combat/utility/profession potions, flasks); recipe books, trainers, discovery recipes, crafting UI with material requirements; economy-consistent material flows (mining→smithing, herbalism→alchemy).
+- [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [ ] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant Path Points spent on account-wide perks (rested-XP bonus, bag slot, mount discount, Waystone fee reduction, starter-gear upgrades for alts) per GDD §Meta; titles displayed at nameplate.
 - [ ] **Mounts** — Wolf mount from its PNG (+60% speed, level 20, gold sink), mount/dismount rules, 2–3 palette-variant skins as Deed/endgame rewards.
 - [ ] **Endgame loop v1** — daily bounties, named rare-elite hunt targets with Deed tracking, Hollow boss loot tables worth re-running, profession masteries, a repeatable "restore the final Waystone" world event stub (full multiplayer version in Phase 6).

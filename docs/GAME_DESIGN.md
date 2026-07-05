@@ -198,7 +198,15 @@ Each character learns **all five** (no pick restrictions — indie population is
 > deterministic `world.scatterChunk` (nodes have no stored state, so depletion/respawn is
 > tracked client-side), drives the mining/herbalism channel and the fishing minigame, and
 > banks materials into a per-character stash (save v4). Higher-tier herb node placement,
-> tool items, and trainers are follow-up work; Blacksmithing/Alchemy (craft) come next.
+> tool items, and trainers are follow-up work.
+>
+> **Implementation (Phase 4 Part 4 — crafting).** Recipes + consumables are data
+> (`shared/data/recipes.ts`); the pure `craft` engine (`shared/professions/craft.ts`)
+> validates against the material stash + skill, consumes inputs, and returns the output +
+> a skill-up. The client crafts through a panel (K) — gear goes to the bag, bars/potions
+> to the stash — and consumables are drunk from the Professions panel (`applyConsumable`
+> on the combat director: heal / restore resource / a timed buff aura, save v5). Discovery
+> recipes, station proximity (forge/anvil/alembic), and trainers are follow-up polish.
 
 ## 10. Meta Progression — Deeds & Path Points
 

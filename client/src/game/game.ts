@@ -133,7 +133,13 @@ export class Game {
     this.quests = new QuestDirector(this.combat, character?.quests);
     // Share the live indicator map so giver nameplates show "!/?" markers.
     this.entities.giverIndicators = this.quests.indicators;
-    this.gather = new GatherDirector(this.world, character?.professions, character?.materials);
+    this.gather = new GatherDirector(
+      this.world,
+      this.combat,
+      character?.professions,
+      character?.materials,
+      character?.consumables,
+    );
 
     this.registerCommands();
     window.addEventListener('resize', this.onResize);
@@ -188,6 +194,8 @@ export class Game {
       abandonQuest: (id) => this.quests.abandon(id),
       pinQuest: (id, pinned) => this.quests.pin(id, pinned),
       closeQuestDialog: () => this.quests.closeDialog(),
+      craftRecipe: (id) => this.gather.craftRecipe(id),
+      useConsumable: (id) => this.gather.useConsumable(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -235,6 +243,7 @@ export class Game {
     }
     if (this.input.wasTapped('KeyL')) useStore.getState().toggleQuestLog();
     if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
+    if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
 
     // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
     // Enter releases spirit on death.
@@ -435,6 +444,7 @@ export class Game {
       quests: this.quests.state,
       professions: this.gather.state.professions,
       materials: this.gather.state.materials,
+      consumables: this.gather.state.consumables,
       x: ph.x,
       y: ph.y,
       z: ph.z,

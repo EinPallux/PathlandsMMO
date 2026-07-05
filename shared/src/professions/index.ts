@@ -2,3 +2,4 @@
 // drive this over the profession + material data in shared/data/professions.
 
 export * from './skill.js';
+export * from './craft.js';

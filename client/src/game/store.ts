@@ -168,6 +168,22 @@ export interface GatherStatus {
 export interface ProfessionsUi {
   skills: Array<{ id: string; name: string; skill: number; max: number }>;
   materials: Array<{ id: string; name: string; qty: number }>;
+  consumables: Array<{ id: string; name: string; qty: number; effect: string }>;
+}
+
+export interface CraftRecipeUi {
+  id: string;
+  name: string;
+  profession: string;
+  category: string;
+  output: string;
+  skillReq: number;
+  craftable: boolean;
+  inputs: Array<{ name: string; qty: number; have: number }>;
+}
+
+export interface CraftingUi {
+  recipes: CraftRecipeUi[];
 }
 
 export type WeatherKind = 'clear' | 'overcast' | 'rain';
@@ -193,6 +209,9 @@ export interface GameCommands {
   buyItem(index: number): void;
   buybackItem(index: number): void;
   closeVendor(): void;
+  /** Professions: craft a recipe, drink a consumable. */
+  craftRecipe(id: string): void;
+  useConsumable(id: string): void;
   /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
   acceptQuest(id: string): void;
   turnInQuest(id: string, choiceIndex: number): void;
@@ -260,6 +279,8 @@ export interface UiState {
   gatherStatus: GatherStatus | null;
   professions: ProfessionsUi | null;
   showProfessions: boolean;
+  crafting: CraftingUi | null;
+  showCrafting: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -284,6 +305,8 @@ export interface UiState {
   setGatherStatus: (g: GatherStatus | null) => void;
   setProfessions: (p: ProfessionsUi) => void;
   toggleProfessions: () => void;
+  setCrafting: (c: CraftingUi) => void;
+  toggleCrafting: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -344,6 +367,8 @@ export const useStore = create<UiState>((set) => ({
   gatherStatus: null,
   professions: null,
   showProfessions: false,
+  crafting: null,
+  showCrafting: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -368,6 +393,8 @@ export const useStore = create<UiState>((set) => ({
   setGatherStatus: (gatherStatus) => set({ gatherStatus }),
   setProfessions: (professions) => set({ professions }),
   toggleProfessions: () => set((st) => ({ showProfessions: !st.showProfessions })),
+  setCrafting: (crafting) => set({ crafting }),
+  toggleCrafting: () => set((st) => ({ showCrafting: !st.showCrafting })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

@@ -4,6 +4,25 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 4 — crafting professions (2026-07-05)
+
+- **`shared/data/recipes`** — Blacksmithing (smelt copper/iron/silver ore → bars; forge
+  a copper sword/chestguard + an ironforged blade) and Alchemy (lesser/greater health
+  potions, a mana draught, might + warding elixirs) recipes, plus the consumable catalog
+  with heal / restore / timed-buff effects. Smelted bars added to the material set.
+- **`shared/professions/craft`** — a pure craft engine: `canCraft` (skill + material
+  check) and `craft` (consume inputs, yield output + a skill-up, deterministic from a
+  seeded Rng). Skill-up refactored to a shared `skillUpForReq` used by gather + craft.
+- **Save v5** — characters gained a consumables stash (crafted potions/elixirs);
+  `migrate()` walks v4 saves forward.
+- **`client/game`** — the profession director gained crafting (materials → the stash /
+  bag) and consumable use; the combat director gained `craftGear` (forge into the bag)
+  and `applyConsumable` (heal / restore resource / apply a timed buff aura to the player).
+- **`client/ui`** — a **CraftingPanel** (K) listing recipes by profession with inputs,
+  outputs, and per-recipe craftable state; the Professions panel gained a **potions**
+  section with Use buttons.
+- **Tests** — +9 (craft-engine + recipe/consumable validity, save v4→v5 migration); 204 total.
+
 ### Part 3 — gathering professions (2026-07-05)
 
 - **`shared/data/professions`** — the five professions, the four material tiers

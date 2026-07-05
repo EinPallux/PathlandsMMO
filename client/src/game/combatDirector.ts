@@ -28,6 +28,7 @@ import {
   rollLoot,
   buildEnemyLootTable,
   generateItem,
+  applyHeal,
   WORLD_SPAWNS,
   EquipSlot,
   RING_SLOTS,
@@ -53,6 +54,7 @@ import {
   type VendorStockItem,
   type GeneratedItemSpec,
   type QuestReward,
+  type ConsumableEffect,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
 import {
@@ -525,6 +527,47 @@ export class CombatDirector {
       if (pick) this.awardItem(pick);
     }
     if (reward.waystoneUnlock) this.discovered.add(reward.waystoneUnlock);
+  }
+
+  /** Forge a crafted item for the player's class into the bag. Returns success. */
+  craftGear(s: GeneratedItemSpec): boolean {
+    if (this.inventory.length >= BAG_SIZE) {
+      this.pushFloater(this.player, 'Bag full', 'miss');
+      return false;
+    }
+    const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
+    this.inventory.push({ item, qty: 1 });
+    this.pushFloater(this.player, `Crafted ${item.name}`, 'heal');
+    return true;
+  }
+
+  /** Drink a consumable: restore HP/resource or apply a timed buff to the player. */
+  applyConsumable(effect: ConsumableEffect): void {
+    const p = this.player;
+    if (p.dead) return;
+    if (effect.kind === 'heal') {
+      applyHeal(this.state, p, p, effect.amount, 'potion');
+    } else if (effect.kind === 'resource') {
+      p.resource = Math.min(p.maxResource, p.resource + effect.amount);
+      this.pushFloater(p, `+${effect.amount}`, 'heal');
+    } else {
+      // Timed stat/combat buff via the aura system (refreshes a same-effect buff).
+      const existing = p.auras.find(
+        (a) => a.skillId === 'elixir' && a.modifier === effect.modifier,
+      );
+      const aura = {
+        uid: `elixir_${effect.modifier}`,
+        sourceId: p.id,
+        skillId: 'elixir',
+        kind: 'buff' as const,
+        modifier: effect.modifier,
+        magnitude: effect.magnitude,
+        expiresTick: this.state.tick + effect.durationTicks,
+      };
+      if (existing) Object.assign(existing, aura);
+      else p.auras.push(aura);
+      this.pushFloater(p, effect.label, 'xp');
+    }
   }
 
   /** Generate a reward item for the player's class and drop it in the bag. */

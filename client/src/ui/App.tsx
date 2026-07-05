@@ -20,6 +20,7 @@ import { QuestTracker } from './QuestTracker.js';
 import { QuestToasts } from './QuestToasts.js';
 import { GatherPrompt } from './GatherPrompt.js';
 import { ProfessionsPanel } from './ProfessionsPanel.js';
+import { CraftingPanel } from './CraftingPanel.js';
 import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
@@ -72,6 +73,7 @@ export function App(): JSX.Element {
         {ready && <QuestLogPanel />}
         {ready && <GatherPrompt />}
         {ready && <ProfessionsPanel />}
+        {ready && <CraftingPanel />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}
