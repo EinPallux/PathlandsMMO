@@ -4,6 +4,17 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 2 — the early-zone questing spine (2026-07-05)
+
+- **`shared/data/quests`** — grew the starter arc into a real 1→14 spine: the main story
+  "The Waymaker's Path" **chapters 1–3** (Brookhollow → Millstead → the Weald blight-wells
+  → the Foothills gnoll caves, a level-ordered prerequisite chain) plus side arcs across
+  Heartmead Vale, Mossfang Weald, and the Stonejaw Foothills — **~21 quests** from **8
+  named givers** at five settlements, with multi-objective quests (kill + collect),
+  cross-NPC turn-ins, and Waystone unlocks. New collect drop-tags (venomCap, goblinEar,
+  gnollFetish, grubPlate).
+- **Tests** — added chain-integrity + drop-tag-obtainability checks (186 total).
+
 ### Part 1 — the quest system (2026-07-05)
 
 - **`shared/data/quests`** — a typed, data-driven quest schema (`QuestDef` with eight

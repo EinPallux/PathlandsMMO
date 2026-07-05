@@ -15,6 +15,7 @@ import {
   MAX_PINNED,
   QUESTS,
   QUEST_GIVERS,
+  QUEST_DROP_TAGS,
   questById,
   questGiverById,
   enemyById,
@@ -168,5 +169,51 @@ describe('Quest content validity', () => {
       expect(settlementById(g.settlement), g.id).toBeDefined();
       expect(questGiverById(g.id)).toBe(g);
     }
+  });
+
+  it('every collect objective is obtainable from a drop tag', () => {
+    const tags = new Set(Object.values(QUEST_DROP_TAGS));
+    for (const enemyId of Object.keys(QUEST_DROP_TAGS)) {
+      expect(enemyById(enemyId), enemyId).toBeDefined(); // tags come from real enemies
+    }
+    for (const q of QUESTS) {
+      for (const o of q.objectives) {
+        if (o.kind === 'collect') expect(tags.has(o.target), `${q.id}:${o.target}`).toBe(true);
+      }
+    }
+  });
+
+  it('the main story is a level-ordered, satisfiable prereq chain', () => {
+    const story = QUESTS.filter((q) => q.chain === 'waymakers-path');
+    expect(story.length).toBeGreaterThanOrEqual(6);
+    // Exactly one entry point (no prereq); every other prereq is itself in the story.
+    const ids = new Set(story.map((q) => q.id));
+    const roots = story.filter((q) => (q.prereq ?? []).length === 0);
+    expect(roots).toHaveLength(1);
+    for (const q of story) {
+      for (const pre of q.prereq ?? []) {
+        expect(ids.has(pre) || !questById(pre)?.chain, `${q.id} prereq ${pre}`).toBeTruthy();
+        // A prereq is never a higher chapter than the quest that needs it.
+        const preDef = questById(pre);
+        if (preDef?.chapter && q.chapter) {
+          expect(preDef.chapter).toBeLessThanOrEqual(q.chapter);
+        }
+      }
+    }
+    // Walk the chain: it's fully reachable from the root by turning quests in.
+    const log = createQuestLog();
+    let progressed = true;
+    let guard = 0;
+    while (progressed && guard++ < 50) {
+      progressed = false;
+      for (const q of story) {
+        if (log.turnedIn.includes(q.id)) continue;
+        if ((q.prereq ?? []).every((p) => log.turnedIn.includes(p))) {
+          log.turnedIn.push(q.id);
+          progressed = true;
+        }
+      }
+    }
+    expect(story.every((q) => log.turnedIn.includes(q.id))).toBe(true);
   });
 });
