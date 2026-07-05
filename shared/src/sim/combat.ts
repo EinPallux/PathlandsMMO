@@ -3,7 +3,7 @@
 // for the UI (never the other way round). No DOM, no wall-clock, no Math.random —
 // all rolls come from the seeded Rng on the state.
 
-import { makeRng, type Rng } from '../core/rng.js';
+import { makeRng, hashFloat2, type Rng } from '../core/rng.js';
 import { TICK_RATE, WORLD_SEED } from '../core/constants.js';
 import { CharacterClass } from '../models/characters/index.js';
 import { ResourceKind } from '../data/classes.js';
@@ -18,7 +18,14 @@ import {
 import { killXp } from '../combat/xp.js';
 import { weaponDamage } from '../combat/formulas.js';
 import { skillById, GCD_TICKS, type SkillDef, type SkillEffect } from '../data/skills.js';
-import { type CombatEntity, type Aura, autoAttackDamage, isAlive } from './entity.js';
+import { enemyById, type BossPhase } from '../data/enemies.js';
+import {
+  type CombatEntity,
+  type Aura,
+  autoAttackDamage,
+  isAlive,
+  makeEnemyById,
+} from './entity.js';
 import type { CastSkillIntent, Intent } from './intents.js';
 
 export type CombatEvent =
@@ -45,6 +52,7 @@ export type CombatEvent =
   | { type: 'death'; entityId: string; killerId: string | null }
   | { type: 'xp'; entityId: string; amount: number; enemyLevel: number }
   | { type: 'resource'; entityId: string; kind: ResourceKind; value: number }
+  | { type: 'bossPhase'; entityId: string; say: string }
   | { type: 'castFail'; entityId: string; skillId: string; reason: string };
 
 export interface CombatContext {
@@ -684,10 +692,115 @@ export function stepCombat(state: CombatState, ctx: CombatContext = {}): void {
   resolveTick(state, ctx);
 }
 
+const BOSS_ALLY_RADIUS = 40; // metres: players this close count as "in the fight"
+
+/** Living players within `radius` of a point (min 1, for boss group scaling). */
+function nearbyPlayerCount(state: CombatState, x: number, z: number, radius: number): number {
+  let n = 0;
+  for (const o of state.entities.values()) {
+    if (o.faction !== 'player' || !isAlive(o)) continue;
+    const dx = o.x - x;
+    const dz = o.z - z;
+    if (Math.sqrt(dx * dx + dz * dz) <= radius) n++;
+  }
+  return Math.max(1, n);
+}
+
+/** Fire one boss phase: bark, enrage buff, hardened shield, and/or summon adds. */
+function fireBossPhase(
+  state: CombatState,
+  boss: CombatEntity,
+  phase: BossPhase,
+  allies: number,
+): void {
+  const tick = state.tick;
+  if (phase.say) state.events.push({ type: 'bossPhase', entityId: boss.id, say: phase.say });
+  if (phase.enrage) {
+    addAura(boss, {
+      uid: auraUid(state),
+      sourceId: boss.id,
+      skillId: 'enrage',
+      kind: 'buff',
+      modifier: 'damageDealt',
+      magnitude: phase.enrage,
+      expiresTick: tick + S(600), // lasts the rest of the fight
+    });
+  }
+  if (phase.shield) {
+    addAura(boss, {
+      uid: auraUid(state),
+      sourceId: boss.id,
+      skillId: 'bossShield',
+      kind: 'shield',
+      absorb: Math.round(boss.maxHP * phase.shield),
+      expiresTick: tick + S(20),
+    });
+  }
+  if (phase.summon) {
+    // Solo baseline is `count`; each extra nearby ally adds one add (GDD §4).
+    const total = phase.summon.count + Math.max(0, allies - 1);
+    const addLevel = Math.max(1, boss.level - 4);
+    for (let i = 0; i < total; i++) {
+      const ang = hashFloat2(Math.round(boss.x) + i, Math.round(boss.z), tick + i) * Math.PI * 2;
+      const rad = 2.5 + hashFloat2(Math.round(boss.z), Math.round(boss.x) + i, tick) * 2.5;
+      const ax = boss.x + Math.cos(ang) * rad;
+      const az = boss.z + Math.sin(ang) * rad;
+      // Fold the phase cursor into the id so adds stay unique even when two phases
+      // fire on the same tick (e.g. a big hit crossing two thresholds at once).
+      const add = makeEnemyById(
+        `${boss.id}~add${tick}p${boss.bossPhaseIdx ?? 0}#${i}`,
+        phase.summon.enemyId,
+        addLevel,
+        ax,
+        boss.y,
+        az,
+      );
+      if (!add) continue;
+      add.spawnX = ax;
+      add.spawnZ = az;
+      add.aiState = 'aggro';
+      if (boss.targetId) {
+        add.targetId = boss.targetId;
+        add.threat[boss.targetId] = 1;
+      }
+      state.entities.set(add.id, add);
+    }
+  }
+}
+
+/**
+ * Advance boss encounter scripts. For each engaged Boss-rank enemy, fire every
+ * phase whose HP threshold has been crossed since last tick (data-driven beats in
+ * enemies.ts). Deterministic and pure; the Phase-6 server runs it unchanged.
+ */
+export function stepBossMechanics(state: CombatState): void {
+  // Snapshot the entity list so summoned adds don't perturb this pass.
+  for (const e of [...state.entities.values()]) {
+    if (e.faction !== 'enemy' || e.dead || e.bossPhaseIdx === undefined || !e.enemyId) continue;
+    const script = enemyById(e.enemyId)?.boss;
+    if (!script) continue;
+    // Only script while actually engaged (a live target).
+    const target = e.targetId ? state.entities.get(e.targetId) : undefined;
+    if (!isAlive(target)) continue;
+    const hpPct = e.hp / e.maxHP;
+    const allies = nearbyPlayerCount(state, e.x, e.z, BOSS_ALLY_RADIUS);
+    while (
+      e.bossPhaseIdx < script.phases.length &&
+      hpPct <= script.phases[e.bossPhaseIdx]!.atHpPct
+    ) {
+      fireBossPhase(state, e, script.phases[e.bossPhaseIdx]!, allies);
+      e.bossPhaseIdx++;
+    }
+  }
+}
+
 /** Resolve one tick's combat WITHOUT advancing the clock (AI slots in before this). */
 export function resolveTick(state: CombatState, ctx: CombatContext = {}): void {
   const tick = state.tick;
   void ctx;
+
+  // Fire any boss encounter beats first (adds spawned here act this same tick).
+  stepBossMechanics(state);
 
   for (const e of state.entities.values()) {
     if (e.dead) continue;

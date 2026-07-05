@@ -195,6 +195,21 @@ export class EntityManager {
     return best;
   }
 
+  /** Nearest merchant NPC within `range` of (px,pz), or null (for the trade prompt). */
+  nearestVendor(px: number, pz: number, range: number): NpcSpawn | null {
+    let best: NpcSpawn | null = null;
+    let bestD = range;
+    for (const e of this.entities.values()) {
+      if (e.npc?.kind !== 'vendor') continue;
+      const d = Math.hypot(e.wander.x - px, e.wander.z - pz);
+      if (d < bestD) {
+        bestD = d;
+        best = e.npc;
+      }
+    }
+    return best;
+  }
+
   dispose(): void {
     for (const key of [...this.entities.keys()]) this.despawn(key);
     this.loadedChunks.clear();

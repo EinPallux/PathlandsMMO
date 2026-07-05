@@ -2,6 +2,80 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
+## [Phase 3 — Combat, Classes & Character Growth] — 2026-07-05
+
+Pathlands becomes a game: create a character, fight through the world 1→30, loot
+and equip gear, die and respawn, get stronger. All simulation lives in `shared/`
+(MMO-authoritative); the client runs it in lockstep and renders the result.
+
+### Added
+
+- **`shared/combat`** — the progression + formula core: the full stat model and
+  derivations, the XP curve `400·L^1.55` (total ≈878k across 1→30), per-level class
+  growth, and all GDD §4 combat math (weapon damage, armor mitigation with a 75% cap,
+  ±5%/level delta capped ±25%, crit ×1.5, enemy HP/damage baselines, threat, kill XP).
+- **`shared/data/{classes,skills}`** — the four classes (Warrior/Ranger/Priest/Mage)
+  with Rage/Focus/Mana resources and every skill (10–12 each, learned by level) plus
+  the 10/20/30 Path specialization choices, as typed data.
+- **`shared/data/{enemies,items,loot}`** — the enemy roster (10 asset enemies + new
+  authored archetypes + 5 Hollow bosses) with rank/family/AI/loot builders; the item
+  schema (11 slots, rarity, ilvl, stat budgets, weapons/armor/trinkets) and itemization
+  formulas; seeded loot tables.
+- **`shared/sim`** — the deterministic 20 Hz tick resolver: `CombatEntity`, cast/GCD/
+  cooldown/resource validation, a complete skill-effect interpreter, auras (DoT/HoT/
+  buff/debuff/shield/CC), threat, death/XP events, enemy AI (aggro/chase/leash/ability
+  use), and deterministic spawners. Intents in, events out — never the reverse.
+- **`shared/data/spawns`** — a data-driven **world spawn table**: overworld regions for
+  every zone (all ten asset enemies + archetypes in their WORLD.md zones) plus each
+  Hollow's elite packs and its end boss, keyed to the settlement/Hollow coordinates.
+- **Boss encounter scripts** — `EnemyDef.boss` phases (HP-threshold beats: summon adds,
+  enrage, reflective shield) interpreted by `stepBossMechanics` in the resolver, with
+  nearby-ally scaling (summon count +1 per extra ally) and a `bossPhase` UI event. The
+  five bosses' names/families now match WORLD.md (Warlord Bramblegut, Mother Gnarlmaw,
+  Prismhide, Forgewarden Urzul, the Last Waymaker).
+- **`shared/data/vendors`** — general-goods **merchant** logic: deterministic per-seed
+  stock scaled to a settlement's zone tier, `buyPrice`/`sellPrice` helpers (buy = value,
+  sell = ¼), and settlement tier data.
+- **`shared/proto/save` v2** + **`client/platform/saveStore`** — the versioned
+  character/world-state schema (level/xp/gold/inventory/equipment/waystones/position)
+  persisted to IndexedDB, matching the shape PostgreSQL will store in Phase 6.
+- **`client/game/combatDirector`** — runs the shared sim in lockstep with movement,
+  spawns/renders enemy models, publishes the HUD, activates only spawn regions near the
+  player (culling distant enemies + boss adds), rolls loot on kill, and drives death →
+  respawn-at-Waystone. Now also drives vendor buy/sell/buyback.
+- **`client/ui`** — Onboarding (title → character list → creation → spawn), the combat
+  HUD (player/target frames, hotbar with cooldowns, damage/heal/crit floaters, enemy HP
+  nameplates) with Tab/click targeting, the CharacterPanel (equipment paperdoll, stats,
+  and a bag with equip/sell), the WaystonePanel (attune + paid fast-travel), and the new
+  **VendorPanel** (Buy / Sell / Buyback columns with a "Press E to trade" prompt).
+- **Tests** — grew to **170** Vitest tests, adding combat-formula, class/skill, sim
+  (cast/aura/threat/AI/spawner), save-migration, boss-mechanic, spawn-table, vendor, and
+  an **acceptance** suite proving Briarhollow's boss is soloable at-level (Warrior and
+  Ranger clear Warlord Bramblegut, adds and all).
+
+### Changed
+
+- **Boss/elite rank tuning (Phase-3 solo pass, GDD §4)** — softened the original ×8 HP /
+  ×2 dmg boss (and ×3/×1.6 elite) to **×4.5 HP / ×1.25 dmg** boss and **×2.4 HP / ×1.3
+  dmg** elite. With no potions and no modelled kiting yet, the original numbers made a
+  90–180 s attrition fight unsurvivable for a no-sustain class (a small HP pool only
+  absorbs ~10–15 s of ×2 boss damage). The softened values keep bosses clearly tougher
+  than trash while making every Hollow soloable at-level now; Phase 5's balance pass
+  restores longer fights once the full kit is in. Boss summons are 1 add/phase (solo).
+
+### Fixed
+
+- **Phase-3 adversarial review** (three independent passes over the combat/itemization/
+  client diff): deterministic aura UIDs (moved the counter onto `CombatState`); Shield
+  Wall stance now actually mitigates; DoTs/HoTs no longer drop their final tick; stun/
+  silence interrupts casts and blocks auto-attacks; Execute scales with rage spent;
+  Cleanse removes debuffs/nature-DoTs only; ground skills enforce range; enemies retarget
+  to the highest-threat attacker (Taunt); shields are gated to plate-wearers and Warriors
+  may wear mail+plate; `rollItemStats` spends its budget exactly; the client carries
+  cooldowns/auras/cast/threat/stance across gear/level rebuilds, sheds unwearable gear on
+  class change, decrements stacks on equip, and guards nameplate/floater projections;
+  rarity colors fall back safely for corrupt old saves.
+
 ## [Phase 2 — A Living World] — 2026-07-05
 
 ### Added

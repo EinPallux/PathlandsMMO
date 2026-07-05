@@ -97,15 +97,21 @@ export enum EnemyRank {
   Boss = 'boss',
 }
 
+// Rank multipliers (GDD §4). Phase-3 SOLO tuning: with no potions and no modelled
+// kiting yet, the original ×8 HP / ×2 dmg boss made a 90–180 s attrition fight
+// unsurvivable for a no-sustain class (a small HP pool can only absorb ~10–15 s of
+// ×2 boss damage). These provisional values keep bosses clearly tougher than elites
+// while making every Hollow soloable at-level now; Phase 5's balance pass restores
+// longer fights once consumables/defensive cooldowns/kiting are in (GDD §4/§15).
 export const RANK_HP_MULT: Record<EnemyRank, number> = {
   [EnemyRank.Normal]: 1,
-  [EnemyRank.Elite]: 3,
-  [EnemyRank.Boss]: 8,
+  [EnemyRank.Elite]: 2.4,
+  [EnemyRank.Boss]: 4.5,
 };
 export const RANK_DMG_MULT: Record<EnemyRank, number> = {
   [EnemyRank.Normal]: 1,
-  [EnemyRank.Elite]: 1.6,
-  [EnemyRank.Boss]: 2,
+  [EnemyRank.Elite]: 1.3,
+  [EnemyRank.Boss]: 1.25,
 };
 
 // Group scaling (GDD §4): each nearby player beyond the first adds +60% HP, +15% dmg.

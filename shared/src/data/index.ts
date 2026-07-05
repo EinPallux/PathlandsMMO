@@ -7,3 +7,5 @@ export * from './items.js';
 export * from './loot.js';
 export * from './skills.js';
 export * from './enemies.js';
+export * from './spawns.js';
+export * from './vendors.js';

@@ -98,7 +98,8 @@ describe('Enemies (GDD §4, WORLD.md)', () => {
   it('scales stats by rank (boss ≫ normal at the same level)', () => {
     const normal = enemyStatsFor(enemyById('mossfangWolf')!, 10);
     const boss = enemyStatsFor(enemyById('bossLastWaymaker')!, 10);
-    expect(boss.maxHP).toBeGreaterThan(normal.maxHP * 5);
+    // Phase-3 solo tuning: boss ×4.5 HP / ×1.25 dmg over a same-level normal.
+    expect(boss.maxHP).toBeGreaterThan(normal.maxHP * 4);
     expect(boss.damage).toBeGreaterThan(normal.damage);
   });
 

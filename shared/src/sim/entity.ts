@@ -112,6 +112,8 @@ export interface CombatEntity {
   leashRadius?: number;
   moveSpeed?: number;
   abilities?: string[];
+  /** Boss encounter cursor: index of the next unfired phase (undefined = not a boss). */
+  bossPhaseIdx?: number;
 }
 
 const S = (seconds: number): number => Math.round(seconds * TICK_RATE);
@@ -227,6 +229,7 @@ export function makeEnemyEntity(
     leashRadius: def.leashRadius,
     moveSpeed: def.moveSpeed,
     abilities: def.abilities,
+    ...(def.boss ? { bossPhaseIdx: 0 } : {}),
   };
 }
 

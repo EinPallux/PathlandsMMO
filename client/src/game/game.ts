@@ -168,6 +168,9 @@ export class Game {
       equipItem: (index) => this.combat.equipItem(index),
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
+      buyItem: (index) => this.combat.buyItem(index),
+      buybackItem: (index) => this.combat.buybackItem(index),
+      closeVendor: () => this.combat.closeVendor(),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -224,22 +227,29 @@ export class Game {
       if (this.input.wasTapped(code)) this.combat.castSlot(i);
     }
 
-    // Interact with E: advance dialogue → attune/use a Waystone → talk to an NPC.
+    // Interact with E: advance dialogue → attune/use a Waystone → trade with a
+    // merchant → talk to an NPC.
     if (this.input.wasTapped('KeyE')) {
       const store = useStore.getState();
+      const px = this.controller.physics.x;
+      const pz = this.controller.physics.z;
       if (store.dialogue) {
         store.advanceDialogue();
+      } else if (store.vendor) {
+        this.combat.closeVendor();
       } else if (!this.combat.interactWaystone()) {
-        const npc = this.entities.interactNearest(
-          this.controller.physics.x,
-          this.controller.physics.z,
-        );
-        if (npc) store.openDialogue(npc.name, npc.dialogue);
+        const npc = this.entities.interactNearest(px, pz);
+        if (npc?.kind === 'vendor') {
+          this.combat.openVendor(npc.name, npc.seed, npc.x, npc.z);
+        } else if (npc) {
+          store.openDialogue(npc.name, npc.dialogue);
+        }
       }
     }
     if (this.input.wasTapped('Escape')) {
       useStore.getState().closeDialogue();
       useStore.getState().closeTravel();
+      this.combat.closeVendor();
     }
 
     if (this.camera.mode === 'freeFly') {
@@ -309,6 +319,14 @@ export class Game {
       this.canvas.clientHeight,
     );
     useStore.getState().setNameplates([...this.entities.nameplates, ...this.combat.enemyPlates]);
+
+    // "Press E to trade" prompt: nearest merchant in reach, unless a panel is open.
+    const st = useStore.getState();
+    const promptName =
+      st.dialogue || st.vendor || st.showTravel
+        ? null
+        : (this.entities.nearestVendor(rs.x, rs.z, 4.5)?.name ?? null);
+    if (st.nearbyVendor !== promptName) st.setNearbyVendor(promptName);
 
     this.discovery.reveal(rs.x, rs.z);
     this.discovery.tick(dt);

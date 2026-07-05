@@ -111,8 +111,8 @@ At least two per zone, wandering, 2–6 h respawn, unique-drop tables: Old Thorn
 The atlas is **spatially realised** — every place below exists in-world at its listed
 coordinates, stamped by the authored layer (`shared/worldgen/placement.ts` +
 `settlements.ts`) into the one continuous continent (no instancing, walk-in interiors).
-Combat population, quests, vendors, and gathering nodes are **Phase 3/4** and are not
-present yet.
+Combat population and vendors are **live as of Phase 3** (see below); quests and
+gathering nodes are **Phase 4**.
 
 - **Settlements (8 built):** Waymeet (capital), Brookhollow, Millstead, Fernwick, Mossgate,
   Grubbers' Rest, Glimmercamp, Cairnwick — flattened platforms, building kit, wells,
@@ -120,9 +120,20 @@ present yet.
 - **Waystones:** one per settlement + **7 wild Waystones** on the road network (activation
   network + fast travel is Phase 3).
 - **Roads:** the Old Road network graded between hubs with signposted junctions.
-- **Hollows (5 spaces built):** Briarhollow Warrens, Gloomroot Cavern, Crystal Deeps,
-  Ironvein Halls, Sunken Crypt — carved bowls with themed entrance portals; unpopulated.
-- **Ambient life:** named wandering NPCs (villager/guard/vendor) with placeholder dialogue,
-  and non-hostile wildlife (deer, Dire Stag, rabbit, bird, fish).
+- **Hollows (5 spaces built + populated in Phase 3):** Briarhollow Warrens, Gloomroot
+  Cavern, Crystal Deeps, Ironvein Halls, Sunken Crypt — carved bowls with themed entrance
+  portals, each now stocked (`shared/data/spawns.ts`) with an elite pack and its end boss
+  (Warlord Bramblegut, Mother Gnarlmaw, Prismhide, Forgewarden Urzul, the Last Waymaker),
+  running data-driven boss scripts (summon adds / enrage / reflective shield). Walk-in
+  interior geometry beyond the bowl is future content; the bosses guard the sealed portal.
+- **Combat population (Phase 3):** every zone's WORLD.md enemy list spawns from the
+  data-driven world spawn table, activated by player proximity with per-region respawn
+  timers.
+- **Vendors (Phase 3):** the settlement merchant NPCs are functional — approach one and
+  press **E** to buy tier-appropriate wares, sell from your bag (¼ value), or buy back
+  what you sold.
+- **Ambient life:** named wandering NPCs (villager/guard/vendor) — vendors now trade;
+  villagers/guards keep placeholder dialogue — and non-hostile wildlife (deer, Dire Stag,
+  rabbit, bird, fish).
 - **Navigation:** live minimap + full-screen atlas draw the same POI/road data with
   fog-of-discovery.

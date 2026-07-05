@@ -104,6 +104,20 @@ export interface DialogueState {
   index: number;
 }
 
+export interface VendorEntry {
+  item: ItemDef;
+  price: number;
+}
+
+export interface VendorUi {
+  /** Merchant name (title bar). */
+  name: string;
+  /** Wares for sale (unlimited quantity), with buy prices. */
+  stock: VendorEntry[];
+  /** Recently sold items, buyable back at the sold price. */
+  buyback: VendorEntry[];
+}
+
 export type WeatherKind = 'clear' | 'overcast' | 'rain';
 
 export interface GameCommands {
@@ -123,6 +137,10 @@ export interface GameCommands {
   equipItem(index: number): void;
   unequipItem(slot: string): void;
   sellItem(index: number): void;
+  /** Vendors: buy a stock item, buy back a sold item, close the shop. */
+  buyItem(index: number): void;
+  buybackItem(index: number): void;
+  closeVendor(): void;
   /** Waystones: attune/open the nearby stone, fast-travel to a discovered one. */
   interactWaystone(): void;
   travelTo(id: string): void;
@@ -170,6 +188,9 @@ export interface UiState {
   showChar: boolean;
   waystone: WaystoneUi | null;
   showTravel: boolean;
+  vendor: VendorUi | null;
+  /** Name of a merchant within trade range (drives the "Press E to trade" prompt). */
+  nearbyVendor: string | null;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -183,6 +204,8 @@ export interface UiState {
   setFloaters: (f: Floater[]) => void;
   setInventory: (i: InventoryUi) => void;
   setWaystone: (w: WaystoneUi) => void;
+  setVendor: (v: VendorUi | null) => void;
+  setNearbyVendor: (name: string | null) => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -230,6 +253,8 @@ export const useStore = create<UiState>((set) => ({
   showChar: false,
   waystone: null,
   showTravel: false,
+  vendor: null,
+  nearbyVendor: null,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -243,6 +268,8 @@ export const useStore = create<UiState>((set) => ({
   setFloaters: (floaters) => set({ floaters }),
   setInventory: (inventory) => set({ inventory }),
   setWaystone: (waystone) => set({ waystone }),
+  setVendor: (vendor) => set({ vendor }),
+  setNearbyVendor: (nearbyVendor) => set({ nearbyVendor }),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),

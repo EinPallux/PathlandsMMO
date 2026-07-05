@@ -17,6 +17,30 @@ export enum EnemyFamily {
   Aberration = 'aberration',
 }
 
+/**
+ * One scripted boss beat, fired once when the boss's HP first drops to/below
+ * `atHpPct`. Phases are data — the resolver (sim/combat.ts) interprets them, so
+ * they stay pure and the Phase-6 server runs them unchanged. Solo-tuned; the
+ * `summon` count scales up by one per extra nearby ally (GDD §4 group scaling).
+ */
+export interface BossPhase {
+  /** Trigger threshold as a fraction of max HP (1 = on engage). */
+  atHpPct: number;
+  /** Spawn adds: `count` of `enemyId` around the boss (+1 per extra nearby ally). */
+  summon?: { enemyId: string; count: number };
+  /** Enrage: a lasting +fraction damage-dealt buff on the boss. */
+  enrage?: number;
+  /** Reflective/hardened shield: absorb = this fraction of the boss's max HP. */
+  shield?: number;
+  /** Barked line surfaced to the UI when the phase fires. */
+  say?: string;
+}
+
+/** A boss's encounter script (ordered high→low HP). Undefined for non-bosses. */
+export interface BossScript {
+  phases: BossPhase[];
+}
+
 export interface EnemyDef {
   id: string;
   name: string;
@@ -36,6 +60,8 @@ export interface EnemyDef {
   leashRadius: number;
   /** Skill ids the enemy may use (empty ⇒ auto-attack only). */
   abilities: string[];
+  /** Encounter script for Boss-rank enemies (HP-threshold beats). */
+  boss?: BossScript;
   /** Short bestiary blurb (used on journal pages). */
   blurb: string;
 }
@@ -60,6 +86,7 @@ function e(
     aggroRadius: opts.aggroRadius ?? 12,
     leashRadius: opts.leashRadius ?? 28,
     abilities: opts.abilities ?? [],
+    ...(opts.boss ? { boss: opts.boss } : {}),
     blurb: opts.blurb ?? '',
   };
 }
@@ -186,39 +213,93 @@ export const ENEMIES: readonly EnemyDef[] = [
     blurb: 'A Waymaker construct still walking its dead post.',
   }),
 
-  // --- Hollow bosses (GDD §4 Boss rank; WORLD.md §3) ---
-  e('bossBriarking', 'Briarking Gnash', EnemyFamily.Humanoid, [12, 12], {
+  // --- Hollow bosses (GDD §4 Boss rank; WORLD.md §3, names reconciled) ---
+  // Briarhollow Warrens (8–12): summons goblin adds at 66% / 33% HP.
+  e('bossBriarking', 'Warlord Bramblegut', EnemyFamily.Humanoid, [12, 12], {
     modelId: 'enemy.briarGoblin',
     rank: EnemyRank.Boss,
     aggroRadius: 18,
     leashRadius: 40,
     abilities: ['thrownRock', 'rootSmash'],
-    blurb: 'Warchief of Briarhollow Warrens.',
+    boss: {
+      phases: [
+        {
+          atHpPct: 0.66,
+          summon: { enemyId: 'briarGoblin', count: 1 },
+          say: 'Bramblegut bellows — the warren answers!',
+        },
+        {
+          atHpPct: 0.33,
+          summon: { enemyId: 'briarGoblin', count: 1 },
+          enrage: 0.2,
+          say: 'Bramblegut froths with rage!',
+        },
+      ],
+    },
+    blurb: 'Warlord of Briarhollow Warrens; calls his warren to swarm intruders.',
   }),
-  e('bossGloommother', 'The Gloommother', EnemyFamily.Humanoid, [15, 15], {
-    modelId: 'enemy.caveGnoll',
+  // Gloomroot Cavern (14–18): a giant blighted grub that erupts blight-spawn.
+  e('bossGloommother', 'Mother Gnarlmaw', EnemyFamily.Aberration, [18, 18], {
+    modelId: 'enemy.stonejawGrub',
     rank: EnemyRank.Boss,
+    school: 'nature',
+    moveSpeed: 3.2,
     aggroRadius: 18,
     leashRadius: 40,
-    abilities: ['cleaveSwipe'],
-    blurb: 'Matron of the Gloomroot gnoll-pack.',
+    abilities: ['sprayVenom'],
+    boss: {
+      phases: [
+        {
+          atHpPct: 0.66,
+          summon: { enemyId: 'marshSlime', count: 1 },
+          say: 'Mother Gnarlmaw burrows and erupts — blight-spawn spill out!',
+        },
+        {
+          atHpPct: 0.33,
+          summon: { enemyId: 'marshSlime', count: 1 },
+          enrage: 0.25,
+          say: 'The blight boils — Gnarlmaw swells with venom!',
+        },
+      ],
+    },
+    blurb: 'A vast blighted grub whose eruptions flood the caverns with spawn.',
   }),
-  e('bossCrystalWyrm', 'Shardmaw', EnemyFamily.Beast, [22, 22], {
+  // The Crystal Deeps (18–22): reflective-shield phases keyed to the pylons.
+  e('bossCrystalWyrm', 'Prismhide', EnemyFamily.Beast, [22, 22], {
     modelId: 'enemy.crystalbackLizard',
     rank: EnemyRank.Boss,
     aggroRadius: 20,
     leashRadius: 42,
     abilities: ['crystalSpit'],
-    blurb: 'The great lizard at the heart of the Crystal Deeps.',
+    boss: {
+      phases: [
+        { atHpPct: 0.66, shield: 0.12, say: 'Prismhide raises a reflective crystal shield!' },
+        {
+          atHpPct: 0.33,
+          shield: 0.12,
+          enrage: 0.2,
+          say: 'The pylons blaze — Prismhide hardens and rages!',
+        },
+      ],
+    },
+    blurb: 'The ancient Crystalback at the heart of the Deeps; its shell throws back light.',
   }),
-  e('bossIronvein', 'Gruulmarg the Ironvein', EnemyFamily.Humanoid, [26, 26], {
+  // Ironvein Halls (24–28): forge-flame floor ramps the troll-lord's damage.
+  e('bossIronvein', 'Forgewarden Urzul', EnemyFamily.Humanoid, [28, 28], {
     modelId: 'enemy.ironhideTroll',
     rank: EnemyRank.Boss,
     aggroRadius: 20,
     leashRadius: 44,
     abilities: ['boulderThrow', 'regenerate'],
-    blurb: 'The troll-lord of Ironvein Halls.',
+    boss: {
+      phases: [
+        { atHpPct: 0.6, enrage: 0.2, say: 'Forgewarden Urzul stokes the forge-flame!' },
+        { atHpPct: 0.25, enrage: 0.25, say: 'The vault floor runs with fire — Urzul roars!' },
+      ],
+    },
+    blurb: 'Troll-lord of the Ironvein forge-vault, wielding a stolen Waymaker hammer.',
   }),
+  // The Sunken Crypt (28–30): the three-phase story finale, blight adds + enrage.
   e('bossLastWaymaker', 'The Last Waymaker', EnemyFamily.Undead, [30, 30], {
     modelId: 'enemy.cryptSentinel',
     rank: EnemyRank.Boss,
@@ -226,7 +307,22 @@ export const ENEMIES: readonly EnemyDef[] = [
     aggroRadius: 22,
     leashRadius: 50,
     abilities: ['shadowCleave'],
-    blurb: 'The final Waymaker, three-phase story finale beneath the Coast.',
+    boss: {
+      phases: [
+        {
+          atHpPct: 0.66,
+          summon: { enemyId: 'cryptSkeleton', count: 1 },
+          say: 'The Last Waymaker raises the drowned dead.',
+        },
+        {
+          atHpPct: 0.33,
+          summon: { enemyId: 'cryptSkeleton', count: 1 },
+          enrage: 0.25,
+          say: 'Blight floods the tomb — the Waymaker makes its last stand!',
+        },
+      ],
+    },
+    blurb: 'The final Waymaker, bound to its flooded tomb — the three-phase story finale.',
   }),
 ];
 

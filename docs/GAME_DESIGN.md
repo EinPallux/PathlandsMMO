@@ -102,9 +102,33 @@ Armor-class mitigation multipliers: cloth 1.0 · leather 1.6 · mail 2.4 · plat
 
 ### Enemy baseline (level L)
 
-- HP: `35 + 22·L + 1.10^L·8` — normal; **Elite** ×3 HP ×1.6 dmg (Hollows, named); **Boss** ×8 HP ×2 dmg + mechanics
+- HP: `35 + 22·L + 1.10^L·8` — normal; **Elite** ×2.4 HP ×1.3 dmg (Hollows, named); **Boss** ×4.5 HP ×1.25 dmg + mechanics
 - Damage per 2 s swing: `6 + 4·L`
 - XP on kill: `12 + 6·L` (same-level). Delta `d = enemyLvl − playerLvl`: tougher mobs `×min(1 + 0.2·d, 1.4)`; below level fades linearly `×(1 + d/6)` to **zero at gray (d ≤ −6)**.
+
+> **Phase-3 solo tuning note.** The elite/boss multipliers above were softened from
+> the original design (elite ×3/×1.6, boss ×8/×2). With no potions and no modelled
+> kiting/defensive rotation yet, the original ×2 boss damage made a 90–180 s attrition
+> fight unsurvivable for a no-sustain class — a small HP pool only absorbs ~10–15 s of
+> it. The current values make every Hollow soloable at-level now (Briarhollow's boss is
+> cleared by a geared L13 Warrior/Ranger in the acceptance tests); the **90–180 s boss
+> TTK target in §15 is deferred to Phase 5's balance pass**, once consumables (Phase 4
+> alchemy), defensive cooldowns, and kiting are in and the pace is tuned holistically.
+
+### Boss encounter scripts (Phase 3)
+
+Each Hollow boss (`EnemyDef.boss`, `shared/data/enemies.ts`) carries an ordered list of
+**phases** fired once as its HP crosses a threshold, interpreted by `stepBossMechanics`
+in the resolver:
+
+- **summon** — spawn `count` adds of an enemy id near the boss (e.g. Bramblegut calls
+  Briar Goblins at 66% / 33%); **+1 add per extra nearby ally** (group scaling hook).
+- **enrage** — a lasting `damageDealt` buff (forge-flame ramp, Gnarlmaw's swell).
+- **shield** — a reflective absorb worth a fraction of the boss's max HP (Prismhide's
+  pylon phases).
+
+Phases are pure data, so the Phase-6 server runs the same scripts. Adds are ordinary
+enemies (own AI/loot) and despawn with the encounter when the player leaves.
 
 ### Group scaling (built Phase 3, meaningful Phase 6)
 

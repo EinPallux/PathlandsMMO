@@ -95,11 +95,14 @@ describe('Enemy baselines (GDD §4)', () => {
     expect(enemyDamage(5)).toBe(26);
   });
 
-  it('elite ×3 HP ×1.6 dmg, boss ×8 HP ×2 dmg', () => {
-    expect(enemyMaxHP(10, EnemyRank.Elite)).toBe(Math.round(rawHP(10) * 3));
-    expect(enemyMaxHP(10, EnemyRank.Boss)).toBe(Math.round(rawHP(10) * 8));
-    expect(enemyDamage(10, EnemyRank.Elite)).toBe(Math.round(enemyDamage(10) * 1.6));
-    expect(enemyDamage(10, EnemyRank.Boss)).toBe(Math.round(enemyDamage(10) * 2));
+  // Phase-3 solo tuning (GDD §4): elite ×2.4 HP / ×1.3 dmg, boss ×4.5 HP / ×1.25 dmg.
+  // Softened from the original ×8/×2 so every Hollow is soloable at-level before
+  // Phase 4 consumables + Phase 5's balance pass restore longer fights.
+  it('elite ×2.4 HP ×1.3 dmg, boss ×4.5 HP ×1.25 dmg', () => {
+    expect(enemyMaxHP(10, EnemyRank.Elite)).toBe(Math.round(rawHP(10) * 2.4));
+    expect(enemyMaxHP(10, EnemyRank.Boss)).toBe(Math.round(rawHP(10) * 4.5));
+    expect(enemyDamage(10, EnemyRank.Elite)).toBe(Math.round(enemyDamage(10) * 1.3));
+    expect(enemyDamage(10, EnemyRank.Boss)).toBe(Math.round(enemyDamage(10) * 1.25));
   });
 
   it('group scaling: +60% HP, +15% dmg per extra player', () => {

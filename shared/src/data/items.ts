@@ -161,6 +161,16 @@ export function ilvlFor(reqLevel: number, rarity: Rarity): number {
   return reqLevel + RARITY_ILVL_BONUS[rarity];
 }
 
+/** What a vendor charges to sell an item to the player (GDD §6: buy = full value). */
+export function buyPrice(item: ItemDef): number {
+  return Math.max(1, Math.round(item.value));
+}
+
+/** What a vendor pays the player for an item (GDD §6: sell = a quarter of value). */
+export function sellPrice(item: ItemDef, qty = 1): number {
+  return Math.max(1, Math.floor((item.value / 4) * qty));
+}
+
 /** Total primary-stat budget for an item: `ilvl × rarityMult` (GDD §6). */
 export function statBudget(ilvl: number, rarity: Rarity): number {
   return Math.round(ilvl * RARITY_BUDGET_MULT[rarity]);
