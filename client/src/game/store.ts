@@ -10,6 +10,60 @@ export interface Nameplate {
   name: string;
   sx: number;
   sy: number;
+  /** Enemy nameplates carry combat info; NPC plates leave these undefined. */
+  level?: number;
+  hpFrac?: number;
+  hostile?: boolean;
+  targeted?: boolean;
+}
+
+export interface HotbarSlot {
+  skillId: string;
+  name: string;
+  cost: number;
+  /** Off cooldown + affordable. */
+  ready: boolean;
+  /** Remaining cooldown as a fraction 0..1 (0 = ready). */
+  cooldownFrac: number;
+}
+
+export interface TargetInfo {
+  id: string;
+  name: string;
+  level: number;
+  hp: number;
+  maxHP: number;
+  hostile: boolean;
+  castSkill: string | null;
+  castFrac: number;
+}
+
+export interface PlayerCombat {
+  className: string;
+  level: number;
+  xp: number;
+  xpForLevel: number;
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  resourceKind: string;
+  alive: boolean;
+}
+
+export interface CombatUi {
+  player: PlayerCombat;
+  target: TargetInfo | null;
+  hotbar: HotbarSlot[];
+  autoAttack: boolean;
+}
+
+export interface Floater {
+  id: number;
+  sx: number;
+  sy: number;
+  text: string;
+  kind: 'damage' | 'heal' | 'crit' | 'xp' | 'miss';
 }
 
 export interface DialogueState {
@@ -28,6 +82,11 @@ export interface GameCommands {
   setDayNightSpeed(speed: number): void;
   setWeather(w: WeatherKind): void;
   respawn(): void;
+  /** Combat: cast the hotbar slot (0-based), cycle target, toggle auto-attack. */
+  castSlot(slot: number): void;
+  cycleTarget(): void;
+  toggleAutoAttack(): void;
+  releaseSpirit(): void;
 }
 
 export interface UiState {
@@ -66,6 +125,9 @@ export interface UiState {
   nameplates: Nameplate[];
   dialogue: DialogueState | null;
 
+  combat: CombatUi | null;
+  floaters: Floater[];
+
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   toggleMap: () => void;
@@ -73,6 +135,8 @@ export interface UiState {
   setSelectedClass: (cls: CharacterClass) => void;
   setCommands: (c: GameCommands) => void;
   setNameplates: (n: Nameplate[]) => void;
+  setCombat: (c: CombatUi) => void;
+  setFloaters: (f: Floater[]) => void;
   openDialogue: (name: string, lines: string[]) => void;
   advanceDialogue: () => void;
   closeDialogue: () => void;
@@ -112,6 +176,9 @@ export const useStore = create<UiState>((set) => ({
   nameplates: [],
   dialogue: null,
 
+  combat: null,
+  floaters: [],
+
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
@@ -119,6 +186,8 @@ export const useStore = create<UiState>((set) => ({
   setSelectedClass: (selectedClass) => set({ selectedClass }),
   setCommands: (commands) => set({ commands }),
   setNameplates: (nameplates) => set({ nameplates }),
+  setCombat: (combat) => set({ combat }),
+  setFloaters: (floaters) => set({ floaters }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),
   advanceDialogue: () =>
     set((st) => {

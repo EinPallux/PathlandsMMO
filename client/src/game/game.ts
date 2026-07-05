@@ -22,6 +22,7 @@ import { ModelObject } from '../engine/voxelModel.js';
 import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
+import { CombatDirector } from './combatDirector.js';
 import { useStore, type GameCommands } from './store.js';
 
 // Brookhollow plaza, just north of the fountain (which sits at 1536,1536).
@@ -46,6 +47,7 @@ export class Game {
   private playerModel: ModelObject;
   private currentClass: CharacterClass;
   private readonly discovery: Discovery;
+  private readonly combat: CombatDirector;
 
   private accumulator = 0;
   private lastTime = 0;
@@ -92,21 +94,38 @@ export class Game {
     this.playerModel = new ModelObject(buildCharacterModel(this.currentClass));
     this.scene.add(this.playerModel.group);
 
+    this.combat = new CombatDirector(
+      this.scene,
+      this.world,
+      this.currentClass,
+      SPAWN_X,
+      SPAWN_Z,
+      (x, z) => this.teleportPlayer(x, z),
+    );
+
     this.registerCommands();
     window.addEventListener('resize', this.onResize);
+    this.canvas.addEventListener('mousedown', this.onCanvasClick);
 
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.loop);
   }
 
+  private teleportPlayer(x: number, z: number): void {
+    const y = this.world.heightAt(Math.floor(x), Math.floor(z)) + 2;
+    this.controller.teleport(x, y, z);
+    this.camera.syncFreeToPlayer(x, y, z);
+    this.accumulator = 0;
+  }
+
+  private onCanvasClick = (e: MouseEvent): void => {
+    // A click while already pointer-locked selects the enemy under the crosshair.
+    if (e.button === 0 && this.input.locked) this.combat.pickTarget(this.camera.camera);
+  };
+
   private registerCommands(): void {
     const commands: GameCommands = {
-      teleport: (x, z) => {
-        const y = this.world.heightAt(Math.floor(x), Math.floor(z)) + 2;
-        this.controller.teleport(x, y, z);
-        this.camera.syncFreeToPlayer(x, y, z);
-        this.accumulator = 0;
-      },
+      teleport: (x, z) => this.teleportPlayer(x, z),
       setClass: (cls) => this.swapClass(cls),
       setViewDistance: (chunks) => {
         this.chunks.setRadius(chunks);
@@ -121,7 +140,11 @@ export class Game {
         this.env.setWeather(w);
         useStore.getState().setSnapshot({ weather: w });
       },
-      respawn: () => commands.teleport(SPAWN_X, SPAWN_Z),
+      respawn: () => this.teleportPlayer(SPAWN_X, SPAWN_Z),
+      castSlot: (slot) => this.combat.castSlot(slot),
+      cycleTarget: () => this.combat.cycleTarget(),
+      toggleAutoAttack: () => this.combat.toggleAutoAttack(),
+      releaseSpirit: () => this.combat.releaseSpirit(),
     };
     useStore.getState().setCommands(commands);
   }
@@ -133,6 +156,7 @@ export class Game {
     this.currentClass = cls;
     this.playerModel = new ModelObject(buildCharacterModel(cls));
     this.scene.add(this.playerModel.group);
+    this.combat.setClass(cls);
     useStore.getState().setSelectedClass(cls);
   }
 
@@ -161,6 +185,16 @@ export class Game {
     if (this.input.wasTapped('KeyF')) this.toggleFreeFly();
     if (this.input.wasTapped('KeyM')) useStore.getState().toggleMap();
     if (this.input.wasTapped('Backquote')) useStore.getState().toggleDev();
+
+    // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
+    // Enter releases spirit on death.
+    if (this.input.wasTapped('Tab')) this.combat.cycleTarget();
+    if (this.input.wasTapped('KeyR')) this.combat.toggleAutoAttack();
+    if (this.input.wasTapped('Enter')) this.combat.releaseSpirit();
+    for (let i = 0; i < 10; i++) {
+      const code = i === 9 ? 'Digit0' : `Digit${i + 1}`;
+      if (this.input.wasTapped(code)) this.combat.castSlot(i);
+    }
 
     // Talk to nearby NPCs with E (advances dialogue if already open).
     if (this.input.wasTapped('KeyE')) {
@@ -210,6 +244,8 @@ export class Game {
         // Keep the player settled (gravity only) while free-flying.
         this.controller.tick(this.sampler, freeInput, this.controller.physics.yaw, TICK_DT);
       }
+      const ph = this.controller.physics;
+      this.combat.simTick(ph.x, ph.y, ph.z, ph.yaw);
       this.accumulator -= TICK_DT;
       ticks++;
     }
@@ -234,7 +270,14 @@ export class Game {
       this.canvas.clientWidth,
       this.canvas.clientHeight,
     );
-    useStore.getState().setNameplates(this.entities.nameplates);
+    this.combat.render(
+      dt,
+      alpha,
+      this.camera.camera,
+      this.canvas.clientWidth,
+      this.canvas.clientHeight,
+    );
+    useStore.getState().setNameplates([...this.entities.nameplates, ...this.combat.enemyPlates]);
 
     this.discovery.reveal(rs.x, rs.z);
     this.discovery.tick(dt);
@@ -295,10 +338,12 @@ export class Game {
     this.running = false;
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
+    this.canvas.removeEventListener('mousedown', this.onCanvasClick);
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();
     this.entities.dispose();
+    this.combat.dispose();
     this.env.dispose();
     this.playerModel.dispose();
     this.renderer.dispose();

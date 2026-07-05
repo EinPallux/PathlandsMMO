@@ -24,8 +24,8 @@ export class Input {
   private onKeyDown = (e: KeyboardEvent): void => {
     if (!this.keys.has(e.code)) this.tapped.add(e.code);
     this.keys.add(e.code);
-    // Prevent page scroll on space / arrows while playing.
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+    // Prevent page scroll on space/arrows and focus-change on Tab while playing.
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) {
       e.preventDefault();
     }
   };

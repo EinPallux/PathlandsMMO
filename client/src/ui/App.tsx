@@ -8,6 +8,7 @@ import { DebugMap } from './DebugMap.js';
 import { Nameplates } from './Nameplates.js';
 import { Dialogue } from './Dialogue.js';
 import { Minimap } from './Minimap.js';
+import { CombatHud } from './CombatHud.js';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -32,6 +33,7 @@ export function App(): JSX.Element {
         {ready && <Nameplates />}
         {ready && <Minimap />}
         {ready && <Hud />}
+        {ready && <CombatHud />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}
