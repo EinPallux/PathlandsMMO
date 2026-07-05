@@ -119,6 +119,20 @@ function rotZ(x: number, z: number, r: Rot): number {
   }
 }
 
+/**
+ * Deterministic 2D Euclidean distance. `Math.hypot` is only
+ * "implementation-approximated" by the spec and can diverge ~1 ULP across JS
+ * engines; since these distances flow through `Math.round` into stamped terrain
+ * and carve heights, that could produce a non-byte-identical world between a
+ * non-V8 browser worker and the Phase-6 server. `Math.sqrt` is IEEE-754
+ * correctly-rounded and identical everywhere (same reasoning as movement.ts).
+ */
+function dist2(ax: number, az: number, bx: number, bz: number): number {
+  const dx = ax - bx;
+  const dz = az - bz;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
 /** Squared distance from point to segment plus the clamped param t along it. */
 function segDist(
   px: number,
@@ -135,7 +149,7 @@ function segDist(
   t = clamp(t, 0, 1);
   const cx = ax + dx * t;
   const cz = az + dz * t;
-  return { d: Math.hypot(px - cx, pz - cz), t };
+  return { d: dist2(px, pz, cx, cz), t };
 }
 
 function packKey(x: number, y: number, z: number): number {
@@ -178,7 +192,7 @@ export class AuthoredLayer {
       // Height at each node: settlement platform if a node coincides with one,
       // else base terrain.
       const nodeH = road.nodes.map((n) => {
-        const s = SETTLEMENTS.find((st) => Math.hypot(st.cx - n.x, st.cz - n.z) < 4);
+        const s = SETTLEMENTS.find((st) => dist2(st.cx, st.cz, n.x, n.z) < 4);
         return s ? this.platformY(s) : this.baseHeightAt(n.x, n.z);
       });
       for (let i = 0; i < road.nodes.length - 1; i++) {
@@ -206,7 +220,7 @@ export class AuthoredLayer {
    */
   bowlFloorAt(x: number, z: number): number | null {
     for (const hollow of HOLLOWS) {
-      const d = Math.hypot(x - hollow.x, z - hollow.z);
+      const d = dist2(x, z, hollow.x, hollow.z);
       if (d < HOLLOW_R) {
         const h0 = this.hollowPlatformY(hollow.id, hollow.x, hollow.z);
         return h0 - Math.round(HOLLOW_DEPTH * (1 - d / HOLLOW_R));
@@ -220,7 +234,7 @@ export class AuthoredLayer {
     let h = baseH;
     // Settlement platforms (nearest wins).
     for (const s of SETTLEMENTS) {
-      const d = Math.hypot(x - s.cx, z - s.cz);
+      const d = dist2(x, z, s.cx, s.cz);
       if (d < s.radius) {
         const t = smoothstep(s.radius, s.radius * 0.55, d);
         h = lerp(h, this.platformY(s), t);
@@ -228,7 +242,7 @@ export class AuthoredLayer {
     }
     // Hollow entrance aprons (flat rim around each pit).
     for (const hollow of HOLLOWS) {
-      const d = Math.hypot(x - hollow.x, z - hollow.z);
+      const d = dist2(x, z, hollow.x, hollow.z);
       if (d < HOLLOW_FLATTEN_R) {
         const t = smoothstep(HOLLOW_FLATTEN_R, HOLLOW_FLATTEN_R * 0.5, d);
         h = lerp(h, this.hollowPlatformY(hollow.id, hollow.x, hollow.z), t);
@@ -250,7 +264,7 @@ export class AuthoredLayer {
   /** Surface material override for roads and settlement plazas (or null). */
   roadSurface(x: number, z: number): Voxel | null {
     for (const s of SETTLEMENTS) {
-      if (Math.hypot(x - s.cx, z - s.cz) < s.radius * 0.42) return Voxel.Path;
+      if (dist2(x, z, s.cx, s.cz) < s.radius * 0.42) return Voxel.Path;
     }
     this.ensureRoads();
     for (const seg of this.roadSegments!) {
@@ -262,7 +276,7 @@ export class AuthoredLayer {
   /** True if (x,z) lies within any settlement (used to keep scatter out of towns). */
   isInSettlement(x: number, z: number): boolean {
     for (const s of SETTLEMENTS) {
-      if (Math.hypot(x - s.cx, z - s.cz) < s.radius) return true;
+      if (dist2(x, z, s.cx, s.cz) < s.radius) return true;
     }
     return false;
   }
