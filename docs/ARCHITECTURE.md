@@ -94,7 +94,8 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 
 - `server/`: ws gateway (auth handshake → session) · sim host (imports `shared/`) · persistence writer (dirty-state flush every 30 s + on logout/events) · REST endpoints for auth (register/login/reset, argon2id, rate-limited).
 - PostgreSQL via Drizzle; nightly `pg_dump` to VPS-local + offsite copy; restore drill documented in the runbook.
-- **Docker Compose:** `game` (Node), `db` (Postgres + volume), `nginx` (TLS via certbot companion, serves wss reverse-proxy — and optionally the static client). Client stays deployable on Vercel pointing at `wss://play.<domain>`; both topologies must work.
+- **Static client (P1–5):** the build is a self-contained `dist/` (repo root). Deploy on Vercel (zero-config via `vercel.json`) or serve from the VPS's nginx — see **docs/DEPLOY.md** for the Ubuntu VPS + nginx guide (SPA fallback, immutable asset caching, certbot TLS). Both must keep working.
+- **Docker Compose (P6):** `game` (Node), `db` (Postgres + volume), `nginx` (TLS via certbot companion, serves wss reverse-proxy — and optionally the static client). Client stays deployable on Vercel pointing at `wss://play.<domain>`; both topologies must work.
 - GitHub Actions: typecheck/lint/test on push; deploy job (build → rsync/registry → `docker compose up -d`) on tagged release. Structured pino logs; minimal metrics (CCU, tick p95, DB latency) exposed to a status endpoint; GM commands behind an admin token.
 
 ## 9. Testing Strategy

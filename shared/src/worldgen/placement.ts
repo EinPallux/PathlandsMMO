@@ -433,7 +433,11 @@ export class AuthoredLayer {
       const count = 2 + s.rings * 2;
       for (let i = 0; i < count; i++) {
         let kind: NpcKind = 'villager';
-        if (i === 0 && s.hasInn) kind = 'vendor';
+        // Every town has a merchant (all settlements carry a vendor tier). The inn
+        // is no longer required — it left millstead/mossgate/glimmercamp shopless.
+        // (RNG-safe: vendor and villager both draw one name int, so downstream NPC
+        // positions/seeds are unchanged; only NPC 0's kind/name flips.)
+        if (i === 0) kind = 'vendor';
         else if (i === 1) kind = 'guard';
         const a = rng.float(0, Math.PI * 2);
         const r = rng.float(8, s.radius * 0.6);
