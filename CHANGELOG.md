@@ -4,6 +4,59 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 2 — Reconciliation, interest management, connection UX, server hardening (2026-07-06)
+
+Built on top of Part 1 after an **adversarial audit** of the Part-1 netcode (which surfaced the
+server-hardening gaps fixed below).
+
+#### Added
+
+- **Client-side prediction reconciliation.** New per-connection `self` protocol message
+  (`ServerSelf` + `NetSelf`, `NET_PROTOCOL_VERSION` → 2) carries a client's own authoritative
+  `PlayerPhysics` + the last input sequence the server applied (`ackedSeq`). The client keeps a
+  bounded **input history**, and each frame resets its predicted physics to the authoritative state
+  and **replays the unacked inputs** through the same shared `stepPlayerMovement`. Because both
+  sides run identical code on identical intents, the agreeing case reproduces the prediction exactly
+  (no pop); any residual is folded into a decaying **render error-offset** (teleport-scale
+  corrections snap). Full physics — not just position — is sent so the replay integrates the right
+  dynamics through falls/jumps/water. Shared `physToNetSelf` / `applyNetSelf` keep the projection in
+  one place. (`shared/proto/net.ts`, `server/sim.ts`, `client/net/netClient.ts`,
+  `client/game/game.ts` `reconcileSelf`, `client/game/playerController.ts` `applyAuthoritative`.)
+- **Chunk-grid interest management** (`server/interest.ts`): replication is now per-subscriber —
+  each client receives only the players within its **3×3 chunk region** (`cellOf`/`cellKey`/
+  `buildCellIndex`/`visibleIds`), plus its own `self` frame regardless of interest. The gateway
+  diffs a per-connection `known` set to emit enter (full state) / update (if dirty) / leave, so
+  `gone` now means "despawn — left interest or disconnected." No wire-shape change.
+- **Connection UX**: the `NetClient` now sends **pings** and computes an EWMA-smoothed **RTT**,
+  tracks a connection **phase** (connecting / connected / reconnecting), and drives a new
+  **`NetStatusHud`** (a pill under the minimap showing phase · peers · latency) via a minimal store
+  `net` slice. Hidden entirely in single-player (`net === null`).
+- **Server-time remote interpolation**: remote samples are now placed on the **server-tick
+  timeline** (each carries a server tick) and played back ~150 ms behind an estimated server clock,
+  so network jitter no longer warps a remote's apparent speed (audit finding).
+- Headless tests (+12 → **319**): reconciliation byte-parity / mispredict-erase / replay-convergence
+  / ws ack channel (`server/test/reconcile.test.ts`), interest enter/leave/re-enter + leave≠
+  disconnect + self-bypasses-interest (`server/test/interest.test.ts`), and codec `self` round-trip
+  / malformed-rejection (`shared/test/net.test.ts`). Shared test helpers in `server/test/support.ts`.
+
+#### Changed
+
+- **Server input handling**: the last-wins `pendingMove` became a **bounded FIFO** (`inputs[]`,
+  `MAX_INPUT_QUEUE`) drained one per tick, with a separate `lastRecvSeq` (ordering gate) and
+  `lastAppliedSeq` (the reconciliation ack). A client's catch-up burst now applies input-for-input
+  over successive ticks instead of collapsing to the newest — matching the client's predicted path.
+
+#### Fixed (server hardening, from the audit)
+
+- **`maxPayload`** on the WebSocket server — oversized frames are rejected before `JSON.parse`, so a
+  hostile giant frame can't block the event loop or OOM the process.
+- **Hello timeout + connection cap** — an unauthenticated socket that never says hello is terminated,
+  and connections past a configured limit are refused (anti-idle/DoS). `ping` now requires a
+  completed hello.
+- **WebSocket heartbeat** — the server pings every connection and terminates any that miss a round,
+  reaping half-open sockets (client sleep / dropped wifi) so their player no longer lingers as a
+  frozen ghost.
+
 ### Part 1 — Server skeleton + two-player vertical slice (2026-07-06)
 
 Phase 5 is tagged **`v1.0-solo`** (the complete single-player game). Phase 6 begins by turning the

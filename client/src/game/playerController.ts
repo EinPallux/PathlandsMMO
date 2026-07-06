@@ -7,9 +7,11 @@ import {
   stepPlayerMovement,
   makePlayerPhysics,
   makeMoveIntent,
+  applyNetSelf,
   lerpAngle,
   lerp,
   type MoveIntent,
+  type NetSelf,
   type PlayerPhysics,
   type VoxelSampler,
   type MoveState,
@@ -41,6 +43,22 @@ export class PlayerController {
 
   teleport(x: number, y: number, z: number): void {
     this.physics = makePlayerPhysics(x, y, z);
+    this.prev = { ...this.physics };
+  }
+
+  /**
+   * Reconciliation reset (Phase 6): overwrite the predicted physics with the server's
+   * authoritative self-state. The caller then replays the unacknowledged inputs. `prev`
+   * is pinned to the new state so tick-interpolation doesn't lerp across the reset — the
+   * visible discrepancy is carried by the cosmetic error-offset in game.ts instead.
+   */
+  applyAuthoritative(s: NetSelf): void {
+    applyNetSelf(this.physics, s);
+    this.prev = { ...this.physics };
+  }
+
+  /** Pin the interpolation baseline to the current physics (post-reconcile). */
+  setPrevToCurrent(): void {
     this.prev = { ...this.physics };
   }
 

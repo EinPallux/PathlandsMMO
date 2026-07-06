@@ -1,0 +1,137 @@
+// Wire-protocol tests: the codec is the trust boundary, so it must round-trip valid
+// frames and reject malformed ones. Covers the Phase-6 Part-2 additions (the `self`
+// reconciliation channel + physics projection helpers) alongside the existing messages.
+
+import { describe, it, expect } from 'vitest';
+import {
+  applyNetSelf,
+  decodeClient,
+  decodeServer,
+  encodeClient,
+  encodeServer,
+  makeMoveIntent,
+  makePlayerPhysics,
+  NET_PROTOCOL_VERSION,
+  physToNetSelf,
+  type ClientMessage,
+  type ServerSelf,
+} from '../src/index.js';
+
+describe('net protocol codec', () => {
+  it('is at protocol version 2 (self channel)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(2);
+  });
+
+  it('round-trips a ServerSelf frame', () => {
+    const phys = makePlayerPhysics(10, 64, -5);
+    phys.vx = 1.5;
+    phys.vy = -3.25;
+    phys.onGround = true;
+    phys.inWater = false;
+    phys.moveState = 'run';
+    const msg: ServerSelf = { t: 'self', tick: 42, ackedSeq: 17, phys: physToNetSelf(phys) };
+    const decoded = decodeServer(encodeServer(msg));
+    expect(decoded).toEqual(msg);
+  });
+
+  it('physToNetSelf → applyNetSelf is an identity on the kinematic fields', () => {
+    const src = makePlayerPhysics(3, 50, 8);
+    src.vx = 2;
+    src.vy = 0.5;
+    src.vz = -1;
+    src.yaw = 1.23;
+    src.onGround = false;
+    src.inWater = true;
+    src.moveState = 'swim';
+    const dst = makePlayerPhysics(0, 0, 0);
+    applyNetSelf(dst, physToNetSelf(src));
+    expect(dst.x).toBe(src.x);
+    expect(dst.vy).toBe(src.vy);
+    expect(dst.yaw).toBe(src.yaw);
+    expect(dst.onGround).toBe(src.onGround);
+    expect(dst.inWater).toBe(src.inWater);
+    expect(dst.moveState).toBe(src.moveState);
+  });
+
+  it('drops a malformed self frame (missing / non-finite fields)', () => {
+    const good = {
+      t: 'self',
+      tick: 1,
+      ackedSeq: 0,
+      phys: physToNetSelf(makePlayerPhysics(0, 0, 0)),
+    };
+    // Missing a velocity component.
+    const noVy = JSON.parse(JSON.stringify(good));
+    delete noVy.phys.vy;
+    expect(decodeServer(JSON.stringify(noVy))).toBeNull();
+    // Non-finite position.
+    const nanX = JSON.parse(JSON.stringify(good));
+    nanX.phys.x = 'oops';
+    expect(decodeServer(JSON.stringify(nanX))).toBeNull();
+    // Missing ackedSeq.
+    const noAck = JSON.parse(JSON.stringify(good));
+    delete noAck.ackedSeq;
+    expect(decodeServer(JSON.stringify(noAck))).toBeNull();
+  });
+
+  it('round-trips snapshot / delta / welcome and validates them', () => {
+    const player = {
+      id: 'p1',
+      name: 'Alia',
+      cls: 'ranger',
+      level: 5,
+      x: 1,
+      y: 2,
+      z: 3,
+      yaw: 0.5,
+      move: 'walk' as const,
+    };
+    expect(decodeServer(encodeServer({ t: 'snapshot', tick: 3, players: [player] }))).toEqual({
+      t: 'snapshot',
+      tick: 3,
+      players: [player],
+    });
+    expect(
+      decodeServer(encodeServer({ t: 'delta', tick: 4, players: [player], gone: ['p9'] })),
+    ).toEqual({ t: 'delta', tick: 4, players: [player], gone: ['p9'] });
+    // A player missing a coordinate is rejected wholesale.
+    const badPlayer = { ...player, z: undefined };
+    expect(
+      decodeServer(JSON.stringify({ t: 'snapshot', tick: 3, players: [badPlayer] })),
+    ).toBeNull();
+  });
+
+  it('round-trips + validates client frames (hello / intent / ping)', () => {
+    const hello: ClientMessage = {
+      t: 'hello',
+      protocol: NET_PROTOCOL_VERSION,
+      name: 'Boro',
+      cls: 'warrior',
+      level: 1,
+    };
+    expect(decodeClient(encodeClient(hello))).toEqual(hello);
+
+    const intent: ClientMessage = {
+      t: 'intent',
+      seq: 7,
+      tick: 7,
+      intent: makeMoveIntent(1, 0, false, true, 0.2),
+    };
+    expect(decodeClient(encodeClient(intent))).toEqual(intent);
+
+    // A Move intent with a non-finite wish is dropped at the boundary.
+    expect(
+      decodeClient(
+        JSON.stringify({
+          t: 'intent',
+          seq: 1,
+          tick: 1,
+          intent: { type: 'Move', wishX: Infinity, wishZ: 0, jump: false, sprint: false, yaw: 0 },
+        }),
+      ),
+    ).toBeNull();
+
+    expect(decodeClient('not json')).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'unknown' }))).toBeNull();
+  });
+});

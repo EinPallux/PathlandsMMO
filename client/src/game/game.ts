@@ -10,6 +10,7 @@ import {
   SPAWN_X,
   SPAWN_Z,
   TICK_DT,
+  stepPlayerMovement,
   buildCharacterModel,
   BIOMES,
   CHARACTER_CLASSES,
@@ -46,6 +47,12 @@ const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
 const UNDERGROUND_MARGIN = 3;
+
+// Phase-6 reconciliation smoothing: the error offset decays with this time constant
+// (~95% gone in ~3τ ≈ 0.18 s); corrections larger than the snap distance are applied
+// instantly (a teleport/respawn should not visibly slide across the world).
+const RECONCILE_SMOOTH_TAU = 0.06;
+const RECONCILE_SNAP_DIST = 4;
 
 // VFX-density graphics setting → burst-count multiplier (Phase 5).
 const VFX_DENSITY_MULT: Record<VfxDensity, number> = { off: 0, low: 0.5, full: 1 };
@@ -100,6 +107,14 @@ export class Game {
    */
   private readonly net: NetClient | null;
   private readonly remoteRenderer: RemotePlayerRenderer | null;
+  /**
+   * Cosmetic reconciliation error: the residual between our prediction and the server's
+   * authority after a reconcile, added to the RENDERED position and decayed to zero so a
+   * correction slides in smoothly instead of popping. Zero in the agreeing common case
+   * and in single-player. The authoritative `controller.physics` is never offset — only
+   * the visual follows this.
+   */
+  private readonly errorOffset = { x: 0, y: 0, z: 0 };
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -238,6 +253,8 @@ export class Game {
           cls: this.currentClass,
           level: character?.level ?? 1,
         },
+        onStatus: (st) =>
+          useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
       });
       this.remoteRenderer = new RemotePlayerRenderer(this.scene);
       this.net.connect();
@@ -476,6 +493,10 @@ export class Game {
 
     this.handleFrameInput(dt);
 
+    // Phase 6: correct our prediction against the server's authority BEFORE this frame's
+    // ticks, so newly predicted ticks build on the reconciled state. No-op single-player.
+    this.reconcileSelf();
+
     // Fixed-tick simulation with interpolation.
     const active = this.camera.mode === 'thirdPerson';
     this.accumulator += dt;
@@ -508,6 +529,19 @@ export class Game {
     }
     const alpha = this.accumulator / TICK_DT;
     const rs = this.controller.renderState(alpha);
+
+    // Decay the cosmetic reconciliation offset toward zero and fold it into the rendered
+    // position so a server correction slides in smoothly (≈0 in the agreeing case). The
+    // authoritative physics is untouched — combat/quests read it, not this.
+    if (this.errorOffset.x !== 0 || this.errorOffset.y !== 0 || this.errorOffset.z !== 0) {
+      const decay = Math.exp(-dt / RECONCILE_SMOOTH_TAU);
+      this.errorOffset.x *= decay;
+      this.errorOffset.y *= decay;
+      this.errorOffset.z *= decay;
+      rs.x += this.errorOffset.x;
+      rs.y += this.errorOffset.y;
+      rs.z += this.errorOffset.z;
+    }
 
     // Player model follows the interpolated state, seated up on the mount if any.
     const thirdPerson = this.camera.mode === 'thirdPerson';
@@ -576,6 +610,44 @@ export class Game {
     this.updateStats(dt, rs);
     this.rafId = requestAnimationFrame(this.loop);
   };
+
+  /**
+   * Reconcile own-player prediction against the server (Phase 6). Resets the predicted
+   * physics to the latest authoritative self-state, then replays the inputs the server
+   * hasn't acked yet through the SAME shared movement function the server ran — so the
+   * result equals the prediction to floating-point in the agreeing case (no pop). Any
+   * residual is folded into the cosmetic error offset and smoothed away. No-op single-
+   * player, or when no new authoritative state arrived this frame.
+   */
+  private reconcileSelf(): void {
+    if (this.net === null) return;
+    const self = this.net.takeReconcile();
+    if (self === null) return;
+
+    const p = this.controller.physics;
+    const oldX = p.x;
+    const oldY = p.y;
+    const oldZ = p.z;
+
+    this.controller.applyAuthoritative(self.phys);
+    for (const intent of this.net.drainInputsAfter(self.ackedSeq)) {
+      stepPlayerMovement(this.sampler, this.controller.physics, intent, TICK_DT);
+    }
+
+    // Fold the visible discrepancy (≈0 when prediction agreed) into the render offset.
+    this.errorOffset.x += oldX - this.controller.physics.x;
+    this.errorOffset.y += oldY - this.controller.physics.y;
+    this.errorOffset.z += oldZ - this.controller.physics.z;
+    // A teleport-scale correction (respawn, big desync) snaps rather than sliding.
+    if (
+      Math.hypot(this.errorOffset.x, this.errorOffset.y, this.errorOffset.z) > RECONCILE_SNAP_DIST
+    ) {
+      this.errorOffset.x = 0;
+      this.errorOffset.y = 0;
+      this.errorOffset.z = 0;
+    }
+    this.controller.setPrevToCurrent(); // don't lerp across the reset
+  }
 
   private updateStats(
     dt: number,
@@ -710,6 +782,7 @@ export class Game {
     );
     this.net?.dispose();
     this.remoteRenderer?.dispose();
+    if (this.net !== null) useStore.getState().setNet(null); // hide the HUD on teardown
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();

@@ -5,100 +5,11 @@
 // thing that makes Pathlands an MMO rather than a single-player game.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WebSocket } from 'ws';
-import {
-  decodeServer,
-  encodeClient,
-  makeMoveIntent,
-  NET_PROTOCOL_VERSION,
-  SPAWN_X,
-  SPAWN_Z,
-  TICK_DURATION_MS,
-  WORLD_SEED,
-  type ClientMessage,
-  type NetPlayer,
-} from '@pathlands/shared';
+import { SPAWN_X, SPAWN_Z, TICK_DURATION_MS, WORLD_SEED } from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
 import { ServerSim } from '../src/sim.js';
 import { GameServer } from '../src/gateway.js';
-
-/** Poll `cond` until it is true or `ms` elapses; rejects with `label` on timeout. */
-function until(cond: () => boolean, ms: number, label: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = (): void => {
-      if (cond()) return resolve();
-      if (Date.now() - start > ms) return reject(new Error(`timeout waiting for ${label}`));
-      setTimeout(tick, 15);
-    };
-    tick();
-  });
-}
-
-/** A minimal test client that mirrors what the browser NetClient will do. */
-class TestClient {
-  readonly ws: WebSocket;
-  you: string | null = null;
-  seed: number | null = null;
-  readonly players = new Map<string, NetPlayer>();
-  private seq = 0;
-
-  constructor(url: string) {
-    this.ws = new WebSocket(url);
-    this.ws.on('message', (data) => this.onMessage(data.toString()));
-  }
-
-  opened(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.ws.once('open', () => resolve());
-      this.ws.once('error', reject);
-    });
-  }
-
-  private onMessage(raw: string): void {
-    const msg = decodeServer(raw);
-    if (msg === null) return;
-    switch (msg.t) {
-      case 'welcome':
-        this.you = msg.you;
-        this.seed = msg.seed;
-        break;
-      case 'snapshot':
-        this.players.clear();
-        for (const p of msg.players) this.players.set(p.id, p);
-        break;
-      case 'delta':
-        for (const p of msg.players) this.players.set(p.id, p);
-        for (const id of msg.gone) this.players.delete(id);
-        break;
-      default:
-        break;
-    }
-  }
-
-  private send(msg: ClientMessage): void {
-    this.ws.send(encodeClient(msg));
-  }
-
-  hello(name: string, cls: string, level: number): void {
-    this.send({ t: 'hello', protocol: NET_PROTOCOL_VERSION, name, cls, level });
-  }
-
-  /** Send one move intent this call (increasing seq so the server never drops it). */
-  move(wishX: number, wishZ: number): void {
-    this.seq += 1;
-    this.send({
-      t: 'intent',
-      seq: this.seq,
-      tick: 0,
-      intent: makeMoveIntent(wishX, wishZ, false, false, 0),
-    });
-  }
-
-  close(): void {
-    this.ws.close();
-  }
-}
+import { TestClient, gatewayOptions, until } from './support.js';
 
 describe('two-player vertical slice', () => {
   let world: ReturnType<typeof createServerWorld>;
@@ -109,12 +20,7 @@ describe('two-player vertical slice', () => {
   beforeEach(async () => {
     world = createServerWorld();
     sim = new ServerSim(world);
-    server = new GameServer(sim, {
-      port: 0, // ask the OS for a free port
-      host: '127.0.0.1',
-      tickDurationMs: TICK_DURATION_MS,
-      broadcastEveryTicks: 2,
-    });
+    server = new GameServer(sim, gatewayOptions());
     await server.listen();
     url = `ws://127.0.0.1:${server.address()}`;
   });
@@ -150,14 +56,10 @@ describe('two-player vertical slice', () => {
     await until(() => a.you !== null && b.you !== null, 3000, 'both welcomed');
     const aid = a.you as string;
     const bid = b.you as string;
-    await until(
-      () => b.players.has(aid) && b.players.has(bid) && a.players.has(aid) && a.players.has(bid),
-      3000,
-      'mutual visibility',
-    );
+    await until(() => b.players.has(aid) && a.players.has(bid), 3000, 'mutual visibility');
 
     // A runs +X for a while; B stays put. A sends a fresh intent every ~tick so the
-    // server keeps applying it (pendingMove is consumed each tick).
+    // server keeps applying it (the input queue drains one per tick).
     const mover = setInterval(() => a.move(1, 0), TICK_DURATION_MS);
     await until(
       () => (b.players.get(aid)?.x ?? SPAWN_X) > SPAWN_X + 0.5,
@@ -168,7 +70,7 @@ describe('two-player vertical slice', () => {
 
     // Let the final resting delta settle, then compare B's view of A against the
     // server's AUTHORITATIVE position — replication reflects the server, not the mover.
-    await until(() => sim.players.get(aid)?.pendingMove === null, 1000, 'A intent drained');
+    await until(() => (sim.players.get(aid)?.inputs.length ?? 1) === 0, 1000, 'A inputs drained');
     await new Promise((r) => setTimeout(r, 200));
 
     const authoritativeA = sim.players.get(aid);

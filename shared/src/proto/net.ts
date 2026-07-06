@@ -14,10 +14,13 @@
 // always lived — the server is authoritative by construction.
 
 import type { CastSkillIntent, Intent, MoveIntent } from '../sim/intents.js';
-import type { MoveState } from '../sim/types.js';
+import type { MoveState, PlayerPhysics } from '../sim/types.js';
 
-/** Bumped on any breaking wire change; the server rejects a mismatched client. */
-export const NET_PROTOCOL_VERSION = 1;
+/**
+ * Bumped on any breaking wire change; the server rejects a mismatched client.
+ * v2 added the per-connection `self` reconciliation channel (ServerSelf).
+ */
+export const NET_PROTOCOL_VERSION = 2;
 
 /** How another player appears to everyone else — the replication view of a player. */
 export interface NetPlayer {
@@ -33,6 +36,58 @@ export interface NetPlayer {
   /** Facing yaw in radians. */
   yaw: number;
   move: MoveState;
+}
+
+/**
+ * The FULL kinematic state of a player — the wire form of PlayerPhysics. Sent only to
+ * a player about THEIR OWN character (ServerSelf) so the client can reconcile its
+ * prediction. Full physics (not just position) is required because the client resumes
+ * the shared movement integrator from this state: `vx/vy/vz` carry momentum and
+ * accumulated gravity, `onGround` gates jumping and the step-up assist, and `inWater`
+ * selects the buoyancy/swim branch. Reset position-only and the first replayed tick
+ * integrates the wrong dynamics — exactly during falls, jumps, and water.
+ */
+export interface NetSelf {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  yaw: number;
+  onGround: boolean;
+  inWater: boolean;
+  move: MoveState;
+}
+
+/** Project the authoritative physics onto the wire (server side). */
+export function physToNetSelf(p: PlayerPhysics): NetSelf {
+  return {
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    vx: p.vx,
+    vy: p.vy,
+    vz: p.vz,
+    yaw: p.yaw,
+    onGround: p.onGround,
+    inWater: p.inWater,
+    move: p.moveState,
+  };
+}
+
+/** Overwrite a physics record with an authoritative self-state (client side). */
+export function applyNetSelf(dst: PlayerPhysics, s: NetSelf): void {
+  dst.x = s.x;
+  dst.y = s.y;
+  dst.z = s.z;
+  dst.vx = s.vx;
+  dst.vy = s.vy;
+  dst.vz = s.vz;
+  dst.yaw = s.yaw;
+  dst.onGround = s.onGround;
+  dst.inWater = s.inWater;
+  dst.moveState = s.move;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,19 +139,41 @@ export interface ServerWelcome {
   tickRate: number;
 }
 
-/** Complete state of every visible player — sent on join and on (re)subscribe. */
+/**
+ * Complete state of the visible players — sent on join and on (re)subscribe. With
+ * interest management this is the interest-filtered set around the joiner (the 3×3
+ * chunk region), always including the joiner's own player, not the whole world.
+ */
 export interface ServerSnapshot {
   t: 'snapshot';
   tick: number;
   players: NetPlayer[];
 }
 
-/** Incremental update: players that changed (`players`) and those that left (`gone`). */
+/**
+ * Incremental update. `players` are those that entered the recipient's interest or
+ * changed within it (full state each — an entering player has no prior baseline).
+ * `gone` are ids to DESPAWN: either they left the recipient's interest region or they
+ * disconnected — the client despawns them the same way in both cases.
+ */
 export interface ServerDelta {
   t: 'delta';
   tick: number;
   players: NetPlayer[];
   gone: string[];
+}
+
+/**
+ * The recipient's OWN authoritative state + the highest input sequence the server has
+ * applied (`ackedSeq`). Sent per-connection at the broadcast cadence, independent of
+ * interest. The client resets its prediction to `phys` and replays inputs with
+ * seq > ackedSeq — client-side prediction reconciliation (ARCH §7).
+ */
+export interface ServerSelf {
+  t: 'self';
+  tick: number;
+  ackedSeq: number;
+  phys: NetSelf;
 }
 
 /** Echo of a ping, with the server tick for a coarse clock estimate. */
@@ -114,7 +191,8 @@ export interface ServerError {
   message: string;
 }
 
-export type ServerMessage = ServerWelcome | ServerSnapshot | ServerDelta | ServerPong | ServerError;
+export type ServerMessage =
+  ServerWelcome | ServerSnapshot | ServerDelta | ServerSelf | ServerPong | ServerError;
 
 // ---------------------------------------------------------------------------
 // Codec — the one place the wire format lives.
@@ -255,6 +333,23 @@ function isNetPlayer(v: unknown): v is NetPlayer {
   );
 }
 
+function isNetSelf(v: unknown): v is NetSelf {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isFiniteNumber(o.x) &&
+    isFiniteNumber(o.y) &&
+    isFiniteNumber(o.z) &&
+    isFiniteNumber(o.vx) &&
+    isFiniteNumber(o.vy) &&
+    isFiniteNumber(o.vz) &&
+    isFiniteNumber(o.yaw) &&
+    isBool(o.onGround) &&
+    isBool(o.inWater) &&
+    isString(o.move)
+  );
+}
+
 /** Decode a server frame on the client. Null ⇒ drop (protocol drift / corruption). */
 export function decodeServer(raw: string): ServerMessage | null {
   const o = parseObject(raw);
@@ -289,6 +384,10 @@ export function decodeServer(raw: string): ServerMessage | null {
       }
       if (!o.players.every(isNetPlayer) || !o.gone.every(isString)) return null;
       return { t: 'delta', tick: o.tick, players: o.players, gone: o.gone };
+    }
+    case 'self': {
+      if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.ackedSeq) || !isNetSelf(o.phys)) return null;
+      return { t: 'self', tick: o.tick, ackedSeq: o.ackedSeq, phys: o.phys };
     }
     case 'pong':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime) || !isFiniteNumber(o.serverTick)) {

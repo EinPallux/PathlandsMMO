@@ -1,15 +1,18 @@
-// The browser side of the Phase-6 netcode. It is the mirror of the server gateway:
-// it sends the local player's intents and renders the OTHER players the server reports,
-// interpolated ~120 ms in the past so their motion is smooth despite 10 Hz deltas
-// (ARCH §7). It is entirely OPT-IN — the game constructs a NetClient only when a server
-// URL is configured, so the single-player build stays server-free (a hard rule until
-// now: no server dependency in Phases 1–5).
+// The browser side of the Phase-6 netcode. Mirror of the server gateway: it sends the
+// local player's intents, reconciles its own prediction against the server's authority,
+// and renders the OTHER players the server reports — interpolated in the recent past so
+// their motion is smooth despite a 10 Hz wire (ARCH §7). It is entirely OPT-IN: the game
+// constructs a NetClient only when a server URL is configured, so the single-player
+// build stays server-free.
 //
-// Own-player movement is still predicted locally by the existing PlayerController (it
-// runs the same shared movement function the server does). Full server reconciliation
-// of the local player — snapping prediction back on divergence — is the next part; here
-// the local sim and the authoritative sim agree because they run identical code on the
-// same intents.
+// Three responsibilities live here:
+//   1. Reconciliation — keep a history of unacknowledged inputs; when the server reports
+//      our authoritative state + the last input it applied, the game resets prediction
+//      to that state and replays the unacked inputs (see game.ts reconcileSelf).
+//   2. Remote interpolation — buffer snapshots on the SERVER's timeline (each carries a
+//      server tick) so jittery arrival can't warp a remote's apparent speed; render
+//      ~150 ms behind an estimated server clock.
+//   3. Connection UX — measure RTT with pings and expose a connection phase + latency.
 
 import {
   decodeServer,
@@ -19,9 +22,12 @@ import {
   NET_PROTOCOL_VERSION,
   CharacterClass,
   CHARACTER_CLASSES,
+  TICK_DURATION_MS,
   type Intent,
+  type MoveIntent,
   type MoveState,
   type NetPlayer,
+  type ServerSelf,
 } from '@pathlands/shared';
 
 /** What the renderer needs to draw one remote player this frame. */
@@ -37,26 +43,32 @@ export interface RemoteRenderState {
   move: MoveState;
 }
 
-/** Connection status surfaced to the UI (indicators, reconnect notice). */
+export type NetPhase = 'connecting' | 'connected' | 'reconnecting';
+
+/** Connection status surfaced to the UI (indicator, reconnect notice, latency). */
 export interface NetStatus {
+  phase: NetPhase;
   connected: boolean;
   /** Number of other players currently visible. */
   peers: number;
   /** Our own session id, once welcomed. */
   you: string | null;
+  /** EWMA-smoothed round-trip latency in ms; null until the first pong / after a drop. */
+  latencyMs: number | null;
 }
 
 export interface NetClientOptions {
   url: string;
   identity: { name: string; cls: string; level: number };
-  /** How far in the past to render remotes (ms). 100–150 ms per ARCH §7. */
+  /** How far in the past to render remotes (ms). ≥ ~1.5× the wire interval (ARCH §7). */
   renderDelayMs?: number;
   /** Notified whenever connection status changes. */
   onStatus?: (status: NetStatus) => void;
 }
 
 interface Sample {
-  t: number; // local receive time (performance.now)
+  /** Position on the SERVER timeline (ms) — jitter-free spacing between snapshots. */
+  tMs: number;
   x: number;
   y: number;
   z: number;
@@ -71,10 +83,17 @@ interface Track {
   samples: Sample[];
 }
 
-const DEFAULT_RENDER_DELAY_MS = 120;
+const DEFAULT_RENDER_DELAY_MS = 150;
 const SAMPLE_HISTORY_MS = 1000;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
+/** Cap on buffered unacked inputs (~12.8 s at 20 Hz) — a stalled ack means disconnect. */
+const MAX_UNACKED_INPUTS = 256;
+/** Smoothing for the local→server clock estimate (low ⇒ steadier, slower to adapt). */
+const CLOCK_ALPHA = 0.1;
+const PING_INTERVAL_MS = 1000;
+const PING_TIMEOUT_MS = 5000;
+const RTT_ALPHA = 0.2;
 
 function toClass(raw: string): CharacterClass {
   return (CHARACTER_CLASSES as readonly string[]).includes(raw)
@@ -96,12 +115,29 @@ export class NetClient {
   private reconnectMs = RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // --- reconciliation ---
+  private readonly history: { seq: number; intent: MoveIntent }[] = [];
+  private pendingSelf: ServerSelf | null = null;
+
+  // --- remote interpolation clock (local→server offset estimate) ---
+  private clockOffsetMs = 0;
+  private clockInit = false;
+
+  // --- connection UX ---
+  private phase: NetPhase = 'connecting';
+  private latencyMs: number | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private pingId = 0;
+  private readonly inflightPings = new Map<number, number>();
+
   constructor(private readonly opts: NetClientOptions) {
     this.renderDelayMs = opts.renderDelayMs ?? DEFAULT_RENDER_DELAY_MS;
   }
 
   connect(): void {
     this.closedByUser = false;
+    if (this.phase !== 'reconnecting') this.phase = 'connecting';
+    this.emitStatus();
     let ws: WebSocket;
     try {
       ws = new WebSocket(this.opts.url);
@@ -119,6 +155,7 @@ export class NetClient {
         cls: this.opts.identity.cls,
         level: this.opts.identity.level,
       });
+      this.startPinging();
     });
     ws.addEventListener('message', (ev) => this.onMessage(String(ev.data)));
     ws.addEventListener('close', () => this.onClose());
@@ -133,20 +170,41 @@ export class NetClient {
         this.you = msg.you;
         this.seed = msg.seed;
         this.connected = true;
+        this.phase = 'connected';
+        // Fresh session: the server's ack sequence starts over, so reset ours too.
+        this.seq = 0;
+        this.history.length = 0;
+        this.pendingSelf = null;
+        this.clockInit = false;
+        this.updateClock(msg.tick);
         this.emitStatus();
         break;
       case 'snapshot': {
         this.tracks.clear();
-        const now = this.nowMs();
-        for (const p of msg.players) this.ingest(p, now);
+        this.updateClock(msg.tick);
+        for (const p of msg.players) this.ingest(p, msg.tick);
         this.emitStatus();
         break;
       }
       case 'delta': {
-        const now = this.nowMs();
-        for (const p of msg.players) this.ingest(p, now);
+        this.updateClock(msg.tick);
+        for (const p of msg.players) this.ingest(p, msg.tick);
         for (const id of msg.gone) this.tracks.delete(id);
         this.emitStatus();
+        break;
+      }
+      case 'self':
+        this.pendingSelf = msg; // last-wins — only the newest authoritative state matters
+        break;
+      case 'pong': {
+        const sent = this.inflightPings.get(msg.id);
+        if (sent !== undefined) {
+          this.inflightPings.delete(msg.id);
+          const rtt = this.nowMs() - sent;
+          this.latencyMs =
+            this.latencyMs === null ? rtt : this.latencyMs * (1 - RTT_ALPHA) + rtt * RTT_ALPHA;
+          this.emitStatus();
+        }
         break;
       }
       default:
@@ -154,7 +212,21 @@ export class NetClient {
     }
   }
 
-  private ingest(p: NetPlayer, now: number): void {
+  /** Nudge the local→server clock offset toward this frame's server time (EWMA). */
+  private updateClock(serverTick: number): void {
+    const off = this.nowMs() - serverTick * TICK_DURATION_MS;
+    this.clockOffsetMs = this.clockInit
+      ? this.clockOffsetMs * (1 - CLOCK_ALPHA) + off * CLOCK_ALPHA
+      : off;
+    this.clockInit = true;
+  }
+
+  /** Estimated current server time in ms (same clock the sample timeline uses). */
+  private serverNowMs(): number {
+    return this.nowMs() - this.clockOffsetMs;
+  }
+
+  private ingest(p: NetPlayer, serverTick: number): void {
     if (p.id === this.you) return; // our own player is drawn by local prediction
     let track = this.tracks.get(p.id);
     if (track === undefined) {
@@ -165,17 +237,29 @@ export class NetClient {
       track.cls = toClass(p.cls);
       track.level = p.level;
     }
-    track.samples.push({ t: now, x: p.x, y: p.y, z: p.z, yaw: p.yaw, move: p.move });
-    // Keep a second of history — enough to interpolate a render-delayed target.
-    const cutoff = now - SAMPLE_HISTORY_MS;
-    while (track.samples.length > 2 && track.samples[0]!.t < cutoff) track.samples.shift();
+    track.samples.push({
+      tMs: serverTick * TICK_DURATION_MS,
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      yaw: p.yaw,
+      move: p.move,
+    });
+    // Prune history older than a second of server time, keeping at least two to bracket.
+    const cutoff = this.serverNowMs() - SAMPLE_HISTORY_MS;
+    while (track.samples.length > 2 && track.samples[0]!.tMs < cutoff) track.samples.shift();
   }
 
   private onClose(): void {
     this.connected = false;
     this.ws = null;
+    this.stopPinging();
+    this.latencyMs = null;
+    if (!this.closedByUser) {
+      this.phase = 'reconnecting';
+      this.scheduleReconnect();
+    }
     this.emitStatus();
-    if (!this.closedByUser) this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {
@@ -188,36 +272,84 @@ export class NetClient {
     }, delay);
   }
 
-  /** Send the local player's intent for this tick (sequence-numbered for later acks). */
+  // --- ping / RTT ---
+
+  private startPinging(): void {
+    this.stopPinging();
+    this.sendPing();
+    this.pingTimer = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
+  }
+
+  private stopPinging(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+    this.inflightPings.clear();
+  }
+
+  private sendPing(): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN) return;
+    const now = this.nowMs();
+    // Prune probes whose pong never arrived so a flaky link can't leak memory.
+    for (const [id, t] of this.inflightPings)
+      if (now - t > PING_TIMEOUT_MS) this.inflightPings.delete(id);
+    const id = ++this.pingId;
+    this.inflightPings.set(id, now);
+    this.send({ t: 'ping', id, clientTime: now });
+  }
+
+  // --- intents + reconciliation ---
+
+  /** Send the local player's intent for this tick, recording Moves for reconciliation. */
   sendIntent(intent: Intent): void {
     this.localTick += 1;
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.seq += 1;
+    if (intent.type === 'Move') {
+      this.history.push({ seq: this.seq, intent });
+      if (this.history.length > MAX_UNACKED_INPUTS) this.history.shift();
+    }
     this.send({ t: 'intent', seq: this.seq, tick: this.localTick, intent });
   }
 
+  /** The newest authoritative self-state (consumed once), or null if none pending. */
+  takeReconcile(): ServerSelf | null {
+    const s = this.pendingSelf;
+    this.pendingSelf = null;
+    return s;
+  }
+
+  /** Prune acked inputs and return the remaining (unacked) intents in send order. */
+  drainInputsAfter(ackedSeq: number): MoveIntent[] {
+    let i = 0;
+    while (i < this.history.length && this.history[i]!.seq <= ackedSeq) i++;
+    if (i > 0) this.history.splice(0, i);
+    return this.history.map((h) => h.intent);
+  }
+
+  // --- remote rendering ---
+
   /**
-   * Remote players, positions interpolated to (now − renderDelay) between the two
-   * bracketing samples. Smooth motion despite the low wire rate; no extrapolation past
-   * the last sample (a stopped player rests where the server last placed it).
+   * Remote players, positions interpolated to (serverNow − renderDelay) between the two
+   * bracketing samples on the server timeline. No extrapolation past the last sample.
    */
   remotePlayers(): RemoteRenderState[] {
-    const target = this.nowMs() - this.renderDelayMs;
+    const target = this.serverNowMs() - this.renderDelayMs;
     const out: RemoteRenderState[] = [];
     for (const [id, track] of this.tracks) {
-      const s = track.samples;
-      if (s.length === 0) continue;
-      const state = this.sampleAt(s, target);
+      if (track.samples.length === 0) continue;
+      const s = this.sampleAt(track.samples, target);
       out.push({
         id,
         name: track.name,
         cls: track.cls,
         level: track.level,
-        x: state.x,
-        y: state.y,
-        z: state.z,
-        yaw: state.yaw,
-        move: state.move,
+        x: s.x,
+        y: s.y,
+        z: s.z,
+        yaw: s.yaw,
+        move: s.move,
       });
     }
     return out;
@@ -226,22 +358,23 @@ export class NetClient {
   private sampleAt(s: Sample[], target: number): Sample {
     const first = s[0]!;
     const last = s[s.length - 1]!;
-    if (target <= first.t) return first;
-    if (target >= last.t) return last;
+    if (target <= first.tMs) return first;
+    if (target >= last.tMs) return last;
     for (let i = 0; i < s.length - 1; i++) {
       const a = s[i]!;
       const b = s[i + 1]!;
-      if (target >= a.t && target <= b.t) {
-        const span = b.t - a.t;
-        const alpha = span > 0 ? (target - a.t) / span : 0;
+      if (target >= a.tMs && target <= b.tMs) {
+        const span = b.tMs - a.tMs;
+        const alpha = span > 0 ? (target - a.tMs) / span : 0;
         return {
-          t: target,
+          tMs: target,
           x: lerp(a.x, b.x, alpha),
           y: lerp(a.y, b.y, alpha),
           z: lerp(a.z, b.z, alpha),
           yaw: lerpAngle(a.yaw, b.yaw, alpha),
-          // Use the destination sample's animation state (walk/run/idle) once en route.
-          move: b.move,
+          // The state they are moving THROUGH this segment (source), not the one they
+          // arrive in — avoids showing 'idle' while a remote is still visibly sliding.
+          move: a.move,
         };
       }
     }
@@ -249,11 +382,18 @@ export class NetClient {
   }
 
   status(): NetStatus {
-    return { connected: this.connected, peers: this.tracks.size, you: this.you };
+    return {
+      phase: this.phase,
+      connected: this.connected,
+      peers: this.tracks.size,
+      you: this.you,
+      latencyMs: this.latencyMs,
+    };
   }
 
   dispose(): void {
     this.closedByUser = true;
+    this.stopPinging();
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -263,6 +403,7 @@ export class NetClient {
       this.ws = null;
     }
     this.tracks.clear();
+    this.history.length = 0;
     this.connected = false;
   }
 

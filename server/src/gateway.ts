@@ -2,11 +2,13 @@
 // sim. It owns the tick clock (wall-clock lives HERE, at the integration edge — never
 // in the sim), decodes and routes client frames, and broadcasts authoritative state.
 //
-// Replication in this slice is broadcast-to-all: every joined client hears every
-// player. Interest management (3×3-chunk subscription around each player, ARCH §7) is
-// the next step and slots in exactly where marked below — the delta would be filtered
-// per subscriber instead of shared. Two players in one town is well within one cell,
-// so the slice is correct as-is.
+// Replication is per-subscriber (ARCH §7): each client receives a `self` frame for its
+// own player (the reconciliation ack channel) plus an interest-filtered delta of the
+// OTHER players within its 3×3 chunk region. Two players in one town share a cell, so
+// they always see each other; distant players fall out of each other's interest.
+//
+// The boundary is also hardened against hostile/half-open clients: a max frame size, a
+// hello timeout, a connection cap, and a WebSocket heartbeat that reaps dead sockets.
 
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
@@ -14,14 +16,22 @@ import {
   encodeServer,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
+  type NetPlayer,
   type ServerMessage,
 } from '@pathlands/shared';
 import type { ServerSim } from './sim.js';
+import { buildCellIndex, visibleIds } from './interest.js';
 
 interface Conn {
   readonly ws: WebSocket;
   /** Session id once the player has said hello; null while unauthenticated. */
   id: string | null;
+  /** Player ids currently replicated to this connection (its interest membership). */
+  readonly known: Set<string>;
+  /** Cleared by the heartbeat each round; set true on a WebSocket-level pong. */
+  isAlive: boolean;
+  /** Fires if the socket never says hello — an anti-idle-DoS reaper. */
+  helloTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface GatewayOptions {
@@ -29,20 +39,30 @@ export interface GatewayOptions {
   host: string;
   tickDurationMs: number;
   broadcastEveryTicks: number;
+  maxPayloadBytes: number;
+  maxConnections: number;
+  helloTimeoutMs: number;
+  heartbeatMs: number;
 }
 
 export class GameServer {
   private readonly wss: WebSocketServer;
   private readonly conns = new Map<WebSocket, Conn>();
-  /** Ids that left since the last broadcast — folded into the next delta's `gone`. */
-  private goneSinceBroadcast: string[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** Set when a player joined or disconnected — forces a delta pass past the idle-skip. */
+  private membershipChanged = false;
 
   constructor(
     private readonly sim: ServerSim,
     private readonly opts: GatewayOptions,
   ) {
-    this.wss = new WebSocketServer({ port: opts.port, host: opts.host });
+    this.wss = new WebSocketServer({
+      port: opts.port,
+      host: opts.host,
+      // Reject oversized frames before they reach JSON.parse (event-loop / OOM DoS).
+      maxPayload: opts.maxPayloadBytes,
+    });
     this.wss.on('connection', (ws) => this.onConnection(ws));
   }
 
@@ -51,6 +71,7 @@ export class GameServer {
     return new Promise((resolve, reject) => {
       this.wss.once('listening', () => {
         this.timer = setInterval(() => this.onTick(), this.opts.tickDurationMs);
+        this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
         resolve();
       });
       this.wss.once('error', reject);
@@ -68,7 +89,14 @@ export class GameServer {
       clearInterval(this.timer);
       this.timer = null;
     }
-    for (const { ws } of this.conns.values()) ws.terminate();
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    for (const conn of this.conns.values()) {
+      if (conn.helloTimer !== null) clearTimeout(conn.helloTimer);
+      conn.ws.terminate();
+    }
     this.conns.clear();
     await new Promise<void>((resolve) => this.wss.close(() => resolve()));
   }
@@ -76,18 +104,34 @@ export class GameServer {
   // --- connection lifecycle ---
 
   private onConnection(ws: WebSocket): void {
-    const conn: Conn = { ws, id: null };
+    // Connection cap: refuse past the limit before allocating any per-conn state.
+    if (this.conns.size >= this.opts.maxConnections) {
+      ws.terminate();
+      return;
+    }
+    const conn: Conn = { ws, id: null, known: new Set(), isAlive: true, helloTimer: null };
+    conn.helloTimer = setTimeout(() => {
+      if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
+    }, this.opts.helloTimeoutMs);
     this.conns.set(ws, conn);
     ws.on('message', (data: RawData) => this.onMessage(conn, data.toString()));
+    ws.on('pong', () => {
+      conn.isAlive = true; // answered the heartbeat — still alive
+    });
     ws.on('close', () => this.onClose(conn));
     ws.on('error', () => this.onClose(conn));
   }
 
   private onClose(conn: Conn): void {
+    if (conn.helloTimer !== null) {
+      clearTimeout(conn.helloTimer);
+      conn.helloTimer = null;
+    }
     if (!this.conns.delete(conn.ws)) return;
     if (conn.id !== null) {
       this.sim.remove(conn.id);
-      this.goneSinceBroadcast.push(conn.id);
+      // The player's departure surfaces to peers as a `gone` on the next delta.
+      this.membershipChanged = true;
     }
   }
 
@@ -109,6 +153,10 @@ export class GameServer {
         }
         const player = this.sim.join(msg.name, msg.cls, msg.level);
         conn.id = player.id;
+        if (conn.helloTimer !== null) {
+          clearTimeout(conn.helloTimer);
+          conn.helloTimer = null;
+        }
         this.send(conn.ws, {
           t: 'welcome',
           protocol: NET_PROTOCOL_VERSION,
@@ -117,9 +165,22 @@ export class GameServer {
           tick: this.sim.tick,
           tickRate: this.opts.tickDurationMs > 0 ? 1000 / this.opts.tickDurationMs : 0,
         });
-        // The new arrival gets everyone at once; existing clients learn of it via the
-        // next delta (join marks the player dirty in the sim).
-        this.send(conn.ws, { t: 'snapshot', tick: this.sim.tick, players: this.sim.allNet() });
+        // Seed interest: the joiner gets an interest-filtered snapshot of the OTHER
+        // players around it (own state arrives on the `self` channel). Existing clients
+        // learn of the joiner via their next per-subscriber delta (join marks it dirty).
+        const index = buildCellIndex(this.sim.players.values());
+        const visible = visibleIds(player, index);
+        const players: NetPlayer[] = [];
+        for (const id of visible) {
+          if (id === player.id) continue; // self travels on the self channel, not here
+          const other = this.sim.players.get(id);
+          if (other !== undefined) {
+            players.push(this.sim.netOf(other));
+            conn.known.add(id);
+          }
+        }
+        this.send(conn.ws, { t: 'snapshot', tick: this.sim.tick, players });
+        this.membershipChanged = true;
         return;
       }
       case 'intent': {
@@ -129,6 +190,7 @@ export class GameServer {
         return;
       }
       case 'ping': {
+        if (conn.id === null) return; // only joined players get pongs (anti-amplification)
         this.send(conn.ws, {
           t: 'pong',
           id: msg.id,
@@ -140,6 +202,20 @@ export class GameServer {
     }
   }
 
+  // --- heartbeat: reap half-open sockets (sleep / dropped wifi with no TCP FIN) ---
+
+  private heartbeat(): void {
+    // Snapshot first: terminate() → 'close' → onClose mutates this.conns mid-iteration.
+    for (const conn of [...this.conns.values()]) {
+      if (!conn.isAlive) {
+        conn.ws.terminate(); // missed the previous round — presumed dead
+        continue;
+      }
+      conn.isAlive = false;
+      conn.ws.ping();
+    }
+  }
+
   // --- tick + broadcast ---
 
   private onTick(): void {
@@ -148,20 +224,53 @@ export class GameServer {
   }
 
   private broadcast(): void {
-    const players = this.sim.dirtyNet();
-    const gone = this.goneSinceBroadcast;
-    if (players.length === 0 && gone.length === 0) {
-      this.sim.clearDirty();
-      return; // nothing changed — spare the wire
-    }
-    // Interest-management seam: for the slice every joined client receives the same
-    // delta. Per-subscriber filtering (by chunk distance) replaces this loop next part.
+    const membershipChanged = this.membershipChanged;
+    this.membershipChanged = false;
+    // The delta pass is only needed when something could have changed; the `self` pass
+    // always runs so reconciliation acks keep flowing (and the client prunes its input
+    // history) even for a stationary player.
+    const buildDeltas = this.sim.anyDirty() || membershipChanged;
+    const index = buildDeltas ? buildCellIndex(this.sim.players.values()) : null;
+
     for (const conn of this.conns.values()) {
       if (conn.id === null) continue;
-      this.send(conn.ws, { t: 'delta', tick: this.sim.tick, players, gone });
+      const viewer = this.sim.players.get(conn.id);
+      if (viewer === undefined) continue;
+
+      // 1) Own authoritative state + ack — always, regardless of interest.
+      const self = this.sim.selfOf(viewer);
+      this.send(conn.ws, {
+        t: 'self',
+        tick: this.sim.tick,
+        ackedSeq: self.ackedSeq,
+        phys: self.phys,
+      });
+
+      // 2) Interest-filtered delta of the OTHER players in the viewer's 3×3 region.
+      if (index !== null) {
+        const visible = visibleIds(viewer, index);
+        const players: NetPlayer[] = [];
+        const gone: string[] = [];
+        for (const id of visible) {
+          if (id === conn.id) continue; // own player is on the self channel
+          const p = this.sim.players.get(id);
+          if (p === undefined) continue;
+          if (!conn.known.has(id)) {
+            conn.known.add(id); // ENTER — full state (no prior baseline for a delta)
+            players.push(this.sim.netOf(p));
+          } else if (p.dirty) {
+            players.push(this.sim.netOf(p)); // UPDATE — only if it changed
+          }
+        }
+        // LEAVE (walked out of interest) or DISCONNECT (removed from sim ⇒ not visible).
+        for (const id of conn.known) if (!visible.has(id)) gone.push(id);
+        for (const id of gone) conn.known.delete(id);
+        if (players.length > 0 || gone.length > 0) {
+          this.send(conn.ws, { t: 'delta', tick: this.sim.tick, players, gone });
+        }
+      }
     }
-    this.sim.clearDirty();
-    this.goneSinceBroadcast = [];
+    this.sim.clearDirty(); // exactly once, after every subscriber has read p.dirty
   }
 
   private send(ws: WebSocket, msg: ServerMessage): void {

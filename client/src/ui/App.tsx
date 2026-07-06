@@ -29,6 +29,7 @@ import { BankPanel } from './BankPanel.js';
 import { BountyBoard } from './BountyBoard.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { FirstTimeTips } from './FirstTimeTips.js';
+import { NetStatusHud } from './NetStatusHud.js';
 import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
@@ -119,6 +120,7 @@ export function App(): JSX.Element {
         {ready && <BountyBoard />}
         {ready && <SettingsPanel />}
         {ready && <FirstTimeTips />}
+        {ready && <NetStatusHud />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}

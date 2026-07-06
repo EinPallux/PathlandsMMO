@@ -6,6 +6,40 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 2: Reconciliation, interest management, connection UX, server hardening.**
+> Part 1's slice becomes a real netcode foundation. An **adversarial audit** of Part 1 (run first)
+> surfaced real server-hardening gaps, fixed here. Landed:
+>
+> - **Client-side prediction reconciliation** — the server now streams each client its OWN
+>   authoritative state + the last input sequence it applied (new `self` protocol message,
+>   `NET_PROTOCOL_VERSION` → 2). The client keeps an input history, resets prediction to the
+>   authoritative state, and **replays the unacked inputs** through the same shared
+>   `stepPlayerMovement` — so the common (agreeing) case produces **no visible snap**, and any
+>   residual is smoothed into the render via a decaying error offset (teleport-scale corrections
+>   snap). The authoritative sim stays byte-deterministic; smoothing lives only at the render edge.
+> - **Server input buffering** — the last-wins pending intent became a **bounded FIFO drained one
+>   per tick**, so a client's catch-up burst (a frame hitch replaying several ticks) is applied
+>   input-for-input instead of collapsed, keeping the authoritative path matched to the client's.
+> - **Chunk-grid interest management** — replication is now **per-subscriber**: each client receives
+>   only the players within its **3×3 chunk region** (plus its own `self`), with enter/update/leave
+>   diffed against a per-connection known-set (`server/interest.ts`). No wire-shape change.
+> - **Connection UX** — the client now measures **RTT** (ping/pong, EWMA) and tracks a connection
+>   **phase** (connecting/connected/reconnecting); a small **NetStatusHud** under the minimap shows
+>   it (hidden in single-player). Remote interpolation was moved onto the **server-tick timeline** so
+>   network jitter can't warp a remote's apparent speed.
+> - **Server hardening** (from the audit) — `maxPayload` frame cap, a **hello timeout** + connection
+>   cap for unauthenticated sockets, a **WebSocket heartbeat** that reaps half-open connections (no
+>   more ghost players), and `ping` gated behind a completed hello.
+>
+> **319 tests green** (+12: reconciliation parity/convergence, interest enter/leave/re-enter, codec
+> validation); `pnpm typecheck` (shared+client+server) + `lint` + `build` (278 KB gzip) all clean;
+> the server boots and holds 20 Hz. _Next: authoritative combat/loot/quests on the server tick
+> pipeline, then accounts + PostgreSQL persistence._
+> _(Known bounded gap, documented: the server still trusts the clamped client `speedMult` so
+> reconciliation matches a mounted client; authoritative speed lands with server-side mounts/combat.)_
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 1: Server skeleton + the two-player vertical slice.**
 > **Phase 5 is tagged `v1.0-solo`; Phase 6 (the MMO) has begun.** The milestone of this part is
 > the one thing that turns Pathlands from a single-player game into an MMO: **two independent
@@ -754,8 +788,8 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 
 ### Deliverables
 
-- [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Part 1: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement`, player registry, snapshot-on-join + 10 Hz delta broadcast, defensive protocol codec. Remaining: authoritative combat/loot/quests/professions on the same tick pipeline, chunk-grid interest management, load scaling.)_
-- [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Part 1: opt-in `NetClient` streams the applied intent up and renders remotes interpolated ~120 ms behind; auto-reconnect with backoff. Remaining: local-player prediction **reconciliation**, latency/connection HUD, session-resume.)_
+- [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Parts 1–2: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement` with a per-player input FIFO, player registry, **3×3 chunk interest management** + self-state ack channel, per-subscriber snapshot/delta broadcast, defensive protocol codec, and hardening — maxPayload / hello-timeout / connection cap / heartbeat. Remaining: authoritative combat/loot/quests/professions on the same tick pipeline, load scaling.)_
+- [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Parts 1–2: opt-in `NetClient` streams intents up, **predicts + reconciles** own movement against the server (replay + smoothed correction), interpolates remotes on the server-tick timeline ~150 ms behind, measures RTT, and shows a connection HUD with auto-reconnect. Remaining: session **resume** on reconnect — currently a reconnect starts a fresh server session.)_
 - [ ] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import).
 - [ ] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks).
 - [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).

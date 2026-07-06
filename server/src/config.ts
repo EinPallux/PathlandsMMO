@@ -25,4 +25,20 @@ export const config = {
    * the wire). Deltas between broadcasts are folded into the next one.
    */
   broadcastEveryTicks: 2,
+  /**
+   * Max accepted WebSocket frame. A legitimate client frame (a Move intent) is a few
+   * hundred bytes; 16 KiB is generous. ws rejects larger frames before they reach
+   * JSON.parse, so a hostile giant frame can't block the event loop or OOM the process.
+   */
+  maxPayloadBytes: envInt('MAX_PAYLOAD_BYTES', 16 * 1024),
+  /** Hard cap on concurrent connections (authenticated or not) — a DoS backstop. */
+  maxConnections: envInt('MAX_CONNECTIONS', 512),
+  /** A socket that hasn't said hello within this window is terminated (anti-idle-DoS). */
+  helloTimeoutMs: envInt('HELLO_TIMEOUT_MS', 10_000),
+  /**
+   * WebSocket-level heartbeat: ping every connection this often and terminate any that
+   * failed to answer the previous round. Reaps half-open sockets (client sleeps / wifi
+   * drops with no TCP FIN) so their player doesn't linger as a frozen ghost.
+   */
+  heartbeatMs: envInt('HEARTBEAT_MS', 30_000),
 } as const;

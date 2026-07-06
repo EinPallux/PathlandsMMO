@@ -13,15 +13,23 @@ import {
   CHARACTER_CLASSES,
   CharacterClass,
   makePlayerPhysics,
+  physToNetSelf,
   SPAWN_X,
   SPAWN_Z,
   stepPlayerMovement,
   TICK_DT,
   type MoveIntent,
   type NetPlayer,
+  type NetSelf,
   type PlayerPhysics,
 } from '@pathlands/shared';
 import type { ServerWorld } from './world.js';
+
+/** A sequence-numbered input queued for the authoritative tick that will apply it. */
+interface QueuedInput {
+  seq: number;
+  intent: MoveIntent;
+}
 
 /** One connected player's authoritative state. */
 export interface ServerPlayer {
@@ -30,10 +38,17 @@ export interface ServerPlayer {
   cls: CharacterClass;
   level: number;
   readonly phys: PlayerPhysics;
-  /** The move intent to apply next tick (last-wins; consumed each step). */
-  pendingMove: MoveIntent | null;
-  /** Highest intent sequence number accepted from this player (for later acks). */
-  lastSeq: number;
+  /**
+   * FIFO of accepted move intents, drained one per tick. A jitter/catch-up buffer:
+   * when the client sends a burst (a frame hitch replays several ticks at once), the
+   * server applies them over successive ticks instead of collapsing them to the newest,
+   * so the authoritative path matches the client's predicted path input-for-input.
+   */
+  readonly inputs: QueuedInput[];
+  /** Highest intent sequence accepted into the queue — the ordering gate. */
+  lastRecvSeq: number;
+  /** Sequence of the last input actually APPLIED — the ack reported to the client. */
+  lastAppliedSeq: number;
   /** Set when the player's replicated state changed since the last broadcast. */
   dirty: boolean;
 }
@@ -41,6 +56,14 @@ export interface ServerPlayer {
 const MAX_NAME_LEN = 24;
 const MIN_LEVEL = 1;
 const MAX_LEVEL = 30;
+/**
+ * Input-queue cap (0.8 s at 20 Hz). A legitimate client — even one replaying a 5-tick
+ * catch-up burst after a frame hitch — stays far below this. Only a client sending
+ * faster than the tick rate SUSTAINED (broken or malicious) overflows; on overflow we
+ * drop the oldest so the freshest input still applies. That client throttles to 20 Hz
+ * authority and its own reconciliation drifts — its problem, not the server's.
+ */
+const MAX_INPUT_QUEUE = 16;
 
 /** Idle input that preserves facing — used when no move intent arrived this tick. */
 function idleIntent(yaw: number): MoveIntent {
@@ -82,8 +105,9 @@ export class ServerSim {
       cls: sanitizeClass(cls),
       level: sanitizeLevel(level),
       phys,
-      pendingMove: null,
-      lastSeq: -1,
+      inputs: [],
+      lastRecvSeq: -1,
+      lastAppliedSeq: -1,
       dirty: true,
     };
     this.players.set(id, player);
@@ -96,16 +120,18 @@ export class ServerSim {
   }
 
   /**
-   * Buffer a player's latest move intent (last-wins within a tick). Stale or unknown
-   * sequence numbers are ignored. Only Move affects the sim in this slice; other intent
-   * kinds are accepted at the wire but simulated in later parts.
+   * Queue a player's move intent for the next tick(s). Out-of-order or replayed
+   * sequence numbers are dropped by the gate; a full queue drops its oldest entry.
+   * Only Move affects the sim in this slice; other intent kinds are accepted at the
+   * wire but simulated in later parts.
    */
   applyMove(id: string, intent: MoveIntent, seq: number): void {
     const p = this.players.get(id);
     if (p === undefined) return;
-    if (seq <= p.lastSeq) return; // out-of-order / replayed — drop
-    p.lastSeq = seq;
-    p.pendingMove = intent;
+    if (seq <= p.lastRecvSeq) return; // out-of-order / replayed — drop
+    p.lastRecvSeq = seq;
+    p.inputs.push({ seq, intent });
+    if (p.inputs.length > MAX_INPUT_QUEUE) p.inputs.shift();
   }
 
   /** Advance the whole simulation by one tick. */
@@ -118,8 +144,11 @@ export class ServerSim {
       const pyaw = before.yaw;
       const pmove = before.moveState;
 
-      const intent = p.pendingMove ?? idleIntent(before.yaw);
-      p.pendingMove = null;
+      // One input per tick: the authoritative rate governs how fast the sim advances,
+      // so a burst of buffered inputs plays out across successive ticks (never faster).
+      const queued = p.inputs.shift();
+      const intent = queued?.intent ?? idleIntent(before.yaw);
+      if (queued !== undefined) p.lastAppliedSeq = queued.seq;
       stepPlayerMovement(this.world.sampler, p.phys, intent, TICK_DT);
 
       if (
@@ -150,16 +179,20 @@ export class ServerSim {
     };
   }
 
-  /** Full state of every player (sent on join / resubscribe). */
+  /** Full state of every player (admin/debug; replication uses interest-filtered sets). */
   allNet(): NetPlayer[] {
     return Array.from(this.players.values(), (p) => this.netOf(p));
   }
 
-  /** Players whose replicated state changed since the last `clearDirty()`. */
-  dirtyNet(): NetPlayer[] {
-    const out: NetPlayer[] = [];
-    for (const p of this.players.values()) if (p.dirty) out.push(this.netOf(p));
-    return out;
+  /** A player's own authoritative state + the last input seq applied — for reconciliation. */
+  selfOf(p: ServerPlayer): { ackedSeq: number; phys: NetSelf } {
+    return { ackedSeq: p.lastAppliedSeq, phys: physToNetSelf(p.phys) };
+  }
+
+  /** True if any player changed since the last `clearDirty()` (drives the idle-skip). */
+  anyDirty(): boolean {
+    for (const p of this.players.values()) if (p.dirty) return true;
+    return false;
   }
 
   clearDirty(): void {

@@ -15,6 +15,10 @@ async function main(): Promise<void> {
     host: config.host,
     tickDurationMs: config.tickDurationMs,
     broadcastEveryTicks: config.broadcastEveryTicks,
+    maxPayloadBytes: config.maxPayloadBytes,
+    maxConnections: config.maxConnections,
+    helloTimeoutMs: config.helloTimeoutMs,
+    heartbeatMs: config.heartbeatMs,
   });
 
   await server.listen();
