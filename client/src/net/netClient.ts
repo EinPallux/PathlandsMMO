@@ -29,6 +29,7 @@ import {
   type NetCombatSelf,
   type NetEntity,
   type NetPlayer,
+  type ServerKill,
   type ServerSelf,
 } from '@pathlands/shared';
 
@@ -132,6 +133,8 @@ export class NetClient {
   private readonly enemyMap = new Map<string, NetEntity>();
   /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
   private lastCombatSelf: NetCombatSelf | null = null;
+  /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
+  private readonly killQueue: ServerKill[] = [];
   private seq = 0;
   private localTick = 0;
   private readonly renderDelayMs: number;
@@ -232,6 +235,9 @@ export class NetClient {
       case 'combatSelf':
         this.lastCombatSelf = msg.self; // last-wins own combat state (hp / resource / target / cast)
         break;
+      case 'kill':
+        this.killQueue.push(msg); // queued (not last-wins) — every kill credits loot + quest progress
+        break;
       case 'pong': {
         this.lastPongMs = this.nowMs(); // any pong proves the server is alive
         const sent = this.inflightPings.get(msg.id);
@@ -321,6 +327,7 @@ export class NetClient {
     this.clockInit = false;
     this.enemyMap.clear();
     this.lastCombatSelf = null;
+    this.killQueue.length = 0;
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
       this.scheduleReconnect();
@@ -420,6 +427,13 @@ export class NetClient {
   /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
   combatSelf(): NetCombatSelf | null {
     return this.lastCombatSelf;
+  }
+
+  /** Take and clear the kills credited to us since the last drain (server-rolled loot + the
+   * enemy def id for quest objectives). The game applies each to its inventory (Stage 2c-2). */
+  drainKills(): ServerKill[] {
+    if (this.killQueue.length === 0) return [];
+    return this.killQueue.splice(0, this.killQueue.length);
   }
 
   // --- remote rendering ---

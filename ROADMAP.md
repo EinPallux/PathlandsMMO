@@ -6,6 +6,38 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 13: Server-authoritative combat, Stage 2c-2 (kill loot + gold).**
+> Killing a monster is now credited **server-side**: the server rolls the enemy's loot table and
+> hands the killer the gold + items. Same authority split as XP — the server owns **what drops**,
+> the client stays the inventory/gold **aggregator** (quest / craft / vendor changes + cloud-save
+> persistence live there until those systems migrate). Server half headless-proven; the client
+> half (loot landing in the bag) lands for VPS test. Landed:
+>
+> - **`ServerCombat` rolls loot on kill.** On the shared sim's **`death` event** (now carrying
+>   the victim's `enemyId` + `level` so a kill can be credited even after the corpse is reaped —
+>   an instant cast kills inside `applyIntent`, so the body is gone by the next tick's drain),
+>   `creditKill` rolls `buildEnemyLootTable` → `rollLoot` on the **server's seeded RNG** (never
+>   `Math.random`) for the killer's class and queues a per-player **kill credit** (enemy id +
+>   gold + item stacks). Only a live player killer is credited.
+> - **Replicated per kill.** A new **`ServerKill`** frame (`t:'kill'`, `NET_PROTOCOL_VERSION` →
+>   **8**) carries the enemy def id + gold + full item stacks (loot generates unique items, so
+>   ids won't do). The gateway drains each player's credits every broadcast and sends them.
+> - **Client applies them.** `CombatDirector.applyServerKills` (networked) fires
+>   `onEnemyKilled(enemyId)` for its still-client-side **quest / bounty objectives**, adds the
+>   gold, and pushes items into the bag under its own **capacity** rule — the apply step is
+>   shared with single-player `lootFrom` (which now only rolls, then delegates). Client-side
+>   loot/death remain suppressed in networked mode (no double roll).
+> - **Tests** (+2, codec updated): a player's kill queues a credit with the right enemy id +
+>   rolled gold, and draining is idempotent (no double loot); the v8 codec round-trips a
+>   `ServerKill` (incl. empty loot) and rejects a malformed item / non-finite gold.
+>
+> **367 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Next slices:
+> **2c-3** a combat-events channel for authoritative damage floaters + death VFX; **2c-4** proper
+> Waystone respawn + the client adopting the server's persisted character identity on login +
+> server-timeline enemy interpolation._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 12: Server-authoritative combat, Stage 2c-1 (kill XP + level-ups).**
 > **Kill XP** now lives on the server: killing a monster awards XP + levels the player up
 > server-side, replicated to the client and persisted. Quest / Waystone XP stay client-side

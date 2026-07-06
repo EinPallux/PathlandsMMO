@@ -158,6 +158,27 @@ describe('server-authoritative player combat — ServerCombat', () => {
     }
     expect(combat.progressionOf('P')!.level).toBe(2);
   });
+
+  it('credits a kill with server-rolled loot + the enemy id (for quest objectives)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    const enemyId = combat.state.entities.get(boar.id)!.enemyId!;
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    expect(combat.drainKills('P')).toHaveLength(0); // nothing killed yet
+    // Weaken the boar so one Fire Blast kills it, then cast.
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step(); // cast resolves → boar dies → the kill is credited
+
+    const kills = combat.drainKills('P');
+    expect(kills).toHaveLength(1);
+    expect(kills[0]!.enemyId).toBe(enemyId); // the def id the client needs for quest progress
+    expect(kills[0]!.gold).toBeGreaterThan(0); // server rolled the loot table (basic gold ≥ 1)
+    expect(Array.isArray(kills[0]!.items)).toBe(true);
+    // Draining is idempotent — a second drain is empty (no double loot on the next broadcast).
+    expect(combat.drainKills('P')).toHaveLength(0);
+  });
 });
 
 describe('server-authoritative player combat — over the wire', () => {

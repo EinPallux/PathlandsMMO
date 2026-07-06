@@ -4,6 +4,48 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 13 — Server-authoritative combat, Stage 2c-2: kill loot + gold (2026-07-06)
+
+Killing a monster is credited server-side: the server rolls the loot table and hands the killer
+the gold + items. Same authority split as XP — the server owns _what drops_; the client stays the
+inventory/gold aggregator (quest / craft / vendor changes + cloud-save persistence) until those
+systems migrate. Server half is headless-proven; the client half (loot landing in the bag) is
+verified on the VPS combat test.
+
+#### Added
+
+- **`ServerKill` frame** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **8**): a per-kill
+  credit — the enemy def id (for the client's quest / bounty objectives) + gold + `NetItemStack[]`
+  (full item defs, since loot generates unique items). Decoder validates gold/tick finite, enemy
+  id string, and each item stack structurally (object item with string id + name, finite qty).
+- **`ServerCombat` loot roll** (`server/src/combat.ts`): `creditKill` rolls
+  `buildEnemyLootTable` → `rollLoot` on the server's seeded RNG for the killer's class and queues
+  a `KillCredit` per player; `drainKills(id)` takes + clears a player's queue (gateway drains it
+  each broadcast); the feed is cleared on `removePlayer`. Only a live player killer is credited.
+- **Kill-credit replication** (`server/src/gateway.ts`): `broadcast` drains each connected
+  player's kill credits and sends them as `ServerKill` frames, alongside the existing self /
+  combat-self frames.
+- **Client loot application** (`client/src/net/netClient.ts`, `client/src/game/combatDirector.ts`,
+  `client/src/game/game.ts`): NetClient queues `ServerKill` frames (cleared on disconnect) and
+  exposes `drainKills()`; the CombatDirector's `netSink` gains `drainKills`, and `applyServerKills`
+  (networked) fires `onEnemyKilled(enemyId)` for quest objectives, adds gold, and pushes items
+  into the bag under its capacity rule. `lootFrom` was split so single-player and MMO share one
+  `applyKillLoot`; single-player still rolls locally, MMO applies the server's roll.
+
+#### Changed
+
+- **`death` combat event** (`shared/src/sim/combat.ts`): now carries the victim's `enemyId?`
+  (undefined for a player) + `level`, so a kill can be credited from the event alone — an
+  instant-cast kill resolves inside `applyIntent` and its corpse is reaped by the next tick's
+  spawner before the event is drained, so an entity lookup would miss it.
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+1): a player's kill queues a credit with the right enemy id
+  - rolled gold; `drainKills` is idempotent (no double loot on the next broadcast).
+- **`shared/test/net.test.ts`** (+1): the v8 codec round-trips a `ServerKill` (incl. an empty
+  loot roll) and rejects a non-finite gold + an item stack whose item has no name.
+
 ### Part 12 — Server-authoritative combat, Stage 2c-1: kill XP + level-ups (2026-07-06)
 
 **Kill XP** moves server-side: the server awards XP when a player kills a monster, derives the

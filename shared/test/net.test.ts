@@ -15,12 +15,61 @@ import {
   NET_PROTOCOL_VERSION,
   physToNetSelf,
   type ClientMessage,
+  type ServerMessage,
   type ServerSelf,
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 7 (self / token / chat / entities / combat-self / xp)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(7);
+  it('is at protocol version 8 (self / token / chat / entities / combat-self / xp / loot)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(8);
+  });
+
+  it('round-trips + validates a ServerKill (loot credit) frame', () => {
+    // The item carries a full ItemDef (loot generates unique items); the codec passes it
+    // through, validating only that it's an object with a string id + name.
+    const item = {
+      id: 'gen_1',
+      name: 'Cracked Trinket',
+      slot: 'trinket',
+      rarity: 'common',
+      ilvl: 6,
+      reqLevel: 6,
+      stats: {},
+      value: 4,
+    };
+    const msg = {
+      t: 'kill',
+      tick: 55,
+      enemyId: 'thornbackBoar',
+      gold: 12,
+      items: [{ item, qty: 1 }],
+    } as unknown as ServerMessage;
+    expect(decodeServer(encodeServer(msg))).toEqual(msg);
+    // A kill that dropped nothing (empty items, zero gold) still round-trips.
+    const dry = {
+      t: 'kill',
+      tick: 1,
+      enemyId: 'wolf',
+      gold: 0,
+      items: [],
+    } as unknown as ServerMessage;
+    expect(decodeServer(encodeServer(dry))).toEqual(dry);
+    // Malformed: non-finite gold sinks the frame.
+    expect(
+      decodeServer(JSON.stringify({ t: 'kill', tick: 1, enemyId: 'x', gold: 'lots', items: [] })),
+    ).toBeNull();
+    // Malformed: an item stack whose item has no name is rejected.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'kill',
+          tick: 1,
+          enemyId: 'x',
+          gold: 0,
+          items: [{ item: { id: 'a' }, qty: 1 }],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips + validates a ServerCombatSelf frame', () => {

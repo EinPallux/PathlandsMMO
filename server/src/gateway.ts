@@ -533,6 +533,18 @@ export class GameServer {
         this.send(conn.ws, { t: 'combatSelf', tick: this.sim.tick, self: combatSelf });
       }
 
+      // 1c) Kills credited to this player since the last broadcast — server-authoritative loot
+      //     (gold + items) + the enemy def id for its client-side quest objectives (Stage 2c-2).
+      for (const kill of this.combat.drainKills(conn.id)) {
+        this.send(conn.ws, {
+          t: 'kill',
+          tick: this.sim.tick,
+          enemyId: kill.enemyId,
+          gold: kill.gold,
+          items: kill.items,
+        });
+      }
+
       // 2) Interest-filtered delta of the OTHER players + enemy entities in the viewer's
       //    3×3 region. Players and entities share one delta frame.
       if (index !== null && entityIndex !== null) {

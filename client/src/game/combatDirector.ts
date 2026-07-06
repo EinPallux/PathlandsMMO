@@ -65,6 +65,7 @@ import {
   type Intent,
   type NetEntity,
   type NetCombatSelf,
+  type ServerKill,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
 import { audio } from '../platform/audio.js';
@@ -198,6 +199,7 @@ export class CombatDirector {
   private netSink: {
     enemies: () => NetEntity[];
     combatSelf: () => NetCombatSelf | null;
+    drainKills: () => ServerKill[];
     send: (intent: Intent) => void;
   } | null = null;
 
@@ -876,6 +878,7 @@ export class CombatDirector {
         p2.targetId = prevTarget; // a predicted kill nulled the target; the server still has it
       }
       this.reconcileFromServer();
+      this.applyServerKills();
       return;
     }
 
@@ -1054,28 +1057,55 @@ export class CombatDirector {
     }
   }
 
-  /** Roll a slain enemy's loot table into the player's gold + bag (GDD §6). */
+  /** Roll a slain enemy's loot table into the player's gold + bag (GDD §6). Single-player: the
+   * client both rolls AND applies. In MMO mode the death handler is suppressed and the server's
+   * rolled loot arrives via `applyServerKills` instead — but the apply step is shared. */
   private lootFrom(victimId: string, killerId: string | null): void {
     if (killerId !== PLAYER_ID) return;
     const victim = this.state.entities.get(victimId);
     if (!victim || victim.faction !== 'enemy' || !victim.enemyId) return;
     const def = enemyById(victim.enemyId);
     if (!def) return;
-    this.onEnemyKilled?.(victim.enemyId); // quest kill/collect/boss objectives
-    audio.sfx('death');
     const table = buildEnemyLootTable(def, victim.level);
     const result = rollLoot(table, this.state.rng, { forClass: this.cls });
-    if (result.gold > 0) {
-      this.gold += result.gold;
-      this.pushFloater(this.player, `+${result.gold}c`, 'xp');
+    this.applyKillLoot(victim.enemyId, result.gold, result.items, victim);
+  }
+
+  /** Apply the server's authoritative kill credits (Stage 2c-2): the loot rolled server-side +
+   * the enemy def id for our (still client-side) quest / bounty objectives. The client is the
+   * inventory aggregator, so bag placement + capacity are enforced here. */
+  private applyServerKills(): void {
+    const kills = this.netSink?.drainKills();
+    if (kills === undefined) return;
+    for (const kill of kills) {
+      this.applyKillLoot(kill.enemyId, kill.gold, kill.items, this.player);
     }
-    for (const stack of result.items) {
+  }
+
+  /**
+   * Credit one kill: advance quest objectives, play the death cue, add the rolled gold, and push
+   * the rolled items into the bag (respecting capacity). `anchor` is where item-name floaters
+   * appear — the corpse in single-player, the player in MMO mode (the corpse may already be gone).
+   */
+  private applyKillLoot(
+    enemyId: string,
+    gold: number,
+    items: readonly ItemStackSave[],
+    anchor: CombatEntity,
+  ): void {
+    this.onEnemyKilled?.(enemyId); // quest kill/collect/boss objectives
+    audio.sfx('death');
+    if (gold > 0) {
+      this.gold += gold;
+      this.pushFloater(this.player, `+${gold}c`, 'xp');
+    }
+    for (const stack of items) {
       if (this.inventory.length >= this.bagCap()) {
         this.pushFloater(this.player, 'Bag full', 'miss');
         break;
       }
-      this.inventory.push(stack);
-      this.pushFloater(victim, stack.item.name, 'heal');
+      this.inventory.push({ item: stack.item, qty: stack.qty });
+      this.pushFloater(anchor, stack.item.name, 'heal');
     }
   }
 

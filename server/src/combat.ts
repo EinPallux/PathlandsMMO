@@ -10,13 +10,16 @@
 
 import {
   applyIntent,
+  buildEnemyLootTable,
   CharacterClass,
   CHARACTER_CLASSES,
   createCombatState,
   createSpawner,
   drainEvents,
+  enemyById,
   levelProgressFromTotalXp,
   makePlayerEntity,
+  rollLoot,
   skillById,
   stepSim,
   stepSpawner,
@@ -28,10 +31,19 @@ import {
   type Intent,
   type NetCombatSelf,
   type NetEntity,
+  type NetItemStack,
   type SpawnerState,
   type SpawnRegion,
 } from '@pathlands/shared';
 import type { ServerWorld } from './world.js';
+
+/** A kill credited to a player: the enemy def id (for their client-side quest objectives) plus
+ * the server's authoritative loot roll. Queued per-player and drained at broadcast cadence. */
+export interface KillCredit {
+  enemyId: string;
+  gold: number;
+  items: NetItemStack[];
+}
 
 /** Ticks a released spirit waits before reviving (~2 s at 20 Hz) — no instant chain-res. */
 const RELEASE_DELAY_TICKS = 40;
@@ -83,6 +95,9 @@ export class ServerCombat {
   private removedIds: string[] = [];
   /** Per-player authoritative progression (Stage 2c): total lifetime XP. */
   private readonly progress = new Map<string, { totalXp: number }>();
+  /** Per-player queue of kills to credit (loot + quest-objective enemy id), drained by the
+   * gateway each broadcast and sent to that player as ServerKill frames (Stage 2c-2). */
+  private readonly killFeed = new Map<string, KillCredit[]>();
 
   constructor(world: ServerWorld) {
     this.state = createCombatState(WORLD_SEED);
@@ -115,6 +130,7 @@ export class ServerCombat {
   removePlayer(id: string): void {
     this.state.entities.delete(id);
     this.progress.delete(id);
+    this.killFeed.delete(id);
     for (const e of this.state.entities.values()) {
       if (e.faction === 'enemy') {
         if (e.targetId === id) e.targetId = null;
@@ -188,19 +204,52 @@ export class ServerCombat {
     // Enemy AI + combat resolution for one tick (pure shared sim; deterministic). With
     // players now in the state, enemies aggro/chase/attack and player casts resolve here.
     stepSim(this.state, this.ctx);
+    this.processEvents();
     this.reviveReleasedPlayers();
     this.pruneAdds();
-    // Stage 2c: the shared sim emits an `xp` event when a player kills an enemy — award it
-    // server-side (level-up rebuilds the entity). Draining also keeps the queue bounded.
-    this.processEvents();
   }
 
-  /** Apply the shared sim's combat events to server-authoritative progression (Stage 2c). */
+  /** Apply the shared sim's combat events to server-authoritative progression + loot (Stage 2c). */
   private processEvents(): void {
     for (const ev of drainEvents(this.state)) {
       if (ev.type === 'xp') this.awardXp(ev.entityId, ev.amount);
-      // Loot (gold + items) and combat-event replication land in later Stage 2c slices.
+      else if (ev.type === 'death' && ev.killerId !== null && ev.enemyId !== undefined) {
+        this.creditKill(ev.killerId, ev.enemyId, ev.level);
+      }
+      // Combat-event replication (authoritative floaters / death VFX) lands in Stage 2c-3.
     }
+  }
+
+  /**
+   * Credit a player for killing an enemy: roll its loot table (server-authoritative, on the
+   * shared seeded RNG — never `Math.random`) and queue the drop + the enemy def id for the
+   * killer. The enemy id + level ride the death EVENT (not looked up in the state), because an
+   * instant-cast kill resolves inside `applyIntent` and the corpse is reaped by the next tick's
+   * spawner before this drain runs. Only a live player killer is credited.
+   */
+  private creditKill(killerId: string, enemyId: string, level: number): void {
+    const killer = this.state.entities.get(killerId);
+    if (killer === undefined || killer.faction !== 'player') return;
+    const def = enemyById(enemyId);
+    if (def === undefined) return;
+    const table = buildEnemyLootTable(def, level);
+    const result = rollLoot(table, this.state.rng, { forClass: killer.cls });
+    const credit: KillCredit = {
+      enemyId,
+      gold: result.gold,
+      items: result.items.map((s) => ({ item: s.item, qty: s.qty })),
+    };
+    const queue = this.killFeed.get(killerId);
+    if (queue === undefined) this.killFeed.set(killerId, [credit]);
+    else queue.push(credit);
+  }
+
+  /** Take and clear a player's pending kill credits (the gateway sends them as ServerKill). */
+  drainKills(id: string): KillCredit[] {
+    const queue = this.killFeed.get(id);
+    if (queue === undefined || queue.length === 0) return [];
+    this.killFeed.set(id, []);
+    return queue;
   }
 
   /** Add XP to a player and level them up (rebuilding stats) when they cross a threshold. */

@@ -279,6 +279,7 @@ export class Game {
     this.combat.setNetSink({
       enemies: () => net.enemies(),
       combatSelf: () => net.combatSelf(),
+      drainKills: () => net.drainKills(),
       send: (intent) => net.sendIntent(intent),
     });
     // Fresh session: clear any scrollback left from a previous game instance.

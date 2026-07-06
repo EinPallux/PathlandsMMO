@@ -13,6 +13,7 @@
 // validation (range, cooldown, resource, ownership) stays in the sim, where it has
 // always lived — the server is authoritative by construction.
 
+import type { ItemDef } from '../data/items.js';
 import type { CastSkillIntent, Intent, MoveIntent } from '../sim/intents.js';
 import type { MoveState, PlayerPhysics } from '../sim/types.js';
 
@@ -23,9 +24,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v4 added the chat channel (ClientChat / ServerChat);
  * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta);
  * v6 added the per-connection combat-self channel (ServerCombatSelf);
- * v7 added server-authoritative XP progression (totalXp on NetCombatSelf).
+ * v7 added server-authoritative XP progression (totalXp on NetCombatSelf);
+ * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items).
  */
-export const NET_PROTOCOL_VERSION = 7;
+export const NET_PROTOCOL_VERSION = 8;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -266,6 +268,31 @@ export interface ServerCombatSelf {
   self: NetCombatSelf;
 }
 
+/** One stack of looted items on the wire — a full item definition (loot generates unique,
+ * rolled items, not registry ids) plus a quantity. Same shape as the save's `ItemStackSave`. */
+export interface NetItemStack {
+  item: ItemDef;
+  qty: number;
+}
+
+/**
+ * A kill credited to the recipient — the server-authoritative outcome of THIS player landing
+ * the killing blow on an enemy. `enemyId` is the enemy DEFINITION id (e.g. 'thornbackBoar')
+ * so the client can advance its (still client-side) quest / bounty objectives; `gold` + `items`
+ * are the server's authoritative loot roll for the kill (possibly empty). Sent once per kill to
+ * the killer only. The client is the inventory/gold AGGREGATOR (it also holds quest / craft /
+ * vendor changes), so it applies this grant onto its own bag under its own capacity rules — the
+ * server owns WHAT dropped, the client owns where it goes. (Full server-side inventory authority
+ * follows when quests/crafting/vendors migrate.)
+ */
+export interface ServerKill {
+  t: 'kill';
+  tick: number;
+  enemyId: string;
+  gold: number;
+  items: NetItemStack[];
+}
+
 /** Echo of a ping, with the server tick for a coarse clock estimate. */
 export interface ServerPong {
   t: 'pong';
@@ -303,6 +330,7 @@ export type ServerMessage =
   | ServerDelta
   | ServerSelf
   | ServerCombatSelf
+  | ServerKill
   | ServerPong
   | ServerError
   | ServerChat;
@@ -536,6 +564,21 @@ function isNetCombatSelf(v: unknown): v is NetCombatSelf {
   );
 }
 
+/**
+ * A looted item stack on the wire. This is a SERVER→client frame (the server is trusted), so
+ * we do a structural sanity check rather than full item validation: an `item` object with a
+ * string id + name (enough that a corrupted frame can't crash the bag UI) and a finite qty.
+ * The `item` is passed through as an `ItemDef` — the client consumes the same shape from its
+ * own save.
+ */
+function isNetItemStack(v: unknown): v is NetItemStack {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  if (!isFiniteNumber(o.qty) || typeof o.item !== 'object' || o.item === null) return false;
+  const item = o.item as Record<string, unknown>;
+  return isString(item.id) && isString(item.name);
+}
+
 /** Decode a server frame on the client. Null ⇒ drop (protocol drift / corruption). */
 export function decodeServer(raw: string): ServerMessage | null {
   const o = parseObject(raw);
@@ -589,6 +632,18 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'combatSelf': {
       if (!isFiniteNumber(o.tick) || !isNetCombatSelf(o.self)) return null;
       return { t: 'combatSelf', tick: o.tick, self: o.self };
+    }
+    case 'kill': {
+      if (
+        !isFiniteNumber(o.tick) ||
+        !isString(o.enemyId) ||
+        !isFiniteNumber(o.gold) ||
+        !Array.isArray(o.items) ||
+        !o.items.every(isNetItemStack)
+      ) {
+        return null;
+      }
+      return { t: 'kill', tick: o.tick, enemyId: o.enemyId, gold: o.gold, items: o.items };
     }
     case 'pong':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime) || !isFiniteNumber(o.serverTick)) {
