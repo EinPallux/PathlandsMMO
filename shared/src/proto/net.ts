@@ -21,9 +21,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v2 added the per-connection `self` reconciliation channel (ServerSelf);
  * v3 added the optional account `token` on the hello (accounts & persistence);
  * v4 added the chat channel (ClientChat / ServerChat);
- * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta).
+ * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta);
+ * v6 added the per-connection combat-self channel (ServerCombatSelf).
  */
-export const NET_PROTOCOL_VERSION = 5;
+export const NET_PROTOCOL_VERSION = 6;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -230,6 +231,38 @@ export interface ServerSelf {
   phys: NetSelf;
 }
 
+/**
+ * The recipient's OWN combat state — health, resource, target, cast, and combat flags —
+ * projected from its authoritative player `CombatEntity` on the server. Sent per-connection
+ * at the broadcast cadence (independent of interest, like ServerSelf). This is the wire form
+ * of what the client's combat HUD used to read from its LOCAL combat sim; server-authoritative
+ * now (ARCH §7). Kinematics stay on the ServerSelf channel — this carries only combat.
+ */
+export interface NetCombatSelf {
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  /** ResourceKind value as a string (e.g. 'rage', 'mana'); decouples the wire from the enum. */
+  resourceKind: string;
+  level: number;
+  /** Current target entity id (player or enemy), or null. */
+  targetId: string | null;
+  /** Skill id currently being cast, or null when not casting. */
+  castSkill: string | null;
+  /** Cast progress 0..1 (0 when not casting). */
+  castFrac: number;
+  dead: boolean;
+  inCombat: boolean;
+}
+
+/** The recipient's own combat state (health / resource / target / cast). */
+export interface ServerCombatSelf {
+  t: 'combatSelf';
+  tick: number;
+  self: NetCombatSelf;
+}
+
 /** Echo of a ping, with the server tick for a coarse clock estimate. */
 export interface ServerPong {
   t: 'pong';
@@ -262,7 +295,14 @@ export interface ServerChat {
 }
 
 export type ServerMessage =
-  ServerWelcome | ServerSnapshot | ServerDelta | ServerSelf | ServerPong | ServerError | ServerChat;
+  | ServerWelcome
+  | ServerSnapshot
+  | ServerDelta
+  | ServerSelf
+  | ServerCombatSelf
+  | ServerPong
+  | ServerError
+  | ServerChat;
 
 // ---------------------------------------------------------------------------
 // Codec — the one place the wire format lives.
@@ -474,6 +514,24 @@ function isNetSelf(v: unknown): v is NetSelf {
   );
 }
 
+function isNetCombatSelf(v: unknown): v is NetCombatSelf {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isFiniteNumber(o.hp) &&
+    isFiniteNumber(o.maxHP) &&
+    isFiniteNumber(o.resource) &&
+    isFiniteNumber(o.maxResource) &&
+    isString(o.resourceKind) &&
+    isFiniteNumber(o.level) &&
+    (o.targetId === null || isString(o.targetId)) &&
+    (o.castSkill === null || isString(o.castSkill)) &&
+    isFiniteNumber(o.castFrac) &&
+    isBool(o.dead) &&
+    isBool(o.inCombat)
+  );
+}
+
 /** Decode a server frame on the client. Null ⇒ drop (protocol drift / corruption). */
 export function decodeServer(raw: string): ServerMessage | null {
   const o = parseObject(raw);
@@ -523,6 +581,10 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'self': {
       if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.ackedSeq) || !isNetSelf(o.phys)) return null;
       return { t: 'self', tick: o.tick, ackedSeq: o.ackedSeq, phys: o.phys };
+    }
+    case 'combatSelf': {
+      if (!isFiniteNumber(o.tick) || !isNetCombatSelf(o.self)) return null;
+      return { t: 'combatSelf', tick: o.tick, self: o.self };
     }
     case 'pong':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime) || !isFiniteNumber(o.serverTick)) {

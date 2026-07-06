@@ -264,6 +264,7 @@ export class GameServer {
       if (conn.accountId !== null && player !== undefined) {
         void this.persistPosition(conn.accountId, player);
       }
+      this.combat.removePlayer(conn.id); // drop its combat entity + any enemy threat on it
       this.sim.remove(conn.id);
       // The player's departure surfaces to peers as a `gone` on the next delta.
       this.membershipChanged = true;
@@ -349,6 +350,16 @@ export class GameServer {
         if (!this.conns.has(conn.ws)) return;
         const player = this.sim.join(name, cls, level, spawn);
         conn.id = player.id;
+        // Mirror the player into the combat sim (a player CombatEntity enemies can target).
+        this.combat.addPlayer(
+          player.id,
+          player.name,
+          player.cls,
+          player.level,
+          player.phys.x,
+          player.phys.y,
+          player.phys.z,
+        );
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);
           conn.helloTimer = null;
@@ -389,8 +400,13 @@ export class GameServer {
       }
       case 'intent': {
         if (conn.id === null) return; // must hello first
-        if (msg.intent.type === 'Move') this.sim.applyMove(conn.id, msg.intent, msg.seq);
-        // Non-move intents are accepted at the wire but simulated in later parts.
+        if (msg.intent.type === 'Move') {
+          this.sim.applyMove(conn.id, msg.intent, msg.seq);
+        } else {
+          // Combat intents (cast / target / auto-attack / release) resolve against the
+          // authoritative combat sim, which validates class/level/GCD/cooldown/resource/range.
+          this.combat.applyPlayerIntent(conn.id, msg.intent);
+        }
         return;
       }
       case 'ping': {
@@ -458,7 +474,12 @@ export class GameServer {
 
   private onTick(): void {
     this.sim.step();
-    this.combat.step(); // advance the world's enemies (spawn + AI + resolution)
+    // Feed each player's authoritative movement position into the combat sim so enemies
+    // target real positions and casts resolve against them, then advance combat one tick.
+    for (const p of this.sim.players.values()) {
+      this.combat.syncPlayer(p.id, p.phys.x, p.phys.y, p.phys.z, p.phys.yaw);
+    }
+    this.combat.step(); // enemies + players: spawn, AI, aggro, cast resolution
     if (this.sim.tick % this.opts.broadcastEveryTicks === 0) this.broadcast();
   }
 
@@ -488,6 +509,12 @@ export class GameServer {
         ackedSeq: self.ackedSeq,
         phys: self.phys,
       });
+
+      // 1b) Own combat state (health / resource / target / cast) — also interest-independent.
+      const combatSelf = this.combat.combatSelf(conn.id);
+      if (combatSelf !== null) {
+        this.send(conn.ws, { t: 'combatSelf', tick: this.sim.tick, self: combatSelf });
+      }
 
       // 2) Interest-filtered delta of the OTHER players + enemy entities in the viewer's
       //    3×3 region. Players and entities share one delta frame.

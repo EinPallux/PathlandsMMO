@@ -19,8 +19,37 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 5 (self channel + account token + chat + entities)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(5);
+  it('is at protocol version 6 (self / token / chat / entities / combat-self)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(6);
+  });
+
+  it('round-trips + validates a ServerCombatSelf frame', () => {
+    const self = {
+      hp: 120,
+      maxHP: 200,
+      resource: 30,
+      maxResource: 100,
+      resourceKind: 'rage',
+      level: 6,
+      targetId: 'grove#0@10',
+      castSkill: 'fireball',
+      castFrac: 0.5,
+      dead: false,
+      inCombat: true,
+    };
+    const msg = { t: 'combatSelf', tick: 88, self } as const;
+    expect(decodeServer(encodeServer(msg))).toEqual(msg);
+    // Null target + not casting round-trip too.
+    const idle = { ...self, targetId: null, castSkill: null, castFrac: 0, inCombat: false };
+    expect(decodeServer(encodeServer({ t: 'combatSelf', tick: 1, self: idle }))).toEqual({
+      t: 'combatSelf',
+      tick: 1,
+      self: idle,
+    });
+    // A malformed combat-self (non-finite hp) is rejected.
+    expect(
+      decodeServer(JSON.stringify({ t: 'combatSelf', tick: 1, self: { ...self, hp: 'x' } })),
+    ).toBeNull();
   });
 
   it('round-trips a ServerSelf frame', () => {

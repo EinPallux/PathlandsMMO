@@ -4,6 +4,39 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 10 — Server-authoritative combat, Stage 2a (2026-07-06)
+
+Players now live in the server's combat sim: enemies attack them and their skill casts
+resolve server-side. Server-side + fully headless-tested; the client flip (rendering + HUD
+off the server) is Stage 2b.
+
+#### Added
+
+- **Players as combat entities** (`server/src/combat.ts`): `ServerCombat` gained
+  `addPlayer` / `removePlayer` / `syncPlayer` / `applyPlayerIntent` / `combatSelf`. On join
+  the gateway mirrors the player into the combat state (`makePlayerEntity`); each tick
+  `onTick` syncs every player's authoritative movement position in **before** `stepSim`, so
+  enemies aggro/chase/attack real players and casts resolve against them. `reviveReleased-
+Players` revives a dead player who sent `ReleaseSpirit`.
+- **Combat intent routing** (`server/src/gateway.ts`): non-`Move` intents (`CastSkill`,
+  `SetTarget`, `ToggleAutoAttack`, `ReleaseSpirit`) now route to `combat.applyPlayerIntent`
+  — the shared `tryCast` does all authority validation (class/level/GCD/cooldown/resource/
+  range). `Move` stays the movement sim's authority.
+- **Combat-self channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **6**): a new
+  `NetCombatSelf` + `ServerCombatSelf` per-connection frame carries the player's own hp /
+  maxHP / resource / resourceKind / level / targetId / cast (skill + 0..1 progress) / dead /
+  inCombat — the wire form of what the combat HUD read from the local sim. Sent beside
+  `ServerSelf`, interest-independent, with an `isNetCombatSelf` validator.
+
+#### Tests
+
+- `server/test/combat.test.ts` (+4): a player's instant `fireBlast` applies damage + spends
+  mana server-side; an enemy aggros and damages a stationary player (in combat); a dead
+  player who releases revives at full HP; over the wire the combat-self replicates (and
+  reflects the **persisted** character's level, not the hello's claim — server owns identity)
+  and a `SetTarget` intent round-trips.
+- `shared/test/net.test.ts`: `ServerCombatSelf` round-trip + rejection; protocol → 6.
+
 ### Part 9 — Server-authoritative enemies, Stage 1 (2026-07-06)
 
 The first slice of the combat migration: the server owns the world's enemy population and

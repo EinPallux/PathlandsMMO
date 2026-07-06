@@ -10,7 +10,9 @@ import {
   makeMoveIntent,
   NET_PROTOCOL_VERSION,
   type ClientMessage,
+  type Intent,
   type MoveIntent,
+  type NetCombatSelf,
   type NetEntity,
   type NetPlayer,
   type NetSelf,
@@ -67,6 +69,8 @@ export class TestClient {
   /** Server-authoritative enemy entities this client currently sees. */
   readonly enemies = new Map<string, NetEntity>();
   lastSelf: { ackedSeq: number; phys: NetSelf } | null = null;
+  /** Latest own combat state (health / resource / target / cast), or null until first frame. */
+  lastCombatSelf: NetCombatSelf | null = null;
   /** Every Move intent this client has sent, in send order — for reconcile replay. */
   readonly sent: { seq: number; intent: MoveIntent }[] = [];
   /** Every chat line this client has received, in arrival order. */
@@ -116,6 +120,9 @@ export class TestClient {
       case 'self':
         this.lastSelf = { ackedSeq: msg.ackedSeq, phys: msg.phys };
         break;
+      case 'combatSelf':
+        this.lastCombatSelf = msg.self;
+        break;
       case 'chat':
         this.chats.push({
           fromId: msg.fromId,
@@ -151,6 +158,32 @@ export class TestClient {
   /** Send a chat line. */
   chat(text: string): void {
     this.send({ t: 'chat', text });
+  }
+
+  /** Send a combat intent (target / cast / auto-attack / release) with an increasing seq. */
+  private combatIntent(intent: Intent): void {
+    this.seq += 1;
+    this.send({ t: 'intent', seq: this.seq, tick: 0, intent });
+  }
+
+  setTarget(targetId: string | null): void {
+    this.combatIntent({ type: 'SetTarget', targetId });
+  }
+
+  cast(skillId: string, targetId?: string): void {
+    this.combatIntent({
+      type: 'CastSkill',
+      skillId,
+      ...(targetId !== undefined ? { targetId } : {}),
+    });
+  }
+
+  toggleAuto(on: boolean): void {
+    this.combatIntent({ type: 'ToggleAutoAttack', on });
+  }
+
+  release(): void {
+    this.combatIntent({ type: 'ReleaseSpirit' });
   }
 
   close(): void {

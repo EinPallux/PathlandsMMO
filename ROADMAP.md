@@ -6,6 +6,34 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 10: Server-authoritative combat, Stage 2a (players in the sim).**
+> The server now runs **full combat**, players included. Server-side + fully headless-tested;
+> the client flip (rendering + HUD off the server) is Stage 2b. Landed:
+>
+> - **Players are combat entities on the server.** On join the gateway mirrors the player into
+>   `ServerCombat` (`makePlayerEntity`); each tick their authoritative movement position is
+>   synced in, then `stepSim` runs — so enemies now **aggro, chase, and attack** real players
+>   and **skill casts resolve server-side** (`tryCast` already does class/level/GCD/cooldown/
+>   resource/range validation — the server needs no new authority layer).
+> - **Combat intents go server-side.** The gateway routes `CastSkill` / `SetTarget` /
+>   `ToggleAutoAttack` / `ReleaseSpirit` to `combat.applyPlayerIntent`; `Move` stays the
+>   movement sim's authority. A dead player who **releases their spirit** revives server-side.
+> - **Combat-self channel** (`NET_PROTOCOL_VERSION` → **6**) — a new `ServerCombatSelf`
+>   per-connection frame carries the player's own **hp / resource / target / cast / level /
+>   combat flags** (the wire form of what the HUD used to read from the local sim).
+> - **Tests** (+5): a cast applies damage + spends resource server-side; an enemy aggros and
+>   damages a stationary player; ReleaseSpirit revives; over the wire the combat-self is
+>   replicated (and reflects the **persisted** character's level, not the hello's claim — the
+>   server owns identity) and a targeting intent round-trips; codec coverage for the frame.
+>
+> **359 tests green**; `pnpm typecheck` + `lint` + `build` (284 KB gzip) clean. _Server-only +
+> headless-proven — the client still runs its local combat and ignores the new frames until
+> Stage 2b._ _Next: **Stage 2b** — the client `CombatDirector` renders replicated `NetEntity`
+> (retiring its local spawner), sends combat intents to the server, and drives the combat HUD
+> from `ServerCombatSelf`; then **Stage 2c** — XP / loot / death / level-ups + persistence._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 9: Server-authoritative enemies, Stage 1 (server + replication).**
 > The first slice of moving combat server-side: the **server now owns the world's enemy
 > population**. Fully headless-proven; the client renders them in Stage 2. Landed:
