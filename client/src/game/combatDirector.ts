@@ -63,6 +63,7 @@ import {
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
 import { audio } from '../platform/audio.js';
+import { Vfx, SCHOOL_COLOR } from '../engine/vfx.js';
 import {
   useStore,
   type CombatUi,
@@ -128,6 +129,7 @@ interface WorldFloater {
 
 export class CombatDirector {
   private readonly scene: THREE.Scene;
+  private readonly vfx: Vfx;
   private readonly world: World;
   private readonly respawnAt: (x: number, z: number) => void;
   private readonly spawnX: number;
@@ -181,6 +183,7 @@ export class CombatDirector {
     progression?: Progression,
   ) {
     this.scene = scene;
+    this.vfx = new Vfx(scene);
     this.world = world;
     this.cls = cls;
     this.level = Math.max(1, progression?.level ?? START_LEVEL);
@@ -542,6 +545,19 @@ export class CombatDirector {
     if (!skill) return;
     applyIntent(this.state, PLAYER_ID, { type: 'CastSkill', skillId: skill.id });
     audio.sfx('cast');
+    // Cast flash at the caster, tinted by the skill's damage school.
+    const school = skill.effects.find((e) => 'school' in e)?.school ?? 'physical';
+    const p = this.player;
+    this.vfx.burst(p.x, p.y + 1.1, p.z, {
+      count: 12,
+      color: SCHOOL_COLOR[school] ?? SCHOOL_COLOR.physical!,
+      speed: 2,
+      up: 1.4,
+      life: 0.45,
+      size: 0.2,
+      gravity: -1.5,
+      spread: 0.3,
+    });
   }
 
   toggleAutoAttack(): void {
@@ -609,6 +625,17 @@ export class CombatDirector {
       this.pushFloater(this.player, `Waystone attuned! +${bonus} XP`, 'xp');
       this.relevelIfNeeded();
       this.onWaystoneAttuned?.(ws.id); // Deed progress (new attunes only)
+      // Attunement: a column of Waystone-blue light rises from the stone.
+      this.vfx.burst(this.player.x, this.player.y + 0.5, this.player.z, {
+        count: 40,
+        color: [0.45, 0.75, 1.0],
+        speed: 1.4,
+        up: 4.5,
+        life: 1.3,
+        size: 0.3,
+        gravity: -3,
+        spread: 0.5,
+      });
     }
     this.onWaystoneUsed?.(ws.id); // quest `use` objectives fire even if re-visited
     useStore.getState().openTravel();
@@ -716,6 +743,18 @@ export class CombatDirector {
     const crossedFive = this.level < 5 && prog.level >= 5;
     this.level = prog.level;
     audio.sfx('levelup');
+    // Level-up: a golden fountain rising off the player.
+    const lp = this.player;
+    this.vfx.burst(lp.x, lp.y + 0.4, lp.z, {
+      count: 46,
+      color: [1.0, 0.85, 0.35],
+      speed: 2.5,
+      up: 5,
+      life: 1.1,
+      size: 0.26,
+      gravity: -5,
+      spread: 0.3,
+    });
     const cur = this.player;
     const leveled = this.makePlayer(cur.x, cur.z);
     leveled.targetId = cur.targetId;
@@ -792,9 +831,41 @@ export class CombatDirector {
       const kind = ev.type === 'heal' ? 'heal' : ev.crit ? 'crit' : 'damage';
       const text = ev.amount <= 0 && ev.type === 'damage' ? 'absorb' : String(ev.amount);
       this.pushFloater(target, text, kind);
+      // Hit sparks: a small burst at the struck body (green for heals, gold on crit).
+      if (ev.type === 'heal') {
+        this.vfx.burst(target.x, target.y + 1.0, target.z, {
+          count: 8,
+          color: [0.4, 1.0, 0.5],
+          speed: 1.6,
+          up: 1.2,
+          life: 0.5,
+          size: 0.16,
+          gravity: -1,
+        });
+      } else if (ev.amount > 0) {
+        this.vfx.burst(target.x, target.y + 1.0, target.z, {
+          count: ev.crit ? 14 : 8,
+          color: ev.crit ? [1.0, 0.85, 0.3] : [1.0, 0.5, 0.35],
+          speed: ev.crit ? 4 : 3,
+          life: 0.4,
+          size: ev.crit ? 0.2 : 0.14,
+        });
+      }
     } else if (ev.type === 'xp') {
       this.gainXp(ev.amount);
     } else if (ev.type === 'death') {
+      const victim = this.state.entities.get(ev.entityId);
+      if (victim) {
+        this.vfx.burst(victim.x, victim.y + 0.9, victim.z, {
+          count: 20,
+          color: [0.55, 0.55, 0.6],
+          speed: 2.6,
+          up: 1,
+          life: 0.7,
+          size: 0.22,
+          gravity: -3,
+        });
+      }
       this.lootFrom(ev.entityId, ev.killerId);
     } else if (ev.type === 'bossPhase') {
       const boss = this.state.entities.get(ev.entityId);
@@ -843,6 +914,7 @@ export class CombatDirector {
   // --- render + HUD ----------------------------------------------------------
 
   render(dt: number, alpha: number, camera: THREE.PerspectiveCamera, sw: number, sh: number): void {
+    this.vfx.update(dt);
     this.syncRenderEnemies(dt, alpha);
     this.stepDying(dt);
     this.hudTimer += dt;
@@ -1069,6 +1141,7 @@ export class CombatDirector {
     }
     this.renders.clear();
     this.dying = [];
+    this.vfx.dispose();
   }
 }
 

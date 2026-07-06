@@ -6,6 +6,22 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 5 in progress (2026-07-06) — Part 4: VFX pass — a pooled particle system.** A new
+> `client/engine/vfx.ts`: one pooled `THREE.Points` object (700-particle ring buffer, a single
+> draw call, fixed memory) of **additive soft dots** driven by a `RawShaderMaterial` — per-particle
+> size (perspective-scaled) and colour, a round `gl_PointCoord` mask, colour **fades to black over
+> life** so no alpha channel is needed. Particles are CPU-simulated (gravity + drag + fade) and the
+> changed buffers re-upload each frame. The **CombatDirector** fires bursts for every combat beat:
+> **hit sparks** at the struck body (gold on crit, green on heal), **death puffs**, **school-tinted
+> cast flashes** at the caster (physical/nature/holy/fire/frost/arcane/shadow → distinct colours via
+> `SCHOOL_COLOR`), a golden **level-up fountain**, and a Waystone-blue **attunement glow**. **274
+> tests green** (VFX is browser-only, verified by play); `pnpm typecheck && lint && build` clean
+> (273 KB gzipped); in-browser a fired burst renders as a bright additive fountain of soft dots off
+> the player with **zero console errors**, and update/dispose run every frame without throwing.
+> Remaining VFX work: blight ambience in corrupted areas + water/foliage micro-motion.
+>
+> ---
+>
 > **Phase 5 in progress (2026-07-06) — Part 3: UI/UX polish — rich tooltips.** Replaced the
 > plain native `title=` hovers with a portal-based **tooltip system** (`client/ui/Tooltip.tsx`):
 > a cursor-following card that escapes panel clipping and flips at screen edges. **Item
@@ -594,7 +610,7 @@ _Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass
 ### Deliverables
 
 - [x] **Audio** — a WebAudio layer (`client/platform/audio.ts`) with a master-gain bus wired to the Settings volume slider, two looping music beds (`loginscreen.mp3` on the title/select screens, `bgm.mp3` in-game; user-supplied mp3s in `public/assets/audio/`, missing files play silently), and synthesized SFX for skill cast / enemy defeat / level-up / quest-complete; autoplay-policy handled by gesture unlock. _Scope simplified per direction: one in-game bed rather than per-zone/situation beds, and a compact procedural SFX set rather than footsteps-by-surface/ambience — those richer layers can return as later polish if wanted._
-- [ ] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels.
+- [~] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels. _(Part 4: a pooled `THREE.Points` particle system (`client/engine/vfx.ts`, one additive-soft-dot draw call, 700-particle ring buffer, CPU gravity/drag/fade, colour fades to black over life) wired into the CombatDirector — hit sparks (crit-gold / heal-green), death puffs, **school-tinted cast flashes** (`SCHOOL_COLOR`), a golden level-up fountain, and a Waystone-blue attunement glow. Remaining: blight ambience in corrupted areas + water/foliage micro-motion.)_
 - [~] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors. _(Part 3: a portal-based tooltip system — item cards with vs-equipped stat-delta comparison + colourblind-safe rarity labels, and skill cards on the hotbar; wired into the Character/Vendor/Bank panels + hotbar. Remaining: loading/continue screens from the PNG art, first-time-player tips, wider art-direction pass.)_
 - [~] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning. _(Part 1: the leveling pace — curve lowered to `250·L^1.55` (~549k) + quest XP ×2, so quests are ~45% of the climb and 1→30 targets ~25–35 h; guarded by `acceptance-p4.test.ts`. Remaining: all-class TTK, itemization curve, Hollow difficulty, gold economy.)_
 - [ ] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery.

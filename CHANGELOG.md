@@ -4,6 +4,31 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 5 — Polish: The Complete Solo Game] — in progress
 
+### Part 4 — VFX: a pooled particle system (2026-07-06)
+
+#### Added
+
+- **VFX particle system** (`client/engine/vfx.ts`, a `Vfx` class): one pooled `THREE.Points`
+  object — a **700-particle ring buffer**, a single draw call, a fixed memory budget — of
+  **additive soft dots** rendered by a `RawShaderMaterial`. Each particle carries its own
+  perspective-scaled point size and RGB; the fragment shader masks points to soft rounds via
+  `gl_PointCoord`; colour **fades to black over life** (additive → invisible), so no per-particle
+  alpha channel is needed. Particles are CPU-simulated each frame (gravity + drag + fade) and the
+  changed position/colour buffers are re-uploaded.
+- **Combat VFX** wired into `CombatDirector`: **hit sparks** at the struck body (gold on crit,
+  green on heal, warm on normal hits), **death puffs**, **school-tinted cast flashes** at the
+  caster (physical/nature/holy/fire/frost/arcane/shadow → distinct colours via `SCHOOL_COLOR`,
+  chosen from the cast skill's damage school), a golden **level-up fountain**, and a
+  Waystone-blue **attunement glow** on a new attune.
+- `SCHOOL_COLOR` palette mapping each GDD §4 damage school to a burst colour.
+
+#### Notes
+
+- The system is deliberately client-only render candy (no sim state, no RNG stream) — bursts are
+  cosmetic and driven by combat events the shared engine already emits.
+- Remaining VFX-pass work (deferred): blight ambience in corrupted areas + water/foliage
+  micro-motion.
+
 ### Part 3 — UI/UX polish: rich tooltips (2026-07-06)
 
 #### Added
