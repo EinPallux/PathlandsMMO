@@ -30,6 +30,7 @@ import { BountyBoard } from './BountyBoard.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { FirstTimeTips } from './FirstTimeTips.js';
 import { NetStatusHud } from './NetStatusHud.js';
+import { Chat } from './Chat.js';
 import { LoginScreen } from './LoginScreen.js';
 import { Onboarding } from './Onboarding.js';
 import { putCharacter } from '../net/authClient.js';
@@ -158,6 +159,7 @@ export function App(): JSX.Element {
         {ready && <SettingsPanel />}
         {ready && <FirstTimeTips />}
         {ready && <NetStatusHud />}
+        {ready && <Chat />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}

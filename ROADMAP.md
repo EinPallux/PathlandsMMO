@@ -6,6 +6,36 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 6: Chat (the first social channel, live over the wire).**
+> Players in the same world can now talk. The first piece of the Social layer, chosen
+> because it is fully server-testable and the thing a first playtest wants most. Landed:
+>
+> - **Protocol** (`shared/proto/net.ts`, `NET_PROTOCOL_VERSION` → 4) — a `ClientChat
+{text}` and a `ServerChat {fromId, from, text, tick}`, with decoder cases that reject a
+>   non-string / empty / over-`MAX_CHAT_LEN` (300) line at the trust boundary.
+> - **Server broadcast** (`server/gateway.ts`) — the `chat` frame is accepted only from a
+>   **joined** session, **rate-limited** per connection (≥ 700 ms apart), **sanitised**
+>   (control chars incl. newlines stripped, whitespace collapsed, capped to 200 chars), then
+>   **rebroadcast to every joined session** under the **server-authoritative display name**
+>   (never the client's copy — no impersonation) — the sender included.
+> - **Client** (`net/netClient.ts`) — `sendChat()` + an `onChat` callback that tags a line
+>   `self` when `fromId` is our own session id; a store **chat slice** (`chat[]` capped at
+>   100 lines, `pushChat`, a `chatTyping` gate).
+> - **Chat UI** (`ui/Chat.tsx`) — a bottom-left scrollback + input that opens on **Enter**,
+>   sends on Enter, cancels on **Esc**; own lines and others colour-coded; hidden entirely in
+>   single-player. While the input is focused the game **suspends keyboard gameplay** (WASD
+>   won't walk, skills won't fire) and **releases pointer-lock** — the `Input` capture layer
+>   also ignores keystrokes destined for any focused text field (so Space/Tab type normally).
+>
+> **345 tests green** (+8: two-client delivery, name-spoof guard, control-char sanitising,
+> length cap, whitespace-only drop, rate-limit burst, pre-hello reject; +codec round-trip);
+> `pnpm typecheck` + `lint` + `build` (279 KB gzip) clean. _The chat **UI** (focus/gating,
+> pointer-lock release) is verified on the first VPS test; the server side is headless-proven._
+> _Next: server-authoritative combat/entities, then the rest of the social layer (parties,
+> guilds, whisper, trade, duels)._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 5: Onboarding v2 (client login → the account loop closes).**
 > The Part-4 accounts server is now usable from the browser. Landed:
 >
@@ -875,7 +905,7 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 - [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Parts 1–2: opt-in `NetClient` streams intents up, **predicts + reconciles** own movement against the server (replay + smoothed correction), interpolates remotes on the server-tick timeline ~150 ms behind, measures RTT, and shows a connection HUD with auto-reconnect. Remaining: session **resume** on reconnect — currently a reconnect starts a fresh server session.)_
 - [~] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import). _(Part 4: scrypt password hashing + HS256 JWT sessions (rate-limited), a durable `FileStore` (JSON, atomic writes) behind a `Store` interface, `/auth/*` + `/character` REST endpoints (character cloud save), and ws token binding that loads the persisted character and writes its authoritative position back. Remaining: the PostgreSQL `Store` impl (interface staged), argon2id if warranted, and richer server-owned state once combat/quests move server-side.)_
 - [~] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks). _(Part 5: a `LoginScreen` + auth API client gate the flow when a server is configured, the token binds the ws session (server restores the character position), and the local character is cloud-save-uploaded on entry, with expired-token → re-login. Remaining: a per-account character list / multi-slot picker fed by the server, and email verification.)_
-- [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).
+- [~] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD). _(Part 6: **global chat** — a `ClientChat`/`ServerChat` protocol pair (proto v4), a server that rate-limits + sanitises (control-char/newline strip, length cap) + rebroadcasts under the **server-authoritative name** to every joined session, and a bottom-left `Chat.tsx` panel (Enter to open, Esc to cancel) that suspends gameplay input while typing. Remaining: channels (say/party/guild/whisper) + mute, parties, guilds, friends, emotes, inspect, trade, duels, group scaling.)_
 - [ ] **Multiplayer endgame** — weekly world boss at the restored final Waystone, group bounty variants, guild Deeds; anti-cheat essentials (server validates everything; speed/teleport/rate sanity checks; no client-trusted numbers).
 - [~] **Ops & launch** — VPS deployment via Docker Compose (server, PostgreSQL, nginx + TLS/wss, backups cron), GitHub Actions deploy pipeline, structured logging + metrics dashboard (CCU, tick time, DB health), load test at 200 simulated clients, GM tooling (kick/mute/teleport/item-grant), status page; launch checklist & rollback plan. _(Part 3: `server/Dockerfile` + `docker-compose.yml` (game + nginx TLS/wss; Postgres behind a profile) + `deploy/nginx/pathlands.conf` + a `/healthz` + `/status` endpoint + `docs/SERVER_DEPLOY.md` runbook — the movement slice is VPS-deployable now. Remaining: DB backups cron, CI deploy pipeline, metrics dashboard, 200-client load test, GM tooling, launch/rollback plan.)_
 

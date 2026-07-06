@@ -41,6 +41,8 @@ interface Conn {
   msgCount: number;
   /** Account id once the player authenticated with a token; null for guest sessions. */
   accountId: string | null;
+  /** Wall-clock (ms) of this connection's last accepted chat line — its send-rate gate. */
+  lastChatMs: number;
 }
 
 export interface GatewayOptions {
@@ -68,6 +70,27 @@ export interface GatewayDeps {
 
 /** Frames past this multiple of the per-second cap in one window ⇒ terminate, not just drop. */
 const FLOOD_TERMINATE_FACTOR = 8;
+
+/** Minimum spacing between one connection's chat lines (ms) — an anti-spam gate. */
+const CHAT_MIN_INTERVAL_MS = 700;
+
+/** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
+const CHAT_BROADCAST_MAX = 200;
+
+/**
+ * Clean an untrusted chat line for rebroadcast: strip control characters (incl. newlines,
+ * which would let a line spoof extra rows in a client log), collapse runs of whitespace,
+ * trim the ends, and cap the length. Returns null if nothing printable survives.
+ */
+function sanitizeChat(text: string): string | null {
+  const cleaned = text
+    // eslint-disable-next-line no-control-regex -- deliberately stripping C0/C1 control chars
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, CHAT_BROADCAST_MAX);
+  return cleaned.length > 0 ? cleaned : null;
+}
 
 export class GameServer {
   private readonly http: Server;
@@ -205,6 +228,7 @@ export class GameServer {
       msgWindowStart: 0,
       msgCount: 0,
       accountId: null,
+      lastChatMs: 0,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
@@ -361,6 +385,30 @@ export class GameServer {
         });
         return;
       }
+      case 'chat': {
+        if (conn.id === null) return; // must be joined to speak
+        // Per-connection send-rate gate (wall-clock is fine at the edge). Silently drop a
+        // too-fast line rather than error — spamming is not a protocol violation.
+        if (now - conn.lastChatMs < CHAT_MIN_INTERVAL_MS) return;
+        const text = sanitizeChat(msg.text);
+        if (text === null) return; // nothing printable survived sanitising
+        conn.lastChatMs = now;
+        const player = this.sim.players.get(conn.id);
+        if (player === undefined) return;
+        // Re-derive the display name server-side (never trust the client's copy) so a
+        // player cannot post under someone else's name.
+        this.broadcastChat(conn.id, player.name, text);
+        return;
+      }
+    }
+  }
+
+  /** Fan a sanitised chat line out to every joined session (global chat for the playtest). */
+  private broadcastChat(fromId: string, from: string, text: string): void {
+    const frame: ServerMessage = { t: 'chat', fromId, from, text, tick: this.sim.tick };
+    for (const conn of this.conns.values()) {
+      if (conn.id === null) continue; // pre-hello sockets don't receive chat
+      this.send(conn.ws, frame);
     }
   }
 

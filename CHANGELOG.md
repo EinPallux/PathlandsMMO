@@ -4,6 +4,48 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 6 — Chat: the first social channel (2026-07-06)
+
+Global chat so players in the same world can talk — the first slice of the Social layer,
+chosen for being fully server-testable and the thing a first playtest most wants. The wire
+codec is the trust boundary; the server is authoritative over identity and rate.
+
+#### Added
+
+- **Chat protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **4**): a
+  `ClientChat {text}` and a `ServerChat {fromId, from, text, tick}`, plus `MAX_CHAT_LEN`
+  (300). Decoders reject a non-string / empty / over-cap line at the boundary.
+- **Server chat** (`server/src/gateway.ts`): the `chat` frame is accepted only from a
+  **joined** session, **rate-limited per connection** (≥ 700 ms between lines), **sanitised**
+  (`sanitizeChat` strips C0/C1 control chars incl. newlines, collapses whitespace, caps at
+  200 chars, drops an empty result), and **rebroadcast to every joined session** — the
+  sender included — under the **server-side display name**, never the client's copy (no
+  impersonation).
+- **Client** (`client/src/net/netClient.ts`): `NetClient.sendChat(text)` and an `onChat`
+  callback that flags a line `self` when `fromId` is our own session id.
+- **Chat store slice** (`client/src/game/store.ts`): `chat: ChatLine[]` (capped at
+  `CHAT_HISTORY_MAX` = 100), `pushChat`, and a `chatTyping` flag with `setChatTyping`; a
+  `GameCommands.sendChat`.
+- **Chat panel** (`client/src/ui/Chat.tsx`): a bottom-left scrollback + input that opens on
+  **Enter**, sends on Enter, cancels on **Esc**; own vs. others colour-coded; auto-scrolls;
+  hidden entirely in single-player (`store.net === null`). Wired into `App.tsx`.
+
+#### Changed
+
+- **Input gating while typing**: `Input.onKeyDown` (`client/src/game/input.ts`) now ignores
+  keystrokes whose target is a focused text field (and no longer `preventDefault`s Space/Tab
+  there), so typing works normally; keyup is still processed unconditionally so a key held
+  into a focus change is never left stuck down. `game.ts` additionally suspends all gameplay
+  key actions and freezes the player (`freeInput`) while `chatTyping`, and the chat panel
+  releases pointer-lock on open so mouse-look can't accumulate a snap.
+
+#### Tests
+
+- `server/test/chat.test.ts` (+7): two-client delivery (sender included), server-name
+  authority (no spoof), control-char/newline sanitising, length cap, whitespace-only drop,
+  rate-limit burst, and a pre-hello socket that can neither send nor receive chat.
+- `shared/test/net.test.ts`: chat codec round-trip + rejection cases; protocol version → 4.
+
 ### Part 5 — Onboarding v2: client login (2026-07-06)
 
 Closes the accounts loop: the Part-4 server is now driven from the browser. Client-only

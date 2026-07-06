@@ -91,8 +91,12 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 > reconciliation** (the `self` message carries own authoritative physics + `ackedSeq`; the client
 > replays unacked inputs and smooths the residual), **3×3 chunk interest management** (per-subscriber
 > deltas via a `known` set, `server/interest.ts`), **connection UX** (ping/RTT, phase, `NetStatusHud`),
-> and **server hardening** (maxPayload, hello-timeout, connection cap, WebSocket heartbeat). Not yet
-> built: authoritative combat/loot/quests on the tick pipeline, quantised binary framing, session
+> and **server hardening** (maxPayload, hello-timeout, connection cap, WebSocket heartbeat).
+> Parts 4–5 added **accounts** (scrypt + HS256, durable `FileStore`, token→character binding)
+> and the **client login/cloud-save**. Part 6 added the first **event channel — chat**
+> (`ClientChat`/`ServerChat`, proto v4): server-authoritative sender name, per-connection rate
+> limit, control-char/length sanitising, rebroadcast to all joined sessions. Not yet built:
+> authoritative combat/loot/quests on the tick pipeline, quantised binary framing, session
 > resume on reconnect. The bullets below are the full target.
 >
 > - **Wire format now vs later:** the codec (`encodeClient`/`decodeClient`/`encodeServer`/
@@ -106,7 +110,8 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 
 - **Transport:** WebSocket (wss via nginx). Messages: length-prefixed binary (MessagePack initially; hand-rolled codecs only where profiling justifies). _(Part 1: JSON text frames behind the codec choke point; binary is the documented upgrade.)_
 - **Authority:** server runs the same `shared/sim` at 20 Hz and is sole truth. Clients send intents (sequence-numbered, non-negative safe integers, **rate-limited** per connection); the server buffers them in a **bounded per-player FIFO** drained one per tick (jitter/catch-up buffer) and replies on the `self` channel with the last-applied seq (`ackedSeq`) + authoritative physics. _(Built Parts 1–2.)_
-- **Replication:** interest management = 3×3 chunk subscription around each player. Per tick-bundle (every 2nd tick, 10 Hz on the wire): per-subscriber entity deltas (enter=full / update=if-dirty / leave) for players in the 3×3 cells, diffed against a per-connection `known` set; interest-filtered snapshot on subscribe; the `self` channel bypasses interest. _(Built Part 2 in `server/interest.ts`. Field-level quantisation — pos to 1/16 voxel, hp%, anim/buff bits — and the reliable chat/loot/quest event channel are later.)_
+- **Replication:** interest management = 3×3 chunk subscription around each player. Per tick-bundle (every 2nd tick, 10 Hz on the wire): per-subscriber entity deltas (enter=full / update=if-dirty / leave) for players in the 3×3 cells, diffed against a per-connection `known` set; interest-filtered snapshot on subscribe; the `self` channel bypasses interest. _(Built Part 2 in `server/interest.ts`. Field-level quantisation — pos to 1/16 voxel, hp%, anim/buff bits — is later.)_
+- **Event channels:** beyond the positional replication above, discrete events ride their own frames. _(Built Part 6: **chat** — a `ClientChat`/`ServerChat` pair the gateway accepts only from a joined session, **rate-limits per connection** (≥ 700 ms), **sanitises** (control-char/newline strip + collapse + 200-char cap), and **rebroadcasts to all joined sessions** under the **server-authoritative display name** (no client-supplied name is ever echoed). Global scope for now; say/party/guild/whisper channels + moderation land with parties/guilds. Loot/quest event frames follow with combat authority.)_
 - **Feel:** own movement client-predicted + reconciled (movement rules already live in `shared/`, so prediction and the reconcile **replay** are literally the same function; the residual is smoothed at the render edge, not the sim); remote entities interpolated ~150 ms behind on the server-tick timeline; casts show locally at cast-start, resolve on server confirm (tab-target tolerance makes this easy — the reason we chose it). _(Movement built Part 2; casts with combat authority.)_
 - **Scale target:** 200 CCU on one 4-vCPU VPS process; zone-sharding by region grid is the documented escape hatch, not built until needed.
 - **Cheat posture:** server validates everything (already true by construction); sanity ceilings on move speed/teleport deltas/action rates; server-side cooldown & resource books; no client-supplied numbers ever applied.

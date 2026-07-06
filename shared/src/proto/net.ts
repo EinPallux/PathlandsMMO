@@ -19,9 +19,13 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
 /**
  * Bumped on any breaking wire change; the server rejects a mismatched client.
  * v2 added the per-connection `self` reconciliation channel (ServerSelf);
- * v3 added the optional account `token` on the hello (accounts & persistence).
+ * v3 added the optional account `token` on the hello (accounts & persistence);
+ * v4 added the chat channel (ClientChat / ServerChat).
  */
-export const NET_PROTOCOL_VERSION = 3;
+export const NET_PROTOCOL_VERSION = 4;
+
+/** Max chat text length accepted at the wire (the server trims further). */
+export const MAX_CHAT_LEN = 300;
 
 /** How another player appears to everyone else — the replication view of a player. */
 export interface NetPlayer {
@@ -131,7 +135,18 @@ export interface ClientPing {
   clientTime: number;
 }
 
-export type ClientMessage = ClientHello | ClientIntent | ClientPing;
+/**
+ * A line of chat typed by the player. The server sanitises and trims `text`, applies a
+ * per-connection rate limit, and rebroadcasts it as a ServerChat to every joined session.
+ * Untrusted: the server never echoes the raw text — it re-derives the display name and
+ * caps length itself, so a client can't spoof another player or blow the wire budget.
+ */
+export interface ClientChat {
+  t: 'chat';
+  text: string;
+}
+
+export type ClientMessage = ClientHello | ClientIntent | ClientPing | ClientChat;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -199,8 +214,21 @@ export interface ServerError {
   message: string;
 }
 
+/**
+ * A chat line rebroadcast to every joined session. `fromId` is the sender's session id
+ * (so the client can flag its own lines) and `from` is the server-authoritative display
+ * name — never the client-supplied name — so no player can impersonate another.
+ */
+export interface ServerChat {
+  t: 'chat';
+  fromId: string;
+  from: string;
+  text: string;
+  tick: number;
+}
+
 export type ServerMessage =
-  ServerWelcome | ServerSnapshot | ServerDelta | ServerSelf | ServerPong | ServerError;
+  ServerWelcome | ServerSnapshot | ServerDelta | ServerSelf | ServerPong | ServerError | ServerChat;
 
 // ---------------------------------------------------------------------------
 // Codec — the one place the wire format lives.
@@ -343,6 +371,12 @@ export function decodeClient(raw: string): ClientMessage | null {
     case 'ping':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime)) return null;
       return { t: 'ping', id: o.id, clientTime: o.clientTime };
+    case 'chat': {
+      // Structural only: non-empty string, capped at the wire limit. The server still
+      // trims whitespace, collapses control chars, and rate-limits before rebroadcast.
+      if (!isString(o.text) || o.text.length === 0 || o.text.length > MAX_CHAT_LEN) return null;
+      return { t: 'chat', text: o.text };
+    }
     default:
       return null;
   }
@@ -428,6 +462,17 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'error':
       if (!isString(o.code) || !isString(o.message)) return null;
       return { t: 'error', code: o.code, message: o.message };
+    case 'chat': {
+      if (
+        !isString(o.fromId) ||
+        !isString(o.from) ||
+        !isString(o.text) ||
+        !isFiniteNumber(o.tick)
+      ) {
+        return null;
+      }
+      return { t: 'chat', fromId: o.fromId, from: o.from, text: o.text, tick: o.tick };
+    }
     default:
       return null;
   }

@@ -45,6 +45,15 @@ export interface RemoteRenderState {
 
 export type NetPhase = 'connecting' | 'connected' | 'reconnecting';
 
+/** A chat line delivered from the server, tagged with whether it is our own. */
+export interface ChatEvent {
+  fromId: string;
+  from: string;
+  text: string;
+  /** True when the server attributes this line to our own session. */
+  self: boolean;
+}
+
 /** Connection status surfaced to the UI (indicator, reconnect notice, latency). */
 export interface NetStatus {
   phase: NetPhase;
@@ -67,6 +76,8 @@ export interface NetClientOptions {
   onStatus?: (status: NetStatus) => void;
   /** Called when the server rejects our token (expired/invalid) — the UI should re-login. */
   onAuthError?: () => void;
+  /** Called for every chat line the server broadcasts (our own included). */
+  onChat?: (line: ChatEvent) => void;
 }
 
 interface Sample {
@@ -225,6 +236,14 @@ export class NetClient {
         if (msg.code === 'protocol' || msg.code === 'auth') this.closedByUser = true;
         if (msg.code === 'auth') this.opts.onAuthError?.();
         break;
+      case 'chat':
+        this.opts.onChat?.({
+          fromId: msg.fromId,
+          from: msg.from,
+          text: msg.text,
+          self: msg.fromId === this.you,
+        });
+        break;
       default:
         break;
     }
@@ -350,6 +369,12 @@ export class NetClient {
       if (this.history.length > MAX_UNACKED_INPUTS) this.history.shift();
     }
     this.send({ t: 'intent', seq: this.seq, tick: this.localTick, intent });
+  }
+
+  /** Send a chat line (dropped silently if not connected). The server sanitises + gates it. */
+  sendChat(text: string): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'chat', text });
   }
 
   /** The newest authoritative self-state (consumed once), or null if none pending. */

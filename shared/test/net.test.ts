@@ -11,6 +11,7 @@ import {
   encodeServer,
   makeMoveIntent,
   makePlayerPhysics,
+  MAX_CHAT_LEN,
   NET_PROTOCOL_VERSION,
   physToNetSelf,
   type ClientMessage,
@@ -18,8 +19,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 3 (self channel + account token)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(3);
+  it('is at protocol version 4 (self channel + account token + chat)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(4);
   });
 
   it('round-trips a ServerSelf frame', () => {
@@ -142,5 +143,25 @@ describe('net protocol codec', () => {
 
     expect(decodeClient('not json')).toBeNull();
     expect(decodeClient(JSON.stringify({ t: 'unknown' }))).toBeNull();
+  });
+
+  it('round-trips + validates chat frames on both directions', () => {
+    // Client → server: a non-empty, capped string.
+    const clientChat: ClientMessage = { t: 'chat', text: 'hail!' };
+    expect(decodeClient(encodeClient(clientChat))).toEqual(clientChat);
+    // Empty text and an over-cap string are both rejected at the wire.
+    expect(decodeClient(JSON.stringify({ t: 'chat', text: '' }))).toBeNull();
+    expect(
+      decodeClient(JSON.stringify({ t: 'chat', text: 'x'.repeat(MAX_CHAT_LEN + 1) })),
+    ).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'chat', text: 42 }))).toBeNull();
+
+    // Server → client: id + authoritative name + text + tick.
+    const serverChat = { t: 'chat', fromId: 'p1', from: 'Alia', text: 'hail!', tick: 12 } as const;
+    expect(decodeServer(encodeServer(serverChat))).toEqual(serverChat);
+    // A missing display name is rejected.
+    expect(
+      decodeServer(JSON.stringify({ t: 'chat', fromId: 'p1', text: 'hi', tick: 1 })),
+    ).toBeNull();
   });
 });

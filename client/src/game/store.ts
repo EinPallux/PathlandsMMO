@@ -336,6 +336,8 @@ export interface GameCommands {
   /** Waystones: attune/open the nearby stone, fast-travel to a discovered one. */
   interactWaystone(): void;
   travelTo(id: string): void;
+  /** Multiplayer chat: send a line to the server (no-op in single-player). */
+  sendChat(text: string): void;
 }
 
 /** Multiplayer connection phase for the HUD indicator (Phase 6). */
@@ -348,6 +350,22 @@ export interface NetUi {
   latencyMs: number | null;
 }
 
+/** One rendered chat line (Phase 6). `self` styles your own lines; `system` is server/UI notices. */
+export interface ChatLine {
+  /** Stable React key (a UI-only monotonic counter). */
+  key: number;
+  from: string;
+  text: string;
+  self: boolean;
+  system: boolean;
+}
+
+/** Most recent lines kept in the scrollback (older ones drop off). */
+export const CHAT_HISTORY_MAX = 100;
+
+/** UI-only monotonic key source for chat lines (cosmetic; never simulation state). */
+let chatKeySeq = 0;
+
 export interface UiState {
   ready: boolean;
   loadProgress: number; // 0..1
@@ -355,6 +373,10 @@ export interface UiState {
   contextLost: boolean;
   /** Multiplayer status (Phase 6); null in single-player. Drives the NetStatusHud. */
   net: NetUi | null;
+  /** Chat scrollback (Phase 6). Empty in single-player; the Chat panel hides when net is null. */
+  chat: ChatLine[];
+  /** True while the chat input is focused — the game loop suspends keyboard gameplay input. */
+  chatTyping: boolean;
 
   fps: number;
   drawCalls: number;
@@ -430,6 +452,10 @@ export interface UiState {
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   setNet: (n: NetUi | null) => void;
+  /** Append a chat line (assigns its key + trims the scrollback). */
+  pushChat: (line: Omit<ChatLine, 'key'>) => void;
+  /** Set the chat-input-focused flag that gates gameplay keyboard input. */
+  setChatTyping: (typing: boolean) => void;
   toggleMap: () => void;
   toggleDev: () => void;
   toggleChar: () => void;
@@ -480,6 +506,8 @@ export interface UiState {
 export const useStore = create<UiState>((set) => ({
   contextLost: false,
   net: null,
+  chat: [],
+  chatTyping: false,
   ready: false,
   loadProgress: 0,
 
@@ -553,6 +581,13 @@ export const useStore = create<UiState>((set) => ({
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   setNet: (net) => set({ net }),
+  pushChat: (line) =>
+    set((st) => {
+      const next = [...st.chat, { ...line, key: chatKeySeq++ }];
+      if (next.length > CHAT_HISTORY_MAX) next.splice(0, next.length - CHAT_HISTORY_MAX);
+      return { chat: next };
+    }),
+  setChatTyping: (chatTyping) => set({ chatTyping }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
   toggleChar: () => set((st) => ({ showChar: !st.showChar })),

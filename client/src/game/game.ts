@@ -260,9 +260,15 @@ export class Game {
         },
         onStatus: (st) =>
           useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+        onChat: (line) =>
+          useStore
+            .getState()
+            .pushChat({ from: line.from, text: line.text, self: line.self, system: false }),
         ...(onAuthError !== undefined ? { onAuthError } : {}),
       });
       this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+      // Fresh session: clear any scrollback left from a previous game instance.
+      useStore.setState({ chat: [], chatTyping: false });
       this.net.connect();
     } else {
       this.net = null;
@@ -343,6 +349,7 @@ export class Game {
       turnInBounty: (id) => this.bounties.turnIn(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
+      sendChat: (text) => this.net?.sendChat(text),
     };
     useStore.getState().setCommands(commands);
   }
@@ -409,6 +416,10 @@ export class Game {
 
     // Panel/action keys are rebindable (Settings, save v11); read the live map.
     const store = useStore.getState();
+    // Chat has focus (Phase 6): the text field owns the keyboard. Input already stops
+    // recording keystrokes while a field is focused, but a key held down BEFORE focusing
+    // could still read as `isDown`, so suppress all gameplay key actions here as well.
+    if (store.chatTyping) return;
     const kb = store.keybinds;
     const tapped = (action: string): boolean => this.input.wasTapped(kb[action] ?? '');
     if (tapped('toggleFreeFly')) this.toggleFreeFly();
@@ -503,8 +514,9 @@ export class Game {
     // ticks, so newly predicted ticks build on the reconciled state. No-op single-player.
     this.reconcileSelf();
 
-    // Fixed-tick simulation with interpolation.
-    const active = this.camera.mode === 'thirdPerson';
+    // Fixed-tick simulation with interpolation. While the chat box has focus the player
+    // is inert (freeInput), so typing WASD never walks the character.
+    const active = this.camera.mode === 'thirdPerson' && !useStore.getState().chatTyping;
     this.accumulator += dt;
     let ticks = 0;
     while (this.accumulator >= TICK_DT && ticks < 5) {
@@ -795,7 +807,10 @@ export class Game {
     );
     this.net?.dispose();
     this.remoteRenderer?.dispose();
-    if (this.net !== null) useStore.getState().setNet(null); // hide the HUD on teardown
+    if (this.net !== null) {
+      useStore.getState().setNet(null); // hide the HUD on teardown
+      useStore.setState({ chat: [], chatTyping: false }); // clear chat + release the input gate
+    }
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();

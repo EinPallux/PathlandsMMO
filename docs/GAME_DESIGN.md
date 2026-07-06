@@ -335,7 +335,7 @@ Solo-viable loop, weekly cadence:
 
 ## 12. Social & MMO Features (Phase 6)
 
-- **Chat:** say (30 m), zone, party, guild, whisper, system; slash commands; profanity filter + mute.
+- **Chat:** say (30 m), zone, party, guild, whisper, system; slash commands; profanity filter + mute. _(Built Part 6: a **global** channel — every joined player sees every line — as the first increment: server-authoritative sender name (no impersonation), per-connection rate limit, control-char/length sanitising, bottom-left panel (Enter to open, Esc to cancel). The scoped channels (say/zone/party/guild/whisper), slash commands, and profanity/mute land with parties/guilds.)_
 - **Party:** up to 4; shared quest kill credit in range, XP split with group bonus (+10%/member), loot round-robin + need-roll Rare+, party frames, leader marks.
 - **Guilds:** create (5 g), roster, 3 ranks, guild chat, MOTD, guild Deeds. No guild banks at launch (backlog).
 - **Trade:** secure two-pane trade window (items + gold, double-confirm). No auction house at launch (population reality; backlog).

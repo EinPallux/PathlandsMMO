@@ -66,6 +66,8 @@ export class TestClient {
   lastSelf: { ackedSeq: number; phys: NetSelf } | null = null;
   /** Every Move intent this client has sent, in send order — for reconcile replay. */
   readonly sent: { seq: number; intent: MoveIntent }[] = [];
+  /** Every chat line this client has received, in arrival order. */
+  readonly chats: { fromId: string; from: string; text: string; tick: number }[] = [];
   deltaCount = 0;
   private seq = 0;
 
@@ -101,6 +103,9 @@ export class TestClient {
       case 'self':
         this.lastSelf = { ackedSeq: msg.ackedSeq, phys: msg.phys };
         break;
+      case 'chat':
+        this.chats.push({ fromId: msg.fromId, from: msg.from, text: msg.text, tick: msg.tick });
+        break;
       default:
         break;
     }
@@ -122,6 +127,11 @@ export class TestClient {
     const intent = makeMoveIntent(wishX, wishZ, false, false, 0);
     this.sent.push({ seq: this.seq, intent });
     this.send({ t: 'intent', seq: this.seq, tick: 0, intent });
+  }
+
+  /** Send a chat line. */
+  chat(text: string): void {
+    this.send({ t: 'chat', text });
   }
 
   close(): void {
