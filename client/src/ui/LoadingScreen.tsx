@@ -29,7 +29,7 @@ export function LoadingScreen(): JSX.Element {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: `linear-gradient(rgba(11,13,18,0.72), rgba(11,13,18,0.92)), url(${LOADING_ART}) center/contain no-repeat, #0b0d12`,
+        background: `linear-gradient(rgba(11,13,18,0.72), rgba(11,13,18,0.92)), url("/${LOADING_ART}") center/contain no-repeat, #0b0d12`,
         zIndex: 100,
       }}
     >

@@ -14,7 +14,7 @@ import {
   type SaveGame,
 } from '@pathlands/shared';
 import { loadSave, persistSave, wasSaveRecovered } from '../platform/saveStore.js';
-import { CLASS_PORTRAITS } from '../platform/assetManifest.js';
+import { CLASS_PORTRAITS, BUILDING_ART } from '../platform/assetManifest.js';
 import { colors, panel } from './theme.js';
 
 // Brookhollow plaza (matches game.ts SPAWN); y is re-grounded by the game on spawn.
@@ -43,6 +43,15 @@ const shell: React.CSSProperties = {
   color: colors.ink,
   fontFamily: 'system-ui, sans-serif',
   pointerEvents: 'auto',
+};
+
+// The title screen layers the code-authored village art (a 2D render used as UI
+// art per ART_GUIDE §5) behind a vignette light enough to show the art but dark
+// enough to keep the wordmark legible.
+const titleShell: React.CSSProperties = {
+  ...shell,
+  gap: 14,
+  background: `radial-gradient(circle at 50% 42%, rgba(12,9,5,0.15) 0%, rgba(10,7,4,0.62) 62%, rgba(8,6,3,0.9) 100%), url("/${BUILDING_ART.church}") center 42%/cover no-repeat, #120d08`,
 };
 
 export function Onboarding({
@@ -76,12 +85,29 @@ export function Onboarding({
 
   if (screen === 'title') {
     return (
-      <div style={shell}>
-        <h1 style={{ fontSize: 58, letterSpacing: 6, margin: 0, color: colors.gold }}>PATHLANDS</h1>
-        <div style={{ color: colors.inkDim, marginTop: -8, letterSpacing: 2 }}>
+      <div style={titleShell}>
+        <h1
+          style={{
+            fontSize: 68,
+            letterSpacing: 8,
+            margin: 0,
+            color: colors.gold,
+            textShadow: '0 4px 20px #000, 0 0 2px #000',
+          }}
+        >
+          PATHLANDS
+        </h1>
+        <div
+          style={{
+            color: colors.ink,
+            marginTop: -6,
+            letterSpacing: 3,
+            textShadow: '0 2px 8px #000',
+          }}
+        >
           The road is the game.
         </div>
-        <button style={bigBtn} onClick={() => setScreen('select')}>
+        <button style={{ ...bigBtn, marginTop: 8 }} onClick={() => setScreen('select')}>
           Play
         </button>
         {recovered && (
@@ -128,6 +154,7 @@ export function Onboarding({
         )}
         {save.characters.map((c) => (
           <div key={c.id} style={{ ...panel, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <ClassThumb cls={c.class as CharacterClass} />
             <div style={{ flex: 1 }}>
               <b>{c.name}</b>
               <div style={{ fontSize: 12, color: colors.inkDim }}>
@@ -259,6 +286,37 @@ function CreateScreen({
           Enter the Vale
         </button>
       </div>
+    </div>
+  );
+}
+
+/** A small class portrait for the character-select cards (Mage falls back to a glyph). */
+function ClassThumb({ cls }: { cls: CharacterClass }): JSX.Element {
+  const portrait = CLASS_PORTRAITS[cls];
+  return (
+    <div
+      style={{
+        width: 44,
+        height: 44,
+        flexShrink: 0,
+        borderRadius: 6,
+        overflow: 'hidden',
+        background: '#0d0a07',
+        border: `1px solid ${colors.panelBorder}`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {portrait ? (
+        <img
+          src={`/${portrait}`}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'cover', imageRendering: 'pixelated' }}
+        />
+      ) : (
+        <span style={{ fontSize: 22 }}>🪄</span>
+      )}
     </div>
   );
 }

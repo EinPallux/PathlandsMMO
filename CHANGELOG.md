@@ -4,6 +4,40 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 5 — Polish: The Complete Solo Game] — in progress
 
+### Part 6 — UI/UX & Balance (2026-07-06)
+
+#### Added
+
+- **First-time-player tips** (`client/ui/FirstTimeTips.tsx`): a 6-step guided overlay (move →
+  fight → quests → gear → wider world) shown once per browser (localStorage) and skippable at any
+  step. Tips read the **live keybind map**, so they name the player's actual keys after any rebind.
+  Serves acceptance criterion #1 (a blind playtester reaches level 5 unaided).
+- **Onboarding art pass**: the title screen now sits over the code-authored village art (the Church
+  render) behind a legible vignette, with a larger gold wordmark; the character-select ("continue")
+  cards show **class-portrait thumbnails**.
+- **Balance audit suite** (`shared/test/balance.test.ts`, deterministic): baseline auto-attack
+  **TTK** for all four classes vs at-level normal/elite enemies (every class kills + survives, no
+  class a wild outlier); **Hollow-boss stat-scaling** (the ×4.5 rank HP multiplier lands; a boss
+  swing is not a one-shot vs an at-level tank); **itemization-curve** monotonicity (weapon dps,
+  stat budget, armor all rise with item level; higher rarity is strictly more budget); and a
+  **gold-economy** check (mount affordable from quest gold but a real, saved-for purchase).
+
+#### Changed
+
+- **Grey Wolf mount price 40 → 800 copper** (`shared/data/mounts.ts`). At 40 c it was ~2% of the
+  ~1,916 c a level-20 quester has earned — trivial pocket change; 800 c (~40%) restores the GDD §15
+  "choice pressure" (save for the mount vs. spend on gear/potions), now guarded by the economy audit.
+- **Fixed a latent CSS bug**: `url()` background layers with spaced filenames (e.g. `Medival
+Church.png`, `Medival Inn.png`) were unquoted, so the loading- and title-screen art silently
+  failed to load. Quoted the URLs — the art now renders.
+
+#### Notes
+
+- The balance harness deliberately audits the **floor** (baseline white-damage sustain), not
+  skilled rotation play — a "spam every skill" loop can't fairly drive cast/cooldown/kite/potion
+  discipline. Dynamic full-rotation combat and solo boss clears are covered by `combat.test.ts` and
+  `hollows.test.ts`.
+
 ### Part 5 — Performance & Resilience (2026-07-06)
 
 #### Added
