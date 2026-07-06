@@ -6,7 +6,21 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 5 in progress (2026-07-06) — Part 1: leveling-pace tuning (the balance pass begins).**
+> **Phase 5 in progress (2026-07-06) — Part 2: audio (music + basic SFX).** A small WebAudio
+> layer (`client/platform/audio.ts`): a **master-gain bus** wired live to the Settings
+> master-volume slider, two looping **music beds** — `loginscreen.mp3` on the title/character-
+> select screens and `bgm.mp3` in-game (user-supplied mp3s in `public/assets/audio/`; **missing
+> files play silently**, never throw), and a handful of **synthesized SFX** (skill cast, enemy
+> defeat, level-up chime, quest-complete) so there are no sound-effect files to ship. Browser
+> autoplay policy is handled by unlocking the context on the first click/keypress and queuing
+> the requested track. _Scope intentionally simplified per direction_ — one in-game bed rather
+> than per-zone/situation beds; VFX and richer SFX remain. **274 tests green** (audio is
+> browser-only, verified by play); `pnpm typecheck && lint && build` clean; in-browser the game
+> boots with the AudioContext initialized and **zero console errors** even with the mp3s absent.
+>
+> ---
+>
+> **Part 1 (2026-07-06): leveling-pace tuning (the balance pass begins).**
 > Reconciled the long-flagged XP economy (Phase-4 acceptance #5 / GDD §15): the level curve was
 > **lowered from `400·L^1.55` (~878k) to `250·L^1.55` (~549k)** for a 25–35 h feel, and authored
 > quest XP is **scaled ×2** at the grant + display edge (`QUEST_XP_SCALE` / `scaledQuestXp` in
@@ -564,7 +578,7 @@ _Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass
 
 ### Deliverables
 
-- [ ] **Audio** — music beds per zone/situation (day/night/combat/city/Hollow), SFX for combat/UI/footsteps-by-surface/ambience (birds, wind, water, rain, taverns); WebAudio implementation with volume buses. Procedurally generated/synthesized or hand-composed in-code sequences — no downloaded copyrighted assets.
+- [x] **Audio** — a WebAudio layer (`client/platform/audio.ts`) with a master-gain bus wired to the Settings volume slider, two looping music beds (`loginscreen.mp3` on the title/select screens, `bgm.mp3` in-game; user-supplied mp3s in `public/assets/audio/`, missing files play silently), and synthesized SFX for skill cast / enemy defeat / level-up / quest-complete; autoplay-policy handled by gesture unlock. _Scope simplified per direction: one in-game bed rather than per-zone/situation beds, and a compact procedural SFX set rather than footsteps-by-surface/ambience — those richer layers can return as later polish if wanted._
 - [ ] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels.
 - [ ] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors.
 - [~] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning. _(Part 1: the leveling pace — curve lowered to `250·L^1.55` (~549k) + quest XP ×2, so quests are ~45% of the climb and 1→30 targets ~25–35 h; guarded by `acceptance-p4.test.ts`. Remaining: all-class TTK, itemization curve, Hollow difficulty, gold economy.)_

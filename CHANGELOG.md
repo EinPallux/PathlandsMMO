@@ -4,6 +4,30 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 5 — Polish: The Complete Solo Game] — in progress
 
+### Part 2 — audio: music + basic SFX (2026-07-06)
+
+#### Added
+
+- **WebAudio layer** (`client/platform/audio.ts`, an `audio` singleton): a master-gain bus, a
+  music bus, and an SFX bus. The master volume is wired live to the Settings slider
+  (`App.tsx` syncs `store.masterVolume` → `audio.setMasterVolume`).
+- **Music beds** — `loginscreen.mp3` loops on the title/character-select screens and `bgm.mp3`
+  loops in-game (App switches on character entry). Tracks are user-supplied mp3s in
+  `public/assets/audio/` (README added); a missing/undecodable file **plays silently** and never
+  throws into the game loop. Autoplay policy is handled by unlocking the AudioContext on the
+  first click/keypress and queuing the requested track; track changes cross-fade.
+- **Synthesized SFX** (no asset files) for skill **cast**, enemy **defeat**, **level-up** (a
+  three-note chime), and **quest complete** — short enveloped oscillator blips through the SFX
+  bus. Wired at `CombatDirector.castSlot` / enemy-kill / level-up and `QuestDirector` quest
+  completion.
+- `assetManifest.AUDIO` holds the two track paths; the SFX have none.
+
+#### Notes
+
+- Scope deliberately simplified per direction: a single in-game bed (not per-zone/situation
+  beds) and a compact procedural SFX set. No audio is downloaded or committed — the player
+  supplies their own mp3s; SFX are generated in code.
+
 ### Part 1 — leveling-pace tuning (2026-07-06)
 
 #### Changed

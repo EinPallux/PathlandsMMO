@@ -3,6 +3,7 @@ import type { AccountSave, CharacterSave, SaveGame } from '@pathlands/shared';
 import { Game } from '../game/game.js';
 import { useStore } from '../game/store.js';
 import { upsertCharacterAndAccount } from '../platform/saveStore.js';
+import { audio } from '../platform/audio.js';
 
 type Settings = SaveGame['settings'];
 import { LoadingScreen } from './LoadingScreen.js';
@@ -40,6 +41,18 @@ export function App(): JSX.Element {
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
+  const masterVolume = useStore((s) => s.masterVolume);
+
+  // Keep the audio master bus in sync with the Settings slider (and its seed on boot).
+  useEffect(() => {
+    audio.setMasterVolume(masterVolume);
+  }, [masterVolume]);
+
+  // Login/character-select bed until a character is entered, then the in-game bed.
+  // (Autoplay policy: playback starts on the first click/keypress — see audio.ts.)
+  useEffect(() => {
+    audio.playMusic(entry ? 'game' : 'login');
+  }, [entry]);
 
   useEffect(() => {
     if (!entry || !canvasRef.current || gameRef.current) return;

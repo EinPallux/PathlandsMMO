@@ -62,6 +62,7 @@ import {
   type ConsumableEffect,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
+import { audio } from '../platform/audio.js';
 import {
   useStore,
   type CombatUi,
@@ -540,6 +541,7 @@ export class CombatDirector {
     const skill = skills[slot];
     if (!skill) return;
     applyIntent(this.state, PLAYER_ID, { type: 'CastSkill', skillId: skill.id });
+    audio.sfx('cast');
   }
 
   toggleAutoAttack(): void {
@@ -713,6 +715,7 @@ export class CombatDirector {
     if (prog.level <= this.level) return;
     const crossedFive = this.level < 5 && prog.level >= 5;
     this.level = prog.level;
+    audio.sfx('levelup');
     const cur = this.player;
     const leveled = this.makePlayer(cur.x, cur.z);
     leveled.targetId = cur.targetId;
@@ -807,6 +810,7 @@ export class CombatDirector {
     const def = enemyById(victim.enemyId);
     if (!def) return;
     this.onEnemyKilled?.(victim.enemyId); // quest kill/collect/boss objectives
+    audio.sfx('death');
     const table = buildEnemyLootTable(def, victim.level);
     const result = rollLoot(table, this.state.rng, { forClass: this.cls });
     if (result.gold > 0) {

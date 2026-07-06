@@ -27,6 +27,7 @@ import {
 } from '@pathlands/shared';
 import type { CombatDirector } from './combatDirector.js';
 import { useStore, type QuestEntryUi, type QuestDialogUi, type QuestMarker } from './store.js';
+import { audio } from '../platform/audio.js';
 
 /** World position of each quest-giver = its settlement plaza centre + its offset. */
 const GIVER_POS: Record<string, { x: number; z: number }> = {};
@@ -120,7 +121,10 @@ export class QuestDirector {
     const changed = notices.length > 0;
     for (const n of notices) {
       if (n.type === 'objectiveComplete') this.toast(`Objective: ${n.text}`, 'progress');
-      else if (n.type === 'questComplete') this.toast(`Quest complete: ${n.text}`, 'complete');
+      else if (n.type === 'questComplete') {
+        this.toast(`Quest complete: ${n.text}`, 'complete');
+        audio.sfx('quest');
+      }
     }
     if (changed) this.publish();
   }
