@@ -6,7 +6,25 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-06) — Part 14: side-quest breadth (the ~110 budget).**
+> **Phase 4 in progress (2026-07-06) — Part 15: Hollow boss signature loot.** Each of the
+> five Hollow bosses now drops a **bespoke Epic unique** — the endgame re-run chase:
+> Bramblegut's Wardknot, The Gloomheart, Prismscale Sigil, Forgewarden's Emberseal, and the
+> finale's Waymaker's Lantern. They are class-neutral jewelry (Trinket/Amulet) so any class
+> can wear them, but the stats are still flavored for the killer, so a signature is always
+> usable; each binds on equip and carries a small **live** `bonusCritChance` rider (+1.5% →
+> +3.5% up the ladder), and drops ONLY from its boss at ~20%. Implemented as data +
+> generation: `GeneratedItemSpec` gained an optional `signature`, `generateItem` applies the
+> fixed name / bind / crit / value premium, and `BOSS_SIGNATURES` feeds the boss branch of
+> `buildEnemyLootTable` — no client change (the drop flows through the same `rollLoot` →
+> `lootFrom` → bag path). **254 tests green** (+4: coverage, drop shape + equippability, drop
+> rate, boss-exclusivity); `pnpm typecheck && lint && build` clean; the client boots with zero
+> console errors after the core `items.ts` change. This advances the **Endgame-loop** deliverable
+> (bounties + rares + boss uniques now done). **Next:** the remaining endgame polish (profession
+> masteries, the world-event stub) and Phase-5 pace tuning.
+>
+> ---
+>
+> **Part 14 (2026-07-06): side-quest breadth (the ~110 budget).**
 > The zone side-quest arcs are filled out from 36 quests to **111**, hosted by **24 givers**
 > (10 new: Innkeep Mirabel, Houndmaster Pella, Sister Elowen, Ranger Ash, Miner Jossa,
 > Quartermaster Vell, Lampwright Ned, Pilgrim Asha, Huscarl Bran, Salt-Merchant Pryor). Every
@@ -443,7 +461,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [x] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant **account-wide** Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10 (Part 11 made Points/perks account-wide, save v10). _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
-- [~] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate) + **named rare-elite hunts**. Bounties: a data-driven pool (`shared/data/bounties.ts`), a deterministic daily rotation, a `BountyDirector` tracking kill/gather progress that pays gold + XP + the "Taskmaster" Deed, and a Bounty Board panel (**O**); save v9. Named rares (Part 12): 8 wandering Elite-rank hunt targets across the zones (`named` flag in `shared/data/enemies.ts` + spawn points in `spawns.ts`, ~15-min respawns), dropping Elite loot and feeding the new **Rarebane** Deed. _(Remaining: Hollow boss re-run loot tables, profession masteries, more rares + bespoke unique-drop tables, and the "restore the final Waystone" world-event stub.)_
+- [~] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate) + **named rare-elite hunts** + **Hollow boss signature loot**. Bounties: a data-driven pool (`shared/data/bounties.ts`), a deterministic daily rotation, a `BountyDirector` tracking kill/gather progress that pays gold + XP + the "Taskmaster" Deed, and a Bounty Board panel (**O**); save v9. Named rares (Part 12): 8 wandering Elite-rank hunt targets across the zones (`named` flag in `shared/data/enemies.ts` + spawn points in `spawns.ts`, ~15-min respawns), dropping Elite loot and feeding the **Rarebane** Deed. Boss uniques (Part 15): each of the five Hollow bosses drops a bespoke Epic signature (`BOSS_SIGNATURES` → `buildEnemyLootTable`; class-neutral jewelry, bind-on-equip, a live crit rider, ~20% per kill) — the re-run gear chase. _(Remaining: profession masteries and the "restore the final Waystone" world-event stub.)_
 - [x] **Supporting systems** — the **Waymeet Bank** (a 50-slot shared vault + a mailbox) as a single `BankPanel` (**B**) with Vault / Mail tabs: move stacks between bag and vault; read letters from world NPCs and claim their gold gifts; the Steward's welcome letter is delivered on reaching level 5. Save v8 persists the vault + inbox. **Settings & keybinds (Part 13):** a `SettingsPanel` (Escape when nothing else is open) with view-distance and master-volume sliders and a full **rebindable keybind** list for the 14 panel/action keys — click-to-rebind with a capture-phase swallow, reserved-key refusal, conflict swap, and reset-to-defaults; the map is pure data (`shared/data/keybinds.ts`), read live each frame, persisted in `settings` (**save v11**). _(Remaining polish, deferred to Phase 5: bank-building/mailbox-prop gating and item mail attachments.)_
 
 ### Acceptance Criteria

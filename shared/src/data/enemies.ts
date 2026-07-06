@@ -423,9 +423,78 @@ export function enemyStatsFor(def: EnemyDef, level: number, nearbyPlayers = 1): 
 }
 
 /**
+ * A Hollow boss's bespoke unique drop — the endgame re-run chase (GDD §6). Each of
+ * the five Hollow bosses has one signature Epic (class-neutral jewelry so any class
+ * can use it; the stats are still flavored for the killer). It binds on equip and
+ * carries a small flat crit rider, and it drops ONLY from that boss.
+ */
+export interface BossSignature {
+  /** Fixed display name. */
+  name: string;
+  /** Stable id key (folded into the item instance id). */
+  key: string;
+  /** Slot — Trinket/Amulet, so it never class-locks. */
+  slot: EquipSlot;
+  /** Flat bonus-crit rider (fraction). */
+  bonusCritChance: number;
+  /** Drop chance per boss kill. */
+  chance: number;
+  /** Bestiary flavor line. */
+  blurb: string;
+}
+
+export const BOSS_SIGNATURES: Record<string, BossSignature> = {
+  bossBriarking: {
+    name: "Bramblegut's Wardknot",
+    key: 'bramblegutWardknot',
+    slot: EquipSlot.Amulet,
+    bonusCritChance: 0.015,
+    chance: 0.2,
+    blurb: 'A knot of thorn and warlord-hair, cut from Bramblegut himself.',
+  },
+  bossGloommother: {
+    name: 'The Gloomheart',
+    key: 'gloomheart',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.02,
+    chance: 0.2,
+    blurb: 'The still-warm heart-node of Mother Gnarlmaw, pulsing with spent blight.',
+  },
+  bossCrystalWyrm: {
+    name: 'Prismscale Sigil',
+    key: 'prismscaleSigil',
+    slot: EquipSlot.Amulet,
+    bonusCritChance: 0.025,
+    chance: 0.2,
+    blurb: "A single scale from Prismhide's crown, that throws back the light it is shown.",
+  },
+  bossIronvein: {
+    name: "Forgewarden's Emberseal",
+    key: 'forgewardenEmberseal',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.03,
+    chance: 0.2,
+    blurb: "The seal off Urzul's forge, never cooled, that keeps an ember for its bearer.",
+  },
+  bossLastWaymaker: {
+    name: "The Waymaker's Lantern",
+    key: 'waymakersLantern',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.035,
+    chance: 0.22,
+    blurb: 'The lantern the last Waymaker carried into the dark, still lit against all reason.',
+  },
+};
+
+/** The signature unique a Hollow boss drops, if any. */
+export function bossSignature(id: string): BossSignature | undefined {
+  return BOSS_SIGNATURES[id];
+}
+
+/**
  * Build a level-scaled loot table for an enemy. Normal mobs drop a little gold and
  * an occasional item; elites drop better; bosses have a curated table with
- * guaranteed picks and an Epic chance (GDD §6).
+ * guaranteed picks, an Epic chance, and a bespoke signature unique (GDD §6).
  */
 export function buildEnemyLootTable(def: EnemyDef, level: number): LootTable {
   const anyArmorSlot = [
@@ -438,6 +507,7 @@ export function buildEnemyLootTable(def: EnemyDef, level: number): LootTable {
   const pickSlot = anyArmorSlot[level % anyArmorSlot.length]!;
 
   if (def.rank === EnemyRank.Boss) {
+    const sig = BOSS_SIGNATURES[def.id];
     return {
       id: `loot.${def.id}`,
       gold: [level * 20, level * 40],
@@ -447,6 +517,20 @@ export function buildEnemyLootTable(def: EnemyDef, level: number): LootTable {
           chance: 0.15,
           generate: { slot: EquipSlot.MainHand, rarity: Rarity.Epic, reqLevel: level },
         },
+        // The bespoke signature unique — the reason to re-run the Hollow.
+        ...(sig
+          ? [
+              {
+                chance: sig.chance,
+                generate: {
+                  slot: sig.slot,
+                  rarity: Rarity.Epic,
+                  reqLevel: level,
+                  signature: { name: sig.name, key: sig.key, bonusCritChance: sig.bonusCritChance },
+                },
+              },
+            ]
+          : []),
       ],
       pickOne: {
         picks: 2,

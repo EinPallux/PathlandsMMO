@@ -152,6 +152,20 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 - **No durability/repair** (cut for simplicity — gold sinks live elsewhere). Items bind on equip only for Epic; everything else trades freely (matters in Phase 6).
 - Loot: per-enemy loot tables (`shared/data/loot/`), seeded rolls; world drops + zone-flavored drops; bosses use small curated tables with 2–3 guaranteed picks. Party loot (Phase 6): round-robin with need-roll on Rare+.
 
+> **Implementation (Phase 4 Part 15) — Hollow boss signature loot.** Each of the five
+> Hollow bosses drops one **bespoke Epic unique** — the endgame re-run chase (`BOSS_SIGNATURES`
+> in `shared/data/enemies.ts`, fed into the boss branch of `buildEnemyLootTable`): Bramblegut's
+> Wardknot, The Gloomheart, Prismscale Sigil, Forgewarden's Emberseal, and the finale's
+> Waymaker's Lantern. To stay **solo-first**, signatures are **class-neutral jewelry**
+> (Trinket/Amulet) whose stats are generated for the killer's class — so a signature is always
+> usable by whoever felled the boss — while the **name is fixed**, it **binds on equip**, it
+> carries a small **live** `bonusCritChance` rider (+1.5% → +3.5% up the boss ladder, consumed
+> by combat + shown in the tooltip), it sells for a 1.5× premium, and it drops **only** from its
+> boss at ~20% per kill. Mechanically this rides the existing generator: `GeneratedItemSpec`
+> gained an optional `signature` that `generateItem` applies, so no new item-registry or client
+> code was needed — the drop flows through the same `rollLoot` → `CombatDirector.lootFrom` → bag
+> path as any other drop.
+
 ## 7. Death & Travel
 
 - Death → soul-release prompt → respawn at **last-activated Waystone** at full HP with **Winded** (−15% stats, 60 s). No XP loss, no item loss.

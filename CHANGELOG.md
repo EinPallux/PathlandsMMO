@@ -4,6 +4,32 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 15 — Hollow boss signature loot (2026-07-06)
+
+#### Added
+
+- **Bespoke unique drops for all five Hollow bosses** (`shared/data/enemies` `BOSS_SIGNATURES`):
+  Bramblegut's Wardknot, The Gloomheart, Prismscale Sigil, Forgewarden's Emberseal, and The
+  Waymaker's Lantern. Each is a class-neutral Epic (Trinket/Amulet), binds on equip, carries a
+  live flat `bonusCritChance` rider (+1.5% → +3.5% up the boss ladder), and drops ONLY from its
+  boss at ~20% per kill — the endgame re-run chase.
+- **`GeneratedItemSpec.signature`** (`shared/data/items`): a bespoke-unique rider handled by
+  `generateItem` — the item keeps its class-flavored generated stats (always usable by the
+  killer) but takes a fixed name, a `sig:` id, bind-on-equip, the crit rider, and a 1.5× vendor
+  value. `buildEnemyLootTable`'s boss branch appends the signature drop.
+
+#### Notes
+
+- No client change: signature drops flow through the existing `rollLoot` → `CombatDirector.lootFrom`
+  → bag path (which already passes the killer's class), and `bonusCritChance` is already consumed
+  by combat and shown in the character tooltip.
+
+#### Tests
+
+- +4 in `bossLoot.test.ts`: every Hollow boss has a distinct signature (and only bosses do); the
+  drop is a named, Epic, bind-on-equip unique with the crit rider and is equippable by the killer;
+  it fires near its configured rate; and normal/elite tables never produce it. **254 total.**
+
 ### Part 14 — side-quest breadth: the ~110-quest budget (2026-07-06)
 
 #### Added
