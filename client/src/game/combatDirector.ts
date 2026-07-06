@@ -16,6 +16,7 @@ import {
   applyIntent,
   drainEvents,
   makePlayerEntity,
+  makeEnemyById,
   buildEnemyModel,
   enemyById,
   skillsKnownAt,
@@ -60,6 +61,9 @@ import {
   type GeneratedItemSpec,
   type QuestReward,
   type ConsumableEffect,
+  type Intent,
+  type NetEntity,
+  type NetCombatSelf,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
 import { audio } from '../platform/audio.js';
@@ -174,6 +178,28 @@ export class CombatDirector {
   private readonly tmp = new THREE.Vector3();
   private hudTimer = 0;
   private blightTimer = 0;
+
+  /**
+   * MMO mode (Stage 2b). When set, enemies come from the SERVER (mirrored into the local
+   * state as passive targets) and the player's own combat state is reconciled from the
+   * server; combat intents are forwarded to it. The local combat sim still ticks the
+   * player's cooldowns/resource for a responsive hotbar (prediction), but the server is
+   * authoritative — it owns enemy AI/HP, damage, death, XP, and loot.
+   */
+  private netSink: {
+    enemies: () => NetEntity[];
+    combatSelf: () => NetCombatSelf | null;
+    send: (intent: Intent) => void;
+  } | null = null;
+
+  /** Wire the director to the network (called once when the game connects). */
+  setNetSink(sink: CombatDirector['netSink']): void {
+    this.netSink = sink;
+  }
+
+  private get networked(): boolean {
+    return this.netSink !== null;
+  }
 
   constructor(
     scene: THREE.Scene,
@@ -550,7 +576,14 @@ export class CombatDirector {
     const skills = this.hotbarSkills();
     const skill = skills[slot];
     if (!skill) return;
-    applyIntent(this.state, PLAYER_ID, { type: 'CastSkill', skillId: skill.id });
+    const p0 = this.player;
+    const intent: Intent = {
+      type: 'CastSkill',
+      skillId: skill.id,
+      ...(p0.targetId !== null ? { targetId: p0.targetId } : {}),
+    };
+    applyIntent(this.state, PLAYER_ID, intent); // local prediction (cooldown/resource/feedback)
+    this.netSink?.send(intent); // server is authoritative
     audio.sfx('cast');
     // Cast flash at the caster, tinted by the skill's damage school.
     const school = skill.effects.find((e) => 'school' in e)?.school ?? 'physical';
@@ -569,7 +602,16 @@ export class CombatDirector {
 
   toggleAutoAttack(): void {
     const p = this.player;
-    applyIntent(this.state, PLAYER_ID, { type: 'ToggleAutoAttack', on: !p.autoAttack });
+    const intent: Intent = { type: 'ToggleAutoAttack', on: !p.autoAttack };
+    applyIntent(this.state, PLAYER_ID, intent);
+    this.netSink?.send(intent);
+  }
+
+  /** Set the player's target (locally + on the server). */
+  private setTarget(targetId: string): void {
+    const intent: Intent = { type: 'SetTarget', targetId };
+    applyIntent(this.state, PLAYER_ID, intent);
+    this.netSink?.send(intent);
   }
 
   cycleTarget(): void {
@@ -579,8 +621,7 @@ export class CombatDirector {
       .sort((a, b) => this.dist(p, a) - this.dist(p, b));
     if (foes.length === 0) return;
     const idx = foes.findIndex((e) => e.id === p.targetId);
-    const next = foes[(idx + 1) % foes.length]!;
-    applyIntent(this.state, PLAYER_ID, { type: 'SetTarget', targetId: next.id });
+    this.setTarget(foes[(idx + 1) % foes.length]!.id);
   }
 
   /** Pick the enemy nearest the screen crosshair (camera centre). */
@@ -597,12 +638,18 @@ export class CombatDirector {
         best = e.id;
       }
     }
-    if (best) applyIntent(this.state, PLAYER_ID, { type: 'SetTarget', targetId: best });
+    if (best !== null) this.setTarget(best);
   }
 
   releaseSpirit(): void {
     const p = this.player;
     if (!p.dead) return;
+    if (this.networked) {
+      // The server owns death + respawn; it revives us in place after a short delay
+      // (Stage 2c relocates to a Waystone). Just forward the release.
+      this.netSink?.send({ type: 'ReleaseSpirit' });
+      return;
+    }
     // Respawn at the nearest activated Waystone, else the starting plaza (GDD §7).
     const ws = nearestActivated(p.x, p.z, this.discovered);
     const rx = ws ? ws.x : this.spawnX;
@@ -798,6 +845,18 @@ export class CombatDirector {
       }
     }
 
+    if (this.networked) {
+      // MMO mode: the server owns enemies + combat outcomes. Mirror the server's enemies in
+      // (as passive targets), tick the shared sim for the player's OWN prediction (cooldowns,
+      // resource, cast/auto feedback vs. those passive targets), then reconcile our authoritative
+      // health/resource from the server.
+      this.mirrorServerEnemies();
+      stepSim(this.state, this.ctx);
+      this.consumeEvents();
+      this.reconcileFromServer();
+      return;
+    }
+
     stepSim(this.state, this.ctx);
     // Consume events (incl. loot on death) BEFORE the spawner reaps corpses, so a
     // freshly-killed enemy is still in the state when we roll its loot table.
@@ -813,6 +872,64 @@ export class CombatDirector {
       }
     }
     this.despawnDistant(px2, pz2);
+  }
+
+  /**
+   * Upsert the server's enemies into the local state as PASSIVE targets (server owns their
+   * AI/HP), and drop any the server no longer reports. Their position/facing/hp/anim-state
+   * are the server's truth; local auto-attack/aggro/abilities are stripped so the client
+   * never simulates them attacking.
+   */
+  private mirrorServerEnemies(): void {
+    const sink = this.netSink;
+    if (sink === null) return;
+    const seen = new Set<string>();
+    for (const ne of sink.enemies()) {
+      seen.add(ne.id);
+      let e = this.state.entities.get(ne.id);
+      if (e === undefined || e.faction !== 'enemy' || e.enemyId !== ne.enemyId) {
+        const made = makeEnemyById(ne.id, ne.enemyId, ne.level, ne.x, ne.y, ne.z);
+        if (made === null) continue;
+        e = made;
+        this.state.entities.set(ne.id, e);
+      }
+      e.x = ne.x;
+      e.y = ne.y;
+      e.z = ne.z;
+      e.yaw = ne.yaw;
+      e.hp = ne.hp;
+      e.maxHP = ne.maxHP;
+      e.dead = false;
+      e.aiState = (ne.state as CombatEntity['aiState']) ?? 'idle';
+      // Passive locally — the server drives all enemy behaviour. Pinning the leash home to
+      // the current server position (and zeroing aggro) keeps the local AI from ever moving
+      // it, so its rendered position is purely the server's truth.
+      e.autoAttack = false;
+      e.aggroRadius = 0;
+      e.abilities = [];
+      e.threat = {};
+      e.spawnX = ne.x;
+      e.spawnZ = ne.z;
+    }
+    for (const [id, e] of this.state.entities) {
+      if (e.faction === 'enemy' && !seen.has(id)) this.state.entities.delete(id);
+    }
+  }
+
+  /** Overwrite our own health/resource/alive-state with the server's authoritative combat-self. */
+  private reconcileFromServer(): void {
+    const cs = this.netSink?.combatSelf();
+    if (cs === undefined || cs === null) return;
+    const p = this.player;
+    p.hp = cs.hp;
+    p.maxHP = cs.maxHP;
+    p.resource = cs.resource;
+    p.maxResource = cs.maxResource;
+    p.dead = cs.dead;
+    // A target the server dropped, or one that has despawned, clears the target frame.
+    if (p.targetId !== null && this.state.entities.get(p.targetId) === undefined) {
+      p.targetId = null;
+    }
   }
 
   /** Remove enemies whose home (spawn) point is beyond DESPAWN_RADIUS of the player. */
@@ -859,8 +976,11 @@ export class CombatDirector {
         });
       }
     } else if (ev.type === 'xp') {
-      this.gainXp(ev.amount);
+      // MMO: XP / loot / death are the SERVER's authority (Stage 2c). Locally we only show
+      // the predicted damage/heal floaters above; the enemy despawns when the server drops it.
+      if (!this.networked) this.gainXp(ev.amount);
     } else if (ev.type === 'death') {
+      if (this.networked) return;
       const victim = this.state.entities.get(ev.entityId);
       if (victim) {
         this.vfx.burst(victim.x, victim.y + 0.9, victim.z, {

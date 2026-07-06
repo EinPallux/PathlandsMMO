@@ -6,6 +6,34 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 11: Server-authoritative combat, Stage 2b (the client flip).**
+> The client now **renders the server's enemies and fights them server-authoritatively** —
+> combat becomes truly multiplayer (every player sees + fights the same monsters). This half
+> is browser-visual, so it lands for the **first VPS combat test**. Landed:
+>
+> - **NetClient** ingests the `NetEntity` / `ServerCombatSelf` frames it had been ignoring:
+>   `enemies()` (latest per-enemy state) + `combatSelf()` (own hp/resource/target/cast),
+>   cleared on disconnect; combat intents reuse `sendIntent`.
+> - **`CombatDirector` networked mode** (a `netSink` the game wires when connecting): instead
+>   of its local spawner + enemy AI, it **mirrors the server's enemies** into the shared combat
+>   state as passive targets (server owns their position/HP/AI), ticks the shared sim only for
+>   the player's own **prediction** (cooldowns, resource, cast/auto feedback), then **reconciles
+>   the player's authoritative hp/resource/alive-state** from `ServerCombatSelf`. XP / death /
+>   loot are suppressed client-side — the server owns them. All combat inputs (cast, target,
+>   auto-attack, release) are **forwarded to the server**.
+> - **Maximum reuse**: because server enemies are mirrored into the existing `CombatState`, the
+>   whole rendering / nameplate / HUD / targeting machinery works unchanged — enemies draw,
+>   HP nameplates show, the target frame + player frame read server truth.
+>
+> **362 tests green**; `pnpm typecheck` + `lint` + `build` (284 KB gzip) clean. _This half is
+> **client rendering/HUD**, so its in-browser behaviour (seeing + fighting the shared enemies,
+> the combat HUD off server state) is what the **first VPS combat test verifies** — the server
+> it talks to is headless-proven._ _Next: **Stage 2c** — XP / loot / death / level-ups awarded
+> server-side + persisted (with proper Waystone respawn), and a combat-events channel for
+> authoritative damage floaters; plus enemy cast-bar replication for the target frame._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 10: Server-authoritative combat, Stage 2a (players in the sim).**
 > The server now runs **full combat**, players included. Server-side + fully headless-tested;
 > the client flip (rendering + HUD off the server) is Stage 2b. Landed:

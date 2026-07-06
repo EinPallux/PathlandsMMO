@@ -4,6 +4,41 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 11 — Server-authoritative combat, Stage 2b: the client flip (2026-07-06)
+
+The client now renders the server's enemies and fights them server-authoritatively —
+combat is truly multiplayer. This half is browser-visual (verified on the VPS combat test);
+the server it talks to is headless-proven (Parts 9–10).
+
+#### Added
+
+- **`client/src/net/netClient.ts`**: ingests the `NetEntity` (snapshot/delta) and
+  `ServerCombatSelf` frames it had been ignoring — an `enemyMap` + `lastCombatSelf`, cleared
+  on disconnect — and exposes `enemies()` (latest per-enemy state) + `combatSelf()`. Combat
+  intents reuse the existing `sendIntent`.
+- **`CombatDirector` networked mode** (`client/src/game/combatDirector.ts`): a `netSink` the
+  game wires on connect. In this mode `simTick` **mirrors the server's enemies** into the
+  shared `CombatState` as passive targets (server owns position/HP/AI; local aggro/auto/
+  abilities stripped and the leash home pinned so the local sim never moves them), ticks the
+  shared sim only for the player's own **prediction** (cooldowns / resource / cast + auto
+  feedback), then **reconciles** the player's authoritative hp / resource / alive-state from
+  `ServerCombatSelf`. `onEvent` suppresses XP / death / loot when networked (server-owned).
+  `castSlot` / `toggleAutoAttack` / `cycleTarget` / `pickTarget` / `releaseSpirit` forward
+  their intents to the server; a networked `releaseSpirit` no longer respawns locally (the
+  server owns death + respawn).
+- **`client/src/game/game.ts`**: wires `combat.setNetSink({ enemies, combatSelf, send })` to
+  the `NetClient` when the game connects.
+
+#### Notes
+
+- Because server enemies are mirrored into the existing local `CombatState`, the entire enemy
+  rendering / HP-nameplate / combat-HUD / targeting machinery works **unchanged** — a
+  deliberately small, high-reuse flip. Combat feel is tab-target-tolerant (~1 broadcast of
+  latency); authoritative damage floaters + enemy cast bars arrive with the Stage 2c event
+  channel. A known follow-up: the client's local player identity must adopt the server's
+  persisted character (level/class) on login (Onboarding-v2 character fetch) so prediction and
+  the hotbar match the server player exactly.
+
 ### Part 10 — Server-authoritative combat, Stage 2a (2026-07-06)
 
 Players now live in the server's combat sim: enemies attack them and their skill casts

@@ -26,6 +26,8 @@ import {
   type Intent,
   type MoveIntent,
   type MoveState,
+  type NetCombatSelf,
+  type NetEntity,
   type NetPlayer,
   type ServerSelf,
 } from '@pathlands/shared';
@@ -126,6 +128,10 @@ export class NetClient {
 
   private ws: WebSocket | null = null;
   private readonly tracks = new Map<string, Track>();
+  /** Latest server-authoritative state of each visible enemy (Stage 2b), keyed by id. */
+  private readonly enemyMap = new Map<string, NetEntity>();
+  /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
+  private lastCombatSelf: NetCombatSelf | null = null;
   private seq = 0;
   private localTick = 0;
   private readonly renderDelayMs: number;
@@ -206,6 +212,8 @@ export class NetClient {
         this.tracks.clear();
         this.updateClock(msg.tick);
         for (const p of msg.players) this.ingest(p, msg.tick);
+        this.enemyMap.clear();
+        for (const e of msg.entities) this.enemyMap.set(e.id, e);
         this.emitStatus();
         break;
       }
@@ -213,11 +221,16 @@ export class NetClient {
         this.updateClock(msg.tick);
         for (const p of msg.players) this.ingest(p, msg.tick);
         for (const id of msg.gone) this.tracks.delete(id);
+        for (const e of msg.entities) this.enemyMap.set(e.id, e);
+        for (const id of msg.goneEntities) this.enemyMap.delete(id);
         this.emitStatus();
         break;
       }
       case 'self':
         this.pendingSelf = msg; // last-wins — only the newest authoritative state matters
+        break;
+      case 'combatSelf':
+        this.lastCombatSelf = msg.self; // last-wins own combat state (hp / resource / target / cast)
         break;
       case 'pong': {
         this.lastPongMs = this.nowMs(); // any pong proves the server is alive
@@ -306,6 +319,8 @@ export class NetClient {
     this.history.length = 0;
     this.pendingSelf = null;
     this.clockInit = false;
+    this.enemyMap.clear();
+    this.lastCombatSelf = null;
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
       this.scheduleReconnect();
@@ -393,6 +408,18 @@ export class NetClient {
     while (i < this.history.length && this.history[i]!.seq <= ackedSeq) i++;
     if (i > 0) this.history.splice(0, i);
     return this.history.map((h) => h.intent);
+  }
+
+  // --- server-authoritative combat (Stage 2b) ---
+
+  /** The latest server-authoritative state of every visible enemy (raw, not interpolated). */
+  enemies(): NetEntity[] {
+    return [...this.enemyMap.values()];
+  }
+
+  /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
+  combatSelf(): NetCombatSelf | null {
+    return this.lastCombatSelf;
   }
 
   // --- remote rendering ---

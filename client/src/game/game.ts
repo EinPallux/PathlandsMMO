@@ -252,7 +252,7 @@ export class Game {
 
     // MMO-only (Phase 6): the client always connects to the authoritative server. The URL
     // defaults to the page's own origin (resolveServerUrl) so the VPS deploy is zero-config.
-    this.net = new NetClient({
+    const net = new NetClient({
       url: resolveServerUrl(),
       identity: {
         name: character?.name ?? 'Wanderer',
@@ -272,10 +272,18 @@ export class Game {
         }),
       ...(onAuthError !== undefined ? { onAuthError } : {}),
     });
+    this.net = net;
     this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+    // Stage 2b: the combat director takes its enemies + own combat state from the server and
+    // forwards combat intents to it (the server is authoritative over all combat outcomes).
+    this.combat.setNetSink({
+      enemies: () => net.enemies(),
+      combatSelf: () => net.combatSelf(),
+      send: (intent) => net.sendIntent(intent),
+    });
     // Fresh session: clear any scrollback left from a previous game instance.
     useStore.setState({ chat: [], chatTyping: false });
-    this.net.connect();
+    net.connect();
 
     this.effectiveVD = viewDist;
     this.registerCommands();
