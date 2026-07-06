@@ -6,6 +6,28 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 8: MMO-only pivot (the standalone build is retired).**
+> Direction change (owner call): Pathlands is now **MMO-only** — there is no offline
+> single-player mode. Landed:
+>
+> - **The client always connects to the authoritative server.** A new `resolveServerUrl()`
+>   defaults the server URL to the page's **own origin** (`wss://host` under TLS), so the VPS
+>   deploy — where nginx serves the static client and reverse-proxies the WebSocket on the
+>   same host — is zero-config. Local dev still points `VITE_PATHLANDS_SERVER` at
+>   `pnpm dev:server`.
+> - **Account login always gates the world.** The opt-in `VITE_PATHLANDS_SERVER` checks are
+>   gone from `App.tsx`/`game.ts`; the login screen and the ws connection are unconditional.
+> - **Docs realigned** — `CLAUDE.md` (direction + deployment), ARCHITECTURE, SERVER_DEPLOY:
+>   the VPS is canonical; Vercel is optional and only when pointed at the VPS `wss://`.
+>
+> The client keeps its rich gameplay systems (they become client-prediction + rendering as
+> authority migrates); local IndexedDB saves stay as a bootstrap cache with the **server as
+> source of truth**. `pnpm typecheck` + `lint` + `build` (284 KB gzip) clean. _Next: the big
+> one — **server-authoritative combat & entities** (enemies spawn/AI/replicate on the server
+> tick, then skill casts resolve server-side)._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 7: Presence & emotes (the world feels populated).**
 > With movement + chat live, this makes other players legible: you can see who they are and
 > they can express themselves. Landed:

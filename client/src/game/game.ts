@@ -29,6 +29,7 @@ import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
 import { RemotePlayerRenderer } from '../engine/remotePlayers.js';
 import { NetClient } from '../net/netClient.js';
+import { resolveServerUrl } from '../net/serverUrl.js';
 import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
@@ -102,10 +103,11 @@ export class Game {
   /** Scratch vector for projecting remote-player heads to screen nameplates. */
   private readonly plateProj = new THREE.Vector3();
   /**
-   * Phase-6 netcode, OPT-IN: constructed only when a server URL is configured
-   * (VITE_PATHLANDS_SERVER), so the single-player build has no server dependency.
-   * The NetClient streams our intents up and other players down; the RemotePlayer-
-   * Renderer draws them. Our own player stays locally predicted.
+   * Phase-6 netcode (MMO-only): always constructed — the client connects to the
+   * authoritative server (default: same origin, see resolveServerUrl). The NetClient
+   * streams our intents up and other players down; the RemotePlayerRenderer draws them.
+   * Our own player stays locally predicted + server-reconciled. The fields stay nullable
+   * so the many `this.net?.` guards read unchanged.
    */
   private readonly net: NetClient | null;
   private readonly remoteRenderer: RemotePlayerRenderer | null;
@@ -248,38 +250,32 @@ export class Game {
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
-    // Opt-in multiplayer (Phase 6): connect only when a server URL is configured. The
-    // static single-player deploy leaves this unset and runs exactly as before.
-    const serverUrl = import.meta.env.VITE_PATHLANDS_SERVER as string | undefined;
-    if (serverUrl !== undefined && serverUrl.length > 0) {
-      this.net = new NetClient({
-        url: serverUrl,
-        identity: {
-          name: character?.name ?? 'Wanderer',
-          cls: this.currentClass,
-          level: character?.level ?? 1,
-          ...(serverToken !== null ? { token: serverToken } : {}),
-        },
-        onStatus: (st) =>
-          useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
-        onChat: (line) =>
-          useStore.getState().pushChat({
-            from: line.from,
-            text: line.text,
-            self: line.self,
-            system: false,
-            emote: line.emote,
-          }),
-        ...(onAuthError !== undefined ? { onAuthError } : {}),
-      });
-      this.remoteRenderer = new RemotePlayerRenderer(this.scene);
-      // Fresh session: clear any scrollback left from a previous game instance.
-      useStore.setState({ chat: [], chatTyping: false });
-      this.net.connect();
-    } else {
-      this.net = null;
-      this.remoteRenderer = null;
-    }
+    // MMO-only (Phase 6): the client always connects to the authoritative server. The URL
+    // defaults to the page's own origin (resolveServerUrl) so the VPS deploy is zero-config.
+    this.net = new NetClient({
+      url: resolveServerUrl(),
+      identity: {
+        name: character?.name ?? 'Wanderer',
+        cls: this.currentClass,
+        level: character?.level ?? 1,
+        ...(serverToken !== null ? { token: serverToken } : {}),
+      },
+      onStatus: (st) =>
+        useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+      onChat: (line) =>
+        useStore.getState().pushChat({
+          from: line.from,
+          text: line.text,
+          self: line.self,
+          system: false,
+          emote: line.emote,
+        }),
+      ...(onAuthError !== undefined ? { onAuthError } : {}),
+    });
+    this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+    // Fresh session: clear any scrollback left from a previous game instance.
+    useStore.setState({ chat: [], chatTyping: false });
+    this.net.connect();
 
     this.effectiveVD = viewDist;
     this.registerCommands();

@@ -1,6 +1,6 @@
 # Pathlands — Technical Architecture
 
-Engine and infrastructure spec. The governing constraint: **Phases 1–5 ship a client-only game on Vercel; Phase 6 moves authority to a Node.js server on a Linux VPS without rewriting game logic.** Every boundary below exists to serve that migration.
+Engine and infrastructure spec. The governing constraint: **all game rules live in `shared/` (pure, deterministic, no wall-clock) so Phase 6 moves authority to a Node.js server on a Linux VPS without rewriting game logic.** Phases 1–5 built that engine + content behind a client that ran standalone; as of 2026-07-06 the project is **MMO-only** — the client always connects to the authoritative server (the standalone build is retired). Every boundary below exists to serve that migration.
 
 ## 1. Stack & Rationale
 
@@ -86,7 +86,7 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 > **Status (Phase 6 Parts 1–2):** the **movement netcode is complete**. `shared/proto/net.ts`
 > defines the message schema + codec; `server/` runs the authoritative 20 Hz sim on the shared
 > movement rules with a **per-player input FIFO** and broadcasts per-subscriber at 10 Hz;
-> `client/src/net/netClient.ts` (opt-in) sends intents, **predicts + reconciles** own movement, and
+> `client/src/net/netClient.ts` (always-on, MMO-only) sends intents, **predicts + reconciles** own movement, and
 > interpolates remotes on the server-tick timeline. Built in Part 2: **client-side prediction
 > reconciliation** (the `self` message carries own authoritative physics + `ackedSeq`; the client
 > replays unacked inputs and smooths the residual), **3×3 chunk interest management** (per-subscriber

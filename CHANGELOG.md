@@ -4,6 +4,30 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 8 — MMO-only pivot (2026-07-06)
+
+Direction change (owner call): Pathlands is now **MMO-only** — the standalone offline
+single-player build is retired. The client always connects to the authoritative server and
+always requires an account login.
+
+#### Added
+
+- **`client/src/net/serverUrl.ts`** — `resolveServerUrl()` returns `VITE_PATHLANDS_SERVER`
+  when set, else the page's own origin with a `ws(s)://` scheme. The VPS deploy (nginx serves
+  the client and proxies the WebSocket on the same host) is therefore zero-config.
+
+#### Changed
+
+- **`App.tsx`** — the server URL is always resolved; the account **login screen always
+  gates** the world (the `VITE_PATHLANDS_SERVER !== undefined` opt-in checks are gone), and
+  the cloud-save upload is unconditional.
+- **`game.ts`** — the `NetClient` + `RemotePlayerRenderer` are **always constructed** and the
+  socket always connects (no more single-player `net = null` branch). Fields stay nullable so
+  the existing `this.net?.` guards read unchanged.
+- **Docs** — `CLAUDE.md` (opening direction + Deployment section), ROADMAP, ARCHITECTURE,
+  SERVER_DEPLOY: the VPS is canonical; the client has a hard server dependency by design;
+  local IndexedDB saves are a bootstrap cache with the server as source of truth.
+
 ### Part 7 — Presence & emotes (2026-07-06)
 
 Make other players legible in the shared world: see who they are, and let them emote.

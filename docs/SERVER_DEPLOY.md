@@ -1,9 +1,12 @@
 # Deploying the Pathlands Game Server (Phase 6)
 
 This runs the **authoritative multiplayer server** on an Ubuntu VPS (e.g. Hostinger),
-behind nginx with TLS so browsers can reach it over `wss://`. The **client** stays a
-static build (Vercel or the same VPS — see `docs/DEPLOY.md`); it only connects to a
-server when built with `VITE_PATHLANDS_SERVER` set.
+behind nginx with TLS so browsers can reach it over `wss://`. Pathlands is **MMO-only** —
+the client always connects to a server. When nginx serves the static client **and**
+reverse-proxies the WebSocket on the same host (the setup below), the client's default
+server URL is its own origin, so no build-time configuration is needed. You only set
+`VITE_PATHLANDS_SERVER` when the client is hosted **separately** from the server (e.g. on
+Vercel, pointed at `wss://play.yourdomain.com`).
 
 > Scope: as of Phase 6 Parts 1–4 the server is authoritative over **player movement**
 > (two players see each other move, reconciled + interest-managed) and has **accounts +
@@ -77,10 +80,18 @@ curl https://play.yourdomain.com/status      # → {"status":"ok","players":0,..
 `docker compose logs -f game` should show
 `[pathlands] server listening on ws://0.0.0.0:8080 (20 Hz sim ...)`.
 
-## 6. Build the client to point at your server
+## 6. Build the client
 
-The client is a **static build**; the server URL is baked in at build time. It must be
-`wss://` (an `https://` page cannot open an insecure `ws://` socket):
+The client is a **static build**. When the **same** nginx serves the client and proxies the
+WebSocket (this guide's topology), you need **no** build config — the client defaults its
+server URL to its own origin:
+
+```bash
+pnpm build
+```
+
+Only when the client is hosted **separately** from the server (e.g. on Vercel) do you bake
+in the server URL. It must be `wss://` (an `https://` page cannot open an insecure `ws://`):
 
 ```bash
 VITE_PATHLANDS_SERVER=wss://play.yourdomain.com pnpm build
@@ -92,12 +103,12 @@ VITE_PATHLANDS_SERVER=wss://play.yourdomain.com pnpm build
 > can exercise accounts directly against the REST API
 > (e.g. `curl -X POST https://play.yourdomain.com/auth/register -d '{"email":"…","password":"…"}'`).
 
-Deploy the resulting `dist/` however you like (Vercel, or the VPS nginx — see
-`docs/DEPLOY.md`). Open it in two browsers, create a character in each, and walk around —
-each should see the other move.
+Deploy the resulting `dist/` to the VPS nginx (or Vercel, if built with the server URL —
+see `docs/DEPLOY.md`). Open it in two browsers, register/log in and create a character in
+each, and walk around — each should see the other move and chat.
 
-Leave `VITE_PATHLANDS_SERVER` **unset** to build the standalone single-player client (no
-server dependency), exactly as Phases 1–5.
+> Pathlands is **MMO-only**: there is no standalone single-player build. The client always
+> requires a reachable server and an account login.
 
 ---
 

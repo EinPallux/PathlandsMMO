@@ -34,10 +34,11 @@ import { Chat } from './Chat.js';
 import { LoginScreen } from './LoginScreen.js';
 import { Onboarding } from './Onboarding.js';
 import { putCharacter } from '../net/authClient.js';
+import { resolveServerUrl } from '../net/serverUrl.js';
 
-// Multiplayer server URL (opt-in). When set, accounts/login gate the world; unset ⇒
-// the standalone single-player build, exactly as Phases 1–5.
-const SERVER_URL = import.meta.env.VITE_PATHLANDS_SERVER as string | undefined;
+// Pathlands is MMO-only: the client always connects to an authoritative server (default:
+// the page's own origin — see resolveServerUrl). Accounts/login always gate the world.
+const SERVER_URL = resolveServerUrl();
 const TOKEN_KEY = 'pathlands.token';
 
 export function App(): JSX.Element {
@@ -48,11 +49,9 @@ export function App(): JSX.Element {
     account: AccountSave;
     settings: Settings;
   } | null>(null);
-  // Account session token (multiplayer only): restored from localStorage, cleared on
-  // logout / server rejection. Null in single-player (SERVER_URL unset).
-  const [token, setToken] = useState<string | null>(() =>
-    SERVER_URL !== undefined ? localStorage.getItem(TOKEN_KEY) : null,
-  );
+  // Account session token: restored from localStorage, cleared on logout / server
+  // rejection. Required — the world is always gated behind a logged-in account.
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
@@ -92,8 +91,8 @@ export function App(): JSX.Element {
     gameRef.current = game;
 
     // Best-effort cloud-save migration: hand the local character to the account so the
-    // server can restore its position on the next login (a no-op in single-player).
-    if (SERVER_URL !== undefined && token !== null) {
+    // server can restore its position on the next login.
+    if (token !== null) {
       void putCharacter(SERVER_URL, token, entry.character);
     }
 
@@ -114,8 +113,8 @@ export function App(): JSX.Element {
     };
   }, [entry, token]);
 
-  // Multiplayer: gate the whole flow behind account login until we hold a token.
-  if (SERVER_URL !== undefined && token === null) {
+  // MMO-only: gate the whole flow behind account login until we hold a token.
+  if (token === null) {
     return (
       <LoginScreen
         serverUrl={SERVER_URL}

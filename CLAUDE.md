@@ -1,6 +1,8 @@
 # CLAUDE.md — Instructions for AI Coding Sessions
 
-Pathlands is a 3D voxel browser MMORPG (Cube World visuals, WoW-Classic-style design), developed in six major phases. Phases 1–5 build a complete, fully playable **single-player** game deployable on **Vercel**. Phase 6 — and only Phase 6 — adds the MMO layer (server authority, accounts, sync) hosted on a **Linux VPS**. Every architectural decision before Phase 6 must keep that ending in mind.
+Pathlands is a 3D voxel browser MMORPG (Cube World visuals, WoW-Classic-style design). Phases 1–5 built the complete game engine + content — combat, worldgen, quests, professions, the works — as a client that ran standalone. Phase 6 is the MMO layer (server authority, accounts, sync).
+
+> **Direction change (2026-07-06): Pathlands is now MMO-only.** The standalone single-player build is retired — the client **always** connects to the authoritative server (default: the page's own origin), and an account login always gates the world. The whole game is hosted on a **Linux VPS** (Docker Compose: Node server + Postgres + nginx TLS/wss serving the static client). Vercel static hosting is no longer the target (it may still serve the client pointed at the VPS's `wss://`, but the VPS is canonical). The MMO-readiness rules below — all game rules in `shared/`, seeded RNG, no wall-clock in sim, input→intent→sim, deterministic worldgen — are exactly what makes this pivot clean; they remain in full force. Phase 6's remaining work is moving each gameplay system's **authority** server-side (combat/entities first).
 
 ## Read Before Coding
 
@@ -51,9 +53,9 @@ A phase is complete only when **every** acceptance criterion in ROADMAP.md passe
 
 ### Deployment
 
-- Phases 1–5: `client/` must always build to a static site deployable on Vercel (`pnpm build` → `client/dist`, then mirrored to repo-root `dist/` by `scripts/mirror-dist.mjs` so Vercel finds the output whether its Root Directory resolves to `client/dist` or repo-root `dist` — see `vercel.json`). Never introduce a hard server dependency before Phase 6.
-- Phase 6: server runs on a Linux VPS via Docker Compose (Node.js + PostgreSQL + nginx/TLS). Client stays a static deploy (Vercel or served by the VPS nginx — both must work). See ARCHITECTURE.md §Deployment.
-- Saves in Phases 1–5 are local (IndexedDB) using the same versioned character/world-state schema that PostgreSQL stores in Phase 6.
+- **MMO-only, VPS-hosted.** The whole stack runs on a Linux VPS via Docker Compose (Node.js game server + PostgreSQL + nginx TLS/wss). nginx serves the static client **and** reverse-proxies the WebSocket on the same host, so the client's default server URL is simply its own origin (`resolveServerUrl`). See `docs/SERVER_DEPLOY.md`.
+- `client/` still builds to a static bundle (`pnpm build` → repo-root `dist/` via `scripts/mirror-dist.mjs`); it's served by the VPS nginx. It may also be hosted on Vercel **only if** pointed at the VPS's `wss://` (set `VITE_PATHLANDS_SERVER`), but the VPS is canonical — the client has a hard server dependency by design now (there is no offline mode).
+- Local character saves (IndexedDB) remain as a client-side cache/bootstrap, but the **server is the source of truth**: the account's character (position, and — as authority migrates — inventory/progress) is loaded from Postgres/FileStore on login and written back. The same versioned schema is shared.
 
 ## Design Guardrails
 
