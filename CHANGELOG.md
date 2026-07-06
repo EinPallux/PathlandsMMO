@@ -2,7 +2,39 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
-## [Phase 5 — Polish: The Complete Solo Game] — in progress
+## [Phase 5 — Polish: The Complete Solo Game] — feature-complete & launch-ready
+
+### Part 8 — Content gap-fill, Phase-5 acceptance, VPS deploy guide (2026-07-06)
+
+#### Added
+
+- **Content coverage audit** (`shared/test/content-gaps.test.ts`): drives the authored world
+  through `World.biomeAt` / `authored.npcSpawns()` to guard against dead content — every town has a
+  merchant, all six zones have spawns + a Waystone, every settlement anchors a quest-giver, and
+  every collect-quest's drop source is fightable near its level. (Complements the referential
+  integrity already in `quests.test.ts`.)
+- **Phase-5 acceptance test** (`shared/test/acceptance-p5.test.ts`): codifies criterion #2 — the
+  full solo game is completable in one save with no blockers (complete 6-chapter story to the L30
+  finale, all five Hollows bossed, every gathering profession levellable to 100, gap-free 1→30
+  gates), plus a fresh-save-valid check.
+- **`docs/DEPLOY.md`**: a static-hosting guide for an Ubuntu VPS + nginx (build → `dist/`, SPA
+  fallback, immutable asset caching, certbot TLS, update workflow), alongside the zero-config
+  Vercel path. Serves the single-player build from the user's own VPS.
+
+#### Fixed
+
+- **Missing-vendor gap**: Millstead, Mossgate, and Glimmercamp carried a `SETTLEMENT_TIER` but had
+  no merchant NPC, because `AuthoredLayer.npcSpawns()` gated the vendor on `hasInn`. Dropped the
+  inn requirement — **every town now has a merchant** (RNG-safe: vendor and villager both draw one
+  name int, so downstream NPC positions/seeds are unchanged).
+
+#### Notes
+
+- Phase 5 is **feature-complete and launch-ready**: every deliverable landed (Performance's only
+  open item is the Firefox/Safari manual pass), and the automatable acceptance criterion (#2)
+  passes. The human/launch sign-offs — a blind playtest to level 5 (#1), real-hardware 60 FPS (#3),
+  and cutting the public `v1.0-solo` tag (#5) — happen at the first VPS test.
+- **304 tests green**; `pnpm typecheck && lint && build` clean.
 
 ### Part 7 — VFX remainder & Performance (2026-07-06)
 

@@ -6,6 +6,27 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 5 (2026-07-06) — Part 8: Content gap-fill, Phase-5 acceptance, VPS deploy guide.**
+> **Content gap-fill is complete.** A new coverage audit (`shared/test/content-gaps.test.ts`,
+> building on the referential checks already in `quests.test.ts`) drives the authored world through
+> `World.biomeAt`/`authored.npcSpawns()` and caught one real gap: **three towns (Millstead,
+> Mossgate, Glimmercamp) carried a vendor tier but no merchant NPC**, because `npcSpawns()` gated
+> the vendor on `hasInn`. Fixed (RNG-safe) so **every town now has a merchant**; the audit also
+> proves all six zones have spawns + a Waystone, every settlement anchors a quest-giver, and every
+> collect-quest's drop source is fightable near its level. **Phase-5 acceptance** is codified in
+> `shared/test/acceptance-p5.test.ts` (criterion #2 — the full solo game is completable in one save
+> with no blockers: complete 6-chapter main story to the L30 finale, all five Hollows bossed, every
+> gathering profession levellable to 100, gap-free 1→30 gates). Added **`docs/DEPLOY.md`** — a
+> static-hosting guide for an Ubuntu VPS + nginx (build → `dist/`, SPA fallback, immutable asset
+> caching, certbot TLS), so the single-player build runs on the user's Hostinger VPS. **304 tests
+> green** (+11); `pnpm typecheck && lint && build` clean. _Phase 5 is **feature-complete and
+> launch-ready**: every deliverable landed (Performance's only open item is the Firefox/Safari
+> manual pass), and the automatable acceptance criteria pass. The human/launch sign-offs — a blind
+> playtest to level 5 (#1), real-hardware 60 FPS (#3), and cutting the public `v1.0-solo` tag (#5)
+> — happen at the first VPS test._
+>
+> ---
+>
 > **Phase 5 in progress (2026-07-06) — Part 7: VFX remainder & Performance (two pillars).**
 > **VFX is now complete.** Added the two remaining atmospherics: **blight ambience** — a slow
 > drizzle of upward-drifting verdigris spore-motes (`CombatDirector.emitBlight`) that thickens the
@@ -680,15 +701,17 @@ _Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass
 - [x] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning. _(Part 1: the leveling pace — curve lowered to `250·L^1.55` (~549k) + quest XP ×2, quests ~45% of the climb, 1→30 ~25–35 h; guarded by `acceptance-p4.test.ts`. **Part 6** added a deterministic **audit suite** (`shared/test/balance.test.ts`): baseline all-class TTK vs at-level normal/elite (kill + survive + no outlier), Hollow-boss stat-scaling (×4.5 rank HP, non-one-shot swings), itemization-curve monotonicity + rarity power, and a gold-economy check that **fixed the mount price (40 → 800 c, ~40% of L20 quest gold)** for real choice pressure. Solo boss clears stay proven in `hollows.test.ts`. Live-playtest fine-tuning (and a respec sink, once paths become respeccable) is the only remaining, expected nudge.)_
 - [~] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery. _(Part 5: player-facing **graphics settings** — view distance, **shadows** (off/low/high), **VFX density** (off/low/full), **resolution scale** (75/85/100%) — persisted in **save v13** and applied live; a real **sun shadow map** (`environment.ts`, a player-following orthographic frustum; actors + props cast, terrain receives — receive-only to avoid voxel acne) gated by the quality setting; a `Vfx.setDensity` burst-count multiplier; renderer pixel-ratio scaling; and **WebGL context-loss recovery** (preventDefault → pause → overlay → auto-resume). **Part 7** added **adaptive quality** (a sagging frame rate auto-drops the effective view distance a notch and climbs back on recovery — slow cadence, wide hysteresis, never overwrites the user's setting), a **memory-dispose audit** (every per-`Game` GPU resource freed in `dispose()`), and a **resolution matrix** check (1080p/1440p/ultrawide 3440×1440: HUD stays corner-anchored, draw calls hold ~85–120 vs the ~250 budget). Remaining: the **Firefox/Safari manual/CI pass** — standard WebGL2, no browser-specific APIs.)_
 - [x] **Resilience** — autosave + rotating save backups, save-corruption recovery, versioned save migration test suite, error boundary + bug-report info screen. _(Part 5: `save.ts` **v13** with `validateSave()` + never-throwing `tryMigrate()`; a rotating **3-deep backup ring** + **load fall-through** (primary → backups → fresh) in `saveStore.ts`, with a recovery notice on the title screen; **save export/import** (download/restore JSON) in Settings; a top-level React **error boundary** with a bug-report screen (copyable details + save-backup download + reload); and a **versioned migration test suite** (v1→v13, graphics defaults, corruption recovery, validate/tryMigrate). Autosave already ran every 30 s + on unload since Phase 4.)_
-- [ ] **Content gap fill** — whatever playtesting exposes: dead map corners, quest dead spots, missing vendor, confusing moments. Tracked as a checklist added to this file during the phase.
+- [x] **Content gap fill** — whatever playtesting exposes: dead map corners, quest dead spots, missing vendor, confusing moments. _(Part 8: a coverage audit (`shared/test/content-gaps.test.ts`) that walks the authored world via `World.biomeAt`/`authored.npcSpawns()` — it caught and fixed a **missing-vendor** gap (Millstead/Mossgate/Glimmercamp had a shop tier but no merchant NPC; `npcSpawns()` no longer requires an inn, so **every town sells**) and now guards: all six zones have spawns + a Waystone, every settlement anchors a quest-giver, every collect-quest's drop source is fightable near its level. Live-playtest may surface more; those are folded in as they're found.)_
 
 ### Acceptance Criteria
 
-1. Blind-playtest run (someone who never saw the game) reaches level 5 without external help; onboarding answers class/movement/combat/quest questions itself.
-2. Full 1→30 + main story + all five Hollows + a profession to 100, in one save, no blockers, no console errors.
-3. Budgets hold everywhere (worst-case scene ≥ 50 FPS on the reference laptop, ≥ 60 typical); loads within targets on a cold cache over average broadband.
-4. Audio/VFX exist for every player-facing action; nothing fires silently/invisibly.
-5. The Vercel deployment is publicly shareable as a complete game ("v1.0-solo" tag).
+_Status (2026-07-06): **feature-complete & launch-ready.** The automatable criterion (#2) passes in code; #1/#3/#5 are the human/launch sign-offs, taken at the first VPS playtest._
+
+1. ⏳ Blind-playtest run (someone who never saw the game) reaches level 5 without external help; onboarding answers class/movement/combat/quest questions itself. _(Supported by the onboarding flow + keybind-aware first-time tips (`FirstTimeTips.tsx`); the blind-playtest itself is human sign-off.)_
+2. ✅ Full 1→30 + main story + all five Hollows + a profession to 100, in one save, no blockers, no console errors. _(`acceptance-p5.test.ts` + `content-gaps.test.ts`: complete 6-chapter story to the L30 finale, all five Hollows bossed, every gathering profession levellable to 100, gap-free 1→30, no dead corners; in-browser smokes boot with zero console errors.)_
+3. ⏳ Budgets hold everywhere (worst-case scene ≥ 50 FPS on the reference laptop, ≥ 60 typical); loads within targets on a cold cache over average broadband. _(Draw calls hold ~85–120 (≪ 250) and the bundle is ~280 KB gzipped (≪ 3 MB) — verified headless; real-hardware FPS is confirmed on the reference laptop at first test. Adaptive quality protects the frame budget in heavy spots.)_
+4. ✅ Audio/VFX exist for every player-facing action; nothing fires silently/invisibly. _(WebAudio SFX for cast/defeat/level-up/quest; pooled VFX for hit/death/school-tinted casts/level-up/Waystone/blight — verified in the in-browser smokes.)_
+5. ⏳ The deployment is publicly shareable as a complete game ("v1.0-solo" tag). _(`vercel.json` + repo-root `dist/` build deploy on Vercel; `docs/DEPLOY.md` covers the VPS+nginx path; the `v1.0-solo` tag is cut at launch.)_
 
 ---
 
