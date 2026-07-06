@@ -2,7 +2,37 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
-## [Phase 4 — Quests, Professions & the Long Game] — in progress
+## [Phase 4 — Quests, Professions & the Long Game] — ✅ complete (2026-07-06)
+
+Phase 4 is done: a full single-player content game — 111 quests (24 givers), all five
+professions (gathering + crafting, skill 1→100, masteries, discovery), meta progression,
+mounts, and the complete endgame loop (bounties, rares, boss uniques, masteries, world
+boss). Acceptance #1–#4 pass; #5 (leveling pace), profession trainers/tools, and crafting
+station-proximity are folded into Phase 5.
+
+### Part 18 — crafting depth: fuller recipe book + recipe discovery (2026-07-06)
+
+#### Added
+
+- **A fuller recipe book (`shared/data/recipes`)** — ~13 new recipes to level 100: crystalium
+  smelt; iron/silver/crystalium gear across weapon + armor slots; and greater/master health &
+  mana potions plus greater might/warding elixirs and a capstone Elixir of Mastery (6 new
+  consumables).
+- **Recipe discovery (GDD §9)** — top-tier recipes carry `discovery: true` and are hidden until
+  learned. `craft()` refuses an unknown discovery recipe, and on any craft in that profession at
+  sufficient skill has a `DISCOVERY_CHANCE` to learn one (returned as `discovered`). The
+  discovery roll happens **after** output/skill-up are computed, so all pre-existing craft
+  results are byte-identical. `DISCOVERY_RECIPES` lists the learnable set.
+- **Save v12** — `learnedRecipes: string[]` on the character; migration defaults it empty while
+  preserving any saved ids. The client threads the learned set through the GatherDirector (craft
+  passes it, discoveries are announced + persisted), and the craft panel hides unlearned
+  discovery recipes.
+
+#### Tests
+
+- +7: discovery gate (unknown refused, learned crafts), the learn roll over many crafts, never
+  above the crafter's skill, no sub-cap regression, reachability of every discovery recipe; plus
+  a v11→v12 `learnedRecipes` migration + the round-trip fixture. **273 total.**
 
 ### Part 17 — the Grand Waystone world event (2026-07-06)
 

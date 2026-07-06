@@ -19,7 +19,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 11,
+      version: 12,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3, perks: { deepPockets: 2 } },
       characters: [
@@ -70,6 +70,7 @@ describe('save schema', () => {
             active: [{ id: 'bh_boars', count: 3 }],
             completed: ['bh_bloom'],
           },
+          learnedRecipes: ['r_crystaliumBlade'],
         },
       ],
       settings: {
@@ -93,6 +94,20 @@ describe('save schema', () => {
     expect(s.viewDistance).toBe(6);
     expect(s.keybinds.toggleMap).toBe('KeyN'); // saved override kept
     expect(s.keybinds.toggleBank).toBe(DEFAULT_KEYBINDS.toggleBank); // rest defaulted
+  });
+
+  it('migrates a pre-v12 save, defaulting an empty learned-recipes list (keeping any saved)', () => {
+    const v11 = {
+      version: 11,
+      account: { pathPoints: 0, perks: {} },
+      characters: [
+        { name: 'Fresh', class: 'warrior' },
+        { name: 'Learned', class: 'mage', learnedRecipes: ['r_elixirOfMastery'] },
+      ],
+    };
+    const chars = migrate(v11).characters;
+    expect(chars[0]!.learnedRecipes).toEqual([]); // defaulted
+    expect(chars[1]!.learnedRecipes).toEqual(['r_elixirOfMastery']); // preserved
   });
 
   it('migrates a v8 (pre-bounty) save, defaulting an empty bounty log', () => {

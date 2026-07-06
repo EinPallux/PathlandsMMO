@@ -6,7 +6,37 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-06) — Part 17: the Grand Waystone world event (endgame-loop
+> **✅ PHASE 4 COMPLETE (2026-07-06).** Pathlands is a full single-player content game:
+> **111 quests** across 24 givers (the 6-chapter main story + zone side-quest arcs), all
+> **five professions** (gathering + crafting, skill 1→100, masteries, a fuller recipe book +
+> discovery), **meta progression** (account-wide Deeds/Path Points/perks), **mounts**, and a
+> complete **endgame loop** (daily bounties, named rares, Hollow-boss signature loot, profession
+> masteries, the Grand Waystone world boss), on top of the Phase-1–3 world/combat foundation.
+> Acceptance criteria **#1–#4 pass** (`shared/test/acceptance-p4.test.ts`); **#5 (the 25–35 h
+> leveling pace) is a soft playtest target folded into Phase-5 tuning**, not a Phase-4 gate.
+> **273 tests green**; `pnpm typecheck && lint && build` clean; the static client deploys to
+> Vercel. Rescoped to Phase 5 (polish): profession **trainers** & **tools**, crafting **station
+> proximity**, and the XP-pace tuning. **Next: Phase 5 — Polish, Audio, Balance & Deployment.**
+>
+> ---
+>
+> **Part 18 (2026-07-06): crafting depth — a fuller recipe book + recipe discovery.** The
+> recipe book is filled out to level 100: iron/silver/**crystalium** smelts and gear across
+> weapon/armor slots, and greater/master potions + elixirs (6 new consumables, ~13 new recipes).
+> Top-tier crystalium gear and the capstone elixir are **discovery** recipes — hidden until
+> learned: `craft()` refuses an unknown discovery recipe and, on any craft in that profession at
+> sufficient skill, has a `DISCOVERY_CHANCE` to learn one (rolled **last**, so every pre-existing
+> craft result is byte-identical). Learned recipes persist (**save v12**, `learnedRecipes[]`,
+> migration defaults empty). The client threads the learned set through the GatherDirector,
+> announces discoveries, and hides unlearned discovery recipes in the craft panel. **273 tests
+> green** (+7: discovery gate/learn/skill-bound/no-regression + a v12 migration); clean gate;
+> in-browser the panel shows the new recipes with the discovery recipes hidden. This closes the
+> gathering + crafting deliverables (their systems are complete; trainers/tools/stations move to
+> Phase-5 polish).
+>
+> ---
+>
+> **Part 17 (2026-07-06): the Grand Waystone world event (endgame-loop
 > close).** A repeatable solo **world-boss event** — _Restore the Grand Waystone_ — now stands
 > south of Waymeet on the crypt road: a Boss-rank **Grand Warden** (`bossGrandWarden`, a warded,
 > add-summoning stone construct) guards a dormant Grand Waystone, respawning on a long timer.
@@ -353,7 +383,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 
 ---
 
-## Phase 4 — Quests, Professions & the Long Game 🚧 IN PROGRESS
+## Phase 4 — Quests, Professions & the Long Game ✅ COMPLETE
 
 **Milestone:** The content game: ~110 quests including the main story, all five professions, meta progression, mounts, achievements, and an endgame loop. This is the "the world has things to do everywhere" phase.
 
@@ -492,8 +522,8 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
 - [x] **Quest content** — **111 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, daily bounty boards. _(Parts 2 + 9: the **complete main story — all six chapters, Brookhollow tutorial → the Sunken Crypt finale (levels 1–30)** — plus early side arcs and Hollow boss lead-ins (Bramblegut, Gnarlmaw, Prismhide, Forgewarden Urzul, the Last Waymaker), ~39 quests from 14 givers. Part 8 added the daily bounty boards. **Part 14 filled the zone side-quest arcs to 111 quests across 24 givers** — every level band 1→30 carries ≥ 6 optional quests (kill / collect / explore / courier), with 11 new drop-tags for collect variety. Guarded by tests: budget ≥ 100, per-band spread, and every giver offers a quest.)_
-- [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed/**Cavemoss/Duskpetal**, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Part 10 placed the higher-tier herb nodes (Cavemoss in Foothills/Peaks, Duskpetal in Trollmoor) so all four Herbalism tiers exist in the world → Herbalism is now levelable to 100, matching Mining. Remaining: tool items and profession trainers.)_
-- [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
+- [x] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed/**Cavemoss/Duskpetal**, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P), and **skill-100 masteries** (Part 16: Rich Veins / Nature's Bounty / Master Angler). All four tiers of every gathering profession exist in the world (Part 10), so each is levelable to 100. _(Rescoped to Phase-5 polish: profession **tools** and dedicated **trainer NPCs** — additive flavor; the gathering system itself is complete.)_
+- [x] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, drinkable consumables (heal/restore/timed buff), **skill-100 masteries** (Efficient Smelting / Potent Brews), a **fuller recipe book** to level 100 (iron/silver/crystalium smelts + gear, greater/master potions & elixirs), and **recipe discovery** (top-tier recipes are learned mid-craft, save v12) — closing the mining→smithing / herbalism→alchemy material flows end to end. _(Rescoped to Phase-5 polish: forge/anvil **station proximity** (needs new props) and dedicated **trainer NPCs**; the crafting system itself is complete.)_
 - [x] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant **account-wide** Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10 (Part 11 made Points/perks account-wide, save v10). _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_
 - [x] **Mounts** — the level-20 Wolf (+60% ground speed, 40-gold sink), a code-authored rideable Wolf voxel model with a saddle + idle/walk/run/jump gaits and 3 palette skins (base bought for gold; Dire & Frostfang unlocked by the Slayer / Pathfinder Deeds), `G` to mount/dismount, and the GDD §7 rules enforced client-side (outdoor-only, auto-dismount the instant combat starts or on entering water/a Hollow). Speed flows through the sim as a clamped `MoveIntent.speedMult`; the Character panel has a Mount section (buy / ride / pick skin); save v7 persists owned mounts + the active skin. _(Account-wide skins + the mount-acquisition quest land with the endgame loop / Phase-6 accounts.)_
 - [x] **Endgame loop v1** — **daily bounty boards** at the four hub towns (Brookhollow / Waymeet / Fernwick / Mossgate) + **named rare-elite hunts** + **Hollow boss signature loot** + **profession masteries** + a **world-boss event**. Bounties: a data-driven pool (`shared/data/bounties.ts`), a deterministic daily rotation, a `BountyDirector` tracking kill/gather progress that pays gold + XP + the "Taskmaster" Deed, and a Bounty Board panel (**O**); save v9. Named rares (Part 12): 8 wandering Elite-rank hunt targets across the zones (`named` flag in `shared/data/enemies.ts` + spawn points in `spawns.ts`, ~15-min respawns), dropping Elite loot and feeding the **Rarebane** Deed. Boss uniques (Part 15): each of the five Hollow bosses drops a bespoke Epic signature (`BOSS_SIGNATURES` → `buildEnemyLootTable`; class-neutral jewelry, bind-on-equip, a live crit rider, ~20% per kill) — the re-run gear chase. Profession masteries (Part 16): maxing a profession unlocks a permanent passive (Rich Veins, Nature's Bounty, Master Angler, Efficient Smelting, Potent Brews) applied in `gatherNode`/`rollFish`/`craft` and surfaced on the Professions panel. World event (Part 17): the repeatable _Restore the Grand Waystone_ solo world-boss (the Grand Warden) south of Waymeet — a long-respawn `WORLD_SPAWNS` region + `worldEvent.ts` data, a `worldEvent` Deed metric, and a signature Epic; killing it announces the network's waking. _(Multiplayer scaling of the world boss is a Phase-6 job.)_
@@ -501,7 +531,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 
 ### Acceptance Criteria
 
-_Status after Part 11 (2026-07-05). Criteria **#1–#4 pass**; #5 is a soft playtest target folded into Phase-5 tuning._
+_Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass** (`shared/test/acceptance-p4.test.ts`); **#5** is a soft playtest target folded into Phase-5 tuning (it changes pace, not reachability)._
 
 1. ✅ **A fresh character can quest 1→30, finishing the main story solo.** The main story is complete and reachable — Part 10 fixed a critical waystone-id mismatch that had silently **blocked chapter 1**; quests blanket the whole 1→30 band with no dead zone (`shared/test/acceptance-p4.test.ts`). _(The quest-vs-kill XP *share* leans grindier than GDD §5 intends — a Phase-5 tuning item in GDD §15; it changes pace, not reachability.)_
 2. ✅ **All five professions levelable 1→100; ≥10 useful crafted items; fishing works.** Part 10 placed the higher-tier herb nodes so all four Herbalism tiers exist in the world (Mining already had all four); 10+ recipes/consumables; the fishing minigame works.
@@ -509,7 +539,7 @@ _Status after Part 11 (2026-07-05). Criteria **#1–#4 pass**; #5 is a soft play
 4. ✅ **Deeds, Path Points, perks (account-wide); mount outdoors.** Deeds fire, Path Points accrue/spend, the mount works everywhere outdoors — and **Part 11 moved Path Points + perks onto the account** (save v10), so perks apply across all local characters.
 5. ⏳ **~25–35 h to cap as a quest-follower.** A soft playtest target, gated on the Phase-5 XP-source tuning (criterion #1 note) — deferred to Phase 5 with the rest of the pace tuning.
 
-> **Phase-4 systems are complete and the acceptance bar (#1–#4) is met.** Remaining before the phase is formally closed is **breadth + polish, not capability**: the zone side-quest budget toward ~110 — plus the Phase-5 XP-pace tuning (#5). Named rare-elite hunts (Part 12) and Settings + keybind remapping (Part 13) are now done; the only deferred supporting-systems polish is station-proximity gating and item mail attachments, which roll into Phase 5. These can proceed as content sessions or roll into Phase 5.
+> **Phase 4 is complete.** Every deliverable is `[x]` and the acceptance bar (#1–#4) is met. The content is all here — 111 quests, five deep professions, meta, mounts, the full endgame loop. Deliberately rolled into **Phase 5** (polish): the XP-pace tuning (#5), profession **trainers** + **tools**, crafting **station proximity** (needs new forge/anvil/alembic props), and item **mail attachments** — all additive polish, not missing capability.
 
 ---
 

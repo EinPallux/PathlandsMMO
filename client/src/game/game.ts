@@ -156,6 +156,7 @@ export class Game {
       character?.professions,
       character?.materials,
       character?.consumables,
+      character?.learnedRecipes,
     );
     // Deeds are per-character; the Path Points they award and the perks bought are
     // account-wide (GDD §10), so they come from the shared account block.
@@ -540,6 +541,7 @@ export class Game {
       professions: this.gather.state.professions,
       materials: this.gather.state.materials,
       consumables: this.gather.state.consumables,
+      learnedRecipes: this.gather.state.learnedRecipes,
       deeds: this.meta.state.deeds,
       mounts: this.mount.state.mounts,
       activeMount: this.mount.state.activeMount,

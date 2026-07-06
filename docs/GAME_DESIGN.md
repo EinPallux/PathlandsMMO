@@ -247,8 +247,17 @@ Each character learns **all five** (no pick restrictions — indie population is
 > validates against the material stash + skill, consumes inputs, and returns the output +
 > a skill-up. The client crafts through a panel (K) — gear goes to the bag, bars/potions
 > to the stash — and consumables are drunk from the Professions panel (`applyConsumable`
-> on the combat director: heal / restore resource / a timed buff aura, save v5). Discovery
-> recipes, station proximity (forge/anvil/alembic), and trainers are follow-up polish.
+> on the combat director: heal / restore resource / a timed buff aura, save v5).
+
+> **Implementation (Phase 4 Part 18 — recipe book + discovery).** The recipe book is filled
+> out to level 100 (`shared/data/recipes.ts`): crystalium smelt; iron/silver/crystalium gear
+> across weapon + armor slots; and greater/master potions + elixirs. Top-tier recipes carry
+> `discovery: true` and are **hidden until learned** — `craft()` refuses an unknown discovery
+> recipe, and any craft in that profession at sufficient skill has a `DISCOVERY_CHANCE` to learn
+> one (classic profession discovery). The discovery roll is drawn **after** the output + skill-up,
+> so pre-existing craft results are byte-identical. Learned recipes persist (**save v12**,
+> `learnedRecipes[]`); the client announces a discovery and hides unlearned recipes in the craft
+> panel. Rolled into Phase-5 polish: station proximity (forge/anvil/alembic props) and trainers.
 
 > **Implementation (Phase 4 Part 16 — masteries).** Maxing a profession (skill 100) unlocks
 > a permanent **Mastery** — a passive bonus and part of the endgame loop (`MASTERIES` in

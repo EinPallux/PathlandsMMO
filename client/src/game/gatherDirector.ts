@@ -86,12 +86,16 @@ export class GatherDirector {
   /** A material was gathered (id + qty) — feeds gather bounties. */
   onMaterialGained?: (materialId: string, qty: number) => void;
 
+  /** Learned discovery-recipe ids (advanced recipes hidden until discovered). */
+  private learned: Set<string>;
+
   constructor(
     world: World,
     combat: CombatDirector,
     skills?: Record<string, number>,
     materials?: Record<string, number>,
     consumables?: Record<string, number>,
+    learnedRecipes?: string[],
   ) {
     this.world = world;
     this.combat = combat;
@@ -100,6 +104,7 @@ export class GatherDirector {
       : { mining: 1, herbalism: 1, fishing: 1, blacksmithing: 1, alchemy: 1 };
     this.materials = materials ? { ...materials } : {};
     this.consumables = consumables ? { ...consumables } : {};
+    this.learned = new Set(learnedRecipes ?? []);
     this.publishProfessions();
     this.publishCrafting();
   }
@@ -109,11 +114,13 @@ export class GatherDirector {
     professions: Record<string, number>;
     materials: Record<string, number>;
     consumables: Record<string, number>;
+    learnedRecipes: string[];
   } {
     return {
       professions: { ...this.skills },
       materials: { ...this.materials },
       consumables: { ...this.consumables },
+      learnedRecipes: [...this.learned],
     };
   }
 
@@ -125,13 +132,19 @@ export class GatherDirector {
     if (!recipe) return;
     const skill = this.skills[recipe.profession] ?? 1;
     const rng = makeRng(this.world.seed, 'craft', id, String(this.actionSeq++));
-    const res = craft(rng, recipe, this.materials, skill);
+    const res = craft(rng, recipe, this.materials, skill, this.learned);
     if (!res) {
       this.toast('You lack the materials or skill.');
       return;
     }
     this.skills[recipe.profession] = res.newSkill;
     this.applyOutput(res.output);
+    // Recipe discovery (GDD §9): learn the recipe, announce it, and surface it in the
+    // craft list next publish.
+    if (res.discovered) {
+      this.learned.add(res.discovered);
+      this.toast(`Discovered a recipe: ${recipeById(res.discovered)?.name ?? res.discovered}!`);
+    }
     this.onCraft?.();
     this.publishProfessions();
     this.publishCrafting();
@@ -462,7 +475,8 @@ export class GatherDirector {
   }
 
   private publishCrafting(): void {
-    const recipes = RECIPES.map((r) => {
+    // Discovery recipes stay hidden until learned; everything else is skill-gated only.
+    const recipes = RECIPES.filter((r) => !r.discovery || this.learned.has(r.id)).map((r) => {
       const skill = this.skills[r.profession] ?? 1;
       return {
         id: r.id,

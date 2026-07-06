@@ -26,7 +26,7 @@ import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
 // v10 → v11 (Phase 4): settings gained the rebindable keybind map.
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 export interface SettingsV1 {
   viewDistance: number;
@@ -124,6 +124,12 @@ export interface CharacterSaveV9 extends CharacterSaveV8 {
  */
 export type CharacterSaveV10 = Omit<CharacterSaveV9, 'pathPoints' | 'perks'>;
 
+/** v11→v12: characters remember the discovery recipes they have learned (GDD §9). */
+export interface CharacterSaveV11 extends CharacterSaveV10 {
+  /** Learned discovery-recipe ids (advanced recipes hidden until discovered). */
+  learnedRecipes: string[];
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
@@ -134,19 +140,19 @@ export interface AccountSaveV3 extends AccountSaveV2 {
   perks: Record<string, number>;
 }
 
-export interface SaveGameV11 {
-  version: 11;
+export interface SaveGameV12 {
+  version: 12;
   worldSeed: number;
   account: AccountSaveV3;
-  characters: CharacterSaveV10[];
+  characters: CharacterSaveV11[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV11;
-export type CharacterSave = CharacterSaveV10;
+export type SaveGame = SaveGameV12;
+export type CharacterSave = CharacterSaveV11;
 export type AccountSave = AccountSaveV3;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
@@ -291,7 +297,7 @@ function deedState(v: unknown): DeedState {
   return { progress, completed: strArray(v.completed) };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV10 | null {
+function migrateCharacter(v: unknown): CharacterSaveV11 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
   // Note: pathPoints/perks are intentionally NOT read here — since v10 they live on
@@ -321,6 +327,7 @@ function migrateCharacter(v: unknown): CharacterSaveV10 | null {
     bank: itemStacks(v.bank),
     mail: mailInbox(v.mail),
     bounties: bountyLog(v.bounties),
+    learnedRecipes: strArray(v.learnedRecipes),
   };
 }
 
@@ -360,7 +367,7 @@ export function migrate(raw: unknown): SaveGame {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
     account: accountMeta(account, chars),
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV10 => c !== null),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV11 => c !== null),
     settings: {
       viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
@@ -384,7 +391,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV10 {
+): CharacterSaveV11 {
   return {
     id,
     name,
@@ -410,5 +417,6 @@ export function createCharacter(
     bank: [],
     mail: starterInbox(),
     bounties: { day: 0, active: [], completed: [] },
+    learnedRecipes: [],
   };
 }
