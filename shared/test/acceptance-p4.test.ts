@@ -16,6 +16,9 @@ import {
   buyPerk,
   applyDeedProgress,
   createDeedState,
+  scaledQuestXp,
+  totalXpToReachLevel,
+  LEVEL_CAP,
 } from '../src/index.js';
 
 // Criterion #1 is "quest+kill XP suffices without grinding WALLS, finishing the
@@ -40,6 +43,17 @@ describe('Acceptance #1 — a gap-free 1→30 quest path', () => {
     }
     // Content reaches the cap band.
     expect(gates[gates.length - 1]).toBeGreaterThanOrEqual(28);
+  });
+
+  it('quests lead the climb after the Phase-5 pace tuning (~40–50% of the curve)', () => {
+    // GDD §5 wants a quest-led economy. With the tuned curve (~549k) and quest XP scaled
+    // ×2, the sum of all quest rewards (done once) covers a large share of 1→30 — kills
+    // (unbounded) supply the rest. This guards the tuning from silently regressing.
+    const questXp = QUESTS.reduce((s, q) => s + scaledQuestXp(q.reward.xp), 0);
+    const toCap = totalXpToReachLevel(LEVEL_CAP);
+    const share = questXp / toCap;
+    expect(share).toBeGreaterThan(0.35);
+    expect(share).toBeLessThan(0.55);
   });
 
   it('quest rewards scale up with the level they require', () => {

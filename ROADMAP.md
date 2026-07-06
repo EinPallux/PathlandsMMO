@@ -6,6 +6,21 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 5 in progress (2026-07-06) — Part 1: leveling-pace tuning (the balance pass begins).**
+> Reconciled the long-flagged XP economy (Phase-4 acceptance #5 / GDD §15): the level curve was
+> **lowered from `400·L^1.55` (~878k) to `250·L^1.55` (~549k)** for a 25–35 h feel, and authored
+> quest XP is **scaled ×2** at the grant + display edge (`QUEST_XP_SCALE` / `scaledQuestXp` in
+> `shared/combat/xp.ts`). With the Part-14 side-quest budget, quest XP now sums to ~245k — **~45%
+> of the climb** (was ~4–14%), a quest-led economy matching GDD §5, with kills (unbounded)
+> supplying the rest. The level derives from lifetime XP, so the change re-buckets cleanly; the
+> UI shows the effective (scaled) reward. **274 tests green** (progression curve + a new
+> quest-share acceptance assertion, band 0.35–0.55); `pnpm typecheck && lint && build` clean;
+> the client boots with zero errors. This opens the **Balance & tuning** deliverable; the rest
+> (all-class TTK, itemization, Hollow difficulty, economy) and the other Phase-5 pillars (audio,
+> VFX, UI/UX, performance, resilience) follow.
+>
+> ---
+>
 > **✅ PHASE 4 COMPLETE (2026-07-06).** Pathlands is a full single-player content game:
 > **111 quests** across 24 givers (the 6-chapter main story + zone side-quest arcs), all
 > **five professions** (gathering + crafting, skill 1→100, masteries, a fuller recipe book +
@@ -552,7 +567,7 @@ _Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass
 - [ ] **Audio** — music beds per zone/situation (day/night/combat/city/Hollow), SFX for combat/UI/footsteps-by-surface/ambience (birds, wind, water, rain, taverns); WebAudio implementation with volume buses. Procedurally generated/synthesized or hand-composed in-code sequences — no downloaded copyrighted assets.
 - [ ] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels.
 - [ ] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors.
-- [ ] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning.
+- [~] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning. _(Part 1: the leveling pace — curve lowered to `250·L^1.55` (~549k) + quest XP ×2, so quests are ~45% of the climb and 1→30 targets ~25–35 h; guarded by `acceptance-p4.test.ts`. Remaining: all-class TTK, itemization curve, Hollow difficulty, gold economy.)_
 - [ ] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery.
 - [ ] **Resilience** — autosave + rotating save backups, save-corruption recovery, versioned save migration test suite, error boundary + bug-report info screen.
 - [ ] **Content gap fill** — whatever playtesting exposes: dead map corners, quest dead spots, missing vendor, confusing moments. Tracked as a checklist added to this file during the phase.

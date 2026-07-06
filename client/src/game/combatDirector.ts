@@ -22,6 +22,7 @@ import {
   levelProgressFromTotalXp,
   totalXpToReachLevel,
   xpToCompleteLevel,
+  scaledQuestXp,
   baseStatsAtLevel,
   addStats,
   canEquip,
@@ -640,7 +641,8 @@ export class CombatDirector {
 
   /** Grant a completed quest's reward: XP, gold, fixed + chosen items, Waystone. */
   grantReward(reward: QuestReward, choiceIndex: number): void {
-    this.gainXp(reward.xp);
+    // Quest XP is scaled by the §5 pace tuning (QUEST_XP_SCALE) so quests lead the climb.
+    this.gainXp(scaledQuestXp(reward.xp));
     if (reward.gold) {
       this.gold += reward.gold;
       this.pushFloater(this.player, `+${reward.gold}c`, 'xp');

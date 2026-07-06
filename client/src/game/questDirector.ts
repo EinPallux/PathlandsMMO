@@ -6,6 +6,7 @@
 
 import {
   createQuestLog,
+  scaledQuestXp,
   applyQuestEvent,
   availableFrom,
   readyToTurnIn,
@@ -51,7 +52,8 @@ const specLabel = (s: GeneratedItemSpec): string =>
   `${s.rarity[0]!.toUpperCase()}${s.rarity.slice(1)} ${SLOT_LABEL[s.slot] ?? s.slot}`;
 
 function rewardSummary(r: QuestReward): string {
-  const parts = [`+${r.xp} XP`];
+  // Show the effective (§5-scaled) XP the player will actually receive.
+  const parts = [`+${scaledQuestXp(r.xp)} XP`];
   if (r.gold) parts.push(`+${r.gold}c`);
   for (const it of r.items ?? []) parts.push(specLabel(it));
   if (r.choices?.length) parts.push(`1 of ${r.choices.length}`);

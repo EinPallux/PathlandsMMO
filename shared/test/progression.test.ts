@@ -17,21 +17,21 @@ import {
 } from '../src/index.js';
 
 describe('XP curve (GDD §5)', () => {
-  it('anchors at 400 for level 1 and rises monotonically to the cap', () => {
-    expect(xpToCompleteLevel(1)).toBe(400);
+  it('anchors at 250 for level 1 and rises monotonically to the cap', () => {
+    // Phase-5 pace tuning: 250·L^1.55 (was 400·L^1.55). See GDD §5/§15.
+    expect(xpToCompleteLevel(1)).toBe(250);
     for (let l = 1; l < LEVEL_CAP - 1; l++) {
       expect(xpToCompleteLevel(l + 1)).toBeGreaterThan(xpToCompleteLevel(l));
     }
     expect(xpToCompleteLevel(LEVEL_CAP)).toBe(Infinity);
   });
 
-  it('total XP to cap matches the summed curve (~878k)', () => {
-    // The authoritative per-level formula 400·L^1.55 sums to ~878k over 1→30.
-    // (The GDD's original "≈530k" parenthetical under-counted the sum; corrected
-    // there. XP sources — quests ~55%, kills ~35% — must supply this; Phase-5 tune.)
+  it('total XP to cap matches the tuned summed curve (~549k)', () => {
+    // Post-tuning: 250·L^1.55 sums to ~549k over 1→30 (down from ~878k), so quest XP
+    // (scaled ×2, ~245k) leads the climb at ~44% and the 25–35 h pace is reachable.
     const total = totalXpToReachLevel(LEVEL_CAP);
-    expect(total).toBeGreaterThan(860_000);
-    expect(total).toBeLessThan(895_000);
+    expect(total).toBeGreaterThan(535_000);
+    expect(total).toBeLessThan(560_000);
   });
 
   it('level derivation round-trips every level boundary', () => {
@@ -44,8 +44,8 @@ describe('XP curve (GDD §5)', () => {
 
   it('tracks progress inside a level', () => {
     expect(levelProgressFromTotalXp(0)).toMatchObject({ level: 1, xpIntoLevel: 0 });
-    expect(levelProgressFromTotalXp(399)).toMatchObject({ level: 1, xpIntoLevel: 399 });
-    expect(levelProgressFromTotalXp(400)).toMatchObject({ level: 2, xpIntoLevel: 0 });
+    expect(levelProgressFromTotalXp(249)).toMatchObject({ level: 1, xpIntoLevel: 249 });
+    expect(levelProgressFromTotalXp(250)).toMatchObject({ level: 2, xpIntoLevel: 0 });
   });
 
   it('clamps beyond the cap', () => {

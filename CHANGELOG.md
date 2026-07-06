@@ -2,6 +2,27 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
+## [Phase 5 — Polish: The Complete Solo Game] — in progress
+
+### Part 1 — leveling-pace tuning (2026-07-06)
+
+#### Changed
+
+- **XP curve lowered** (`shared/combat/xp.ts`): `XP(L) = 250·L^1.55` (was `400·L^1.55`), so
+  1→30 totals ~549k (was ~878k) — restoring the ~25–35 h pace flagged by Phase-4 acceptance #5 /
+  GDD §15. Level derives from lifetime XP, so existing saves re-bucket cleanly.
+- **Quest XP scaled ×2** at the grant + display edge (`QUEST_XP_SCALE` / `scaledQuestXp`): the
+  authored reward data stays readable while the effective value is tuned in one shared place
+  (used by `CombatDirector.grantReward` and the quest-reward summary). Quest XP now sums to
+  ~245k — **~45% of the climb** (was ~4–14%), a quest-led economy matching GDD §5, with kills
+  (`12 + 6·L`, unbounded) supplying the rest.
+
+#### Tests
+
+- Updated the progression curve assertions (anchor 250, ~549k to cap, level boundaries) and
+  added an `acceptance-p4` quest-share assertion (quest XP is 35–55% of the 1→30 curve). **274
+  total.** Docs: GDD §5 (curve + split) and §15 (the XP-split item marked addressed).
+
 ## [Phase 4 — Quests, Professions & the Long Game] — ✅ complete (2026-07-06)
 
 Phase 4 is done: a full single-player content game — 111 quests (24 givers), all five
