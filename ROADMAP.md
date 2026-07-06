@@ -6,6 +6,32 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 9: Server-authoritative enemies, Stage 1 (server + replication).**
+> The first slice of moving combat server-side: the **server now owns the world's enemy
+> population**. Fully headless-proven; the client renders them in Stage 2. Landed:
+>
+> - **`ServerCombat`** (`server/src/combat.ts`) — the server runs ONE authoritative combat
+>   sim for the whole world: it steps the deterministic shared spawner (all `WORLD_SPAWNS`
+>   regions) + `stepSim` (enemy AI + combat resolution) every tick, exactly the code the
+>   client used to run locally. Same seed + same shared code ⇒ every client sees the same
+>   monsters in the same places. (Players aren't injected yet, so enemies idle at their
+>   spawns — aggro/chase arrives with client combat in Stage 2.)
+> - **Entity replication** (`NET_PROTOCOL_VERSION` → **5**) — a new `NetEntity` rides the
+>   snapshot/delta alongside players, diffed per-connection (ENTER / UPDATE / LEAVE) against
+>   a `knownEntities` set and **interest-filtered** by the same 3×3 chunk policy. Idle enemies
+>   produce zero traffic (a quantised change-digest gates UPDATE).
+> - **Tests** (+9) — `ServerCombat` spawns deterministically + idles (two sims agree
+>   byte-for-byte); over the wire, a joiner at a spawn region receives the enemies as
+>   `NetEntity` while a distant player does not; `NetEntity` codec round-trip + rejection.
+>
+> **354 tests green**; `pnpm typecheck` + `lint` + `build` (284 KB gzip) clean. _This slice is
+> **server-only** and fully verified headlessly — the client still renders its local enemies
+> (it ignores the new entity frames) and behaves unchanged until Stage 2._ _Next: **Stage 2**
+> — the client renders server enemies (replacing its local spawner), player combat state joins
+> the server sim, skill-cast intents resolve server-side, and HP/XP/loot/death go authoritative._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 8: MMO-only pivot (the standalone build is retired).**
 > Direction change (owner call): Pathlands is now **MMO-only** — there is no offline
 > single-player mode. Landed:

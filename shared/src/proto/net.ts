@@ -20,9 +20,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * Bumped on any breaking wire change; the server rejects a mismatched client.
  * v2 added the per-connection `self` reconciliation channel (ServerSelf);
  * v3 added the optional account `token` on the hello (accounts & persistence);
- * v4 added the chat channel (ClientChat / ServerChat).
+ * v4 added the chat channel (ClientChat / ServerChat);
+ * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta).
  */
-export const NET_PROTOCOL_VERSION = 4;
+export const NET_PROTOCOL_VERSION = 5;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -41,6 +42,30 @@ export interface NetPlayer {
   /** Facing yaw in radians. */
   yaw: number;
   move: MoveState;
+}
+
+/**
+ * How a server-authoritative enemy appears to clients — the replication view of a
+ * `CombatEntity` of faction 'enemy'. Position/hp/state are the server's truth; the client
+ * renders and interpolates it exactly like a remote player (it never simulates the enemy).
+ * `enemyId` is the EnemyDef id so the client picks the right voxel model; `state` is the
+ * AI state ('idle' | 'aggro' | 'leash') for animation selection.
+ */
+export interface NetEntity {
+  id: string;
+  /** EnemyDef id (e.g. 'wolf'), for model selection on the client. */
+  enemyId: string;
+  name: string;
+  level: number;
+  x: number;
+  y: number;
+  z: number;
+  /** Facing yaw in radians. */
+  yaw: number;
+  hp: number;
+  maxHP: number;
+  /** AI state for animation: 'idle' | 'aggro' | 'leash'. */
+  state: string;
 }
 
 /**
@@ -171,6 +196,8 @@ export interface ServerSnapshot {
   t: 'snapshot';
   tick: number;
   players: NetPlayer[];
+  /** Interest-filtered enemy entities around the joiner (server-authoritative). */
+  entities: NetEntity[];
 }
 
 /**
@@ -184,6 +211,10 @@ export interface ServerDelta {
   tick: number;
   players: NetPlayer[];
   gone: string[];
+  /** Enemy entities that entered the recipient's interest or changed within it. */
+  entities: NetEntity[];
+  /** Enemy ids to DESPAWN: left interest, died, or were removed from the sim. */
+  goneEntities: string[];
 }
 
 /**
@@ -401,6 +432,31 @@ function isNetPlayer(v: unknown): v is NetPlayer {
   );
 }
 
+function isNetEntity(v: unknown): v is NetEntity {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.id) &&
+    isString(o.enemyId) &&
+    isString(o.name) &&
+    isFiniteNumber(o.level) &&
+    isFiniteNumber(o.x) &&
+    isFiniteNumber(o.y) &&
+    isFiniteNumber(o.z) &&
+    isFiniteNumber(o.yaw) &&
+    isFiniteNumber(o.hp) &&
+    isFiniteNumber(o.maxHP) &&
+    isString(o.state)
+  );
+}
+
+/** Validate an optional NetEntity[] wire field, returning [] when absent. Null ⇒ invalid. */
+function decodeEntities(v: unknown): NetEntity[] | null {
+  if (v === undefined) return [];
+  if (!Array.isArray(v) || !v.every(isNetEntity)) return null;
+  return v;
+}
+
 function isNetSelf(v: unknown): v is NetSelf {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
@@ -444,14 +500,25 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'snapshot': {
       if (!isFiniteNumber(o.tick) || !Array.isArray(o.players)) return null;
       if (!o.players.every(isNetPlayer)) return null;
-      return { t: 'snapshot', tick: o.tick, players: o.players };
+      const entities = decodeEntities(o.entities);
+      if (entities === null) return null;
+      return { t: 'snapshot', tick: o.tick, players: o.players, entities };
     }
     case 'delta': {
       if (!isFiniteNumber(o.tick) || !Array.isArray(o.players) || !Array.isArray(o.gone)) {
         return null;
       }
       if (!o.players.every(isNetPlayer) || !o.gone.every(isString)) return null;
-      return { t: 'delta', tick: o.tick, players: o.players, gone: o.gone };
+      const entities = decodeEntities(o.entities);
+      if (entities === null) return null;
+      const goneEntities =
+        o.goneEntities === undefined
+          ? []
+          : Array.isArray(o.goneEntities) && o.goneEntities.every(isString)
+            ? (o.goneEntities as string[])
+            : null;
+      if (goneEntities === null) return null;
+      return { t: 'delta', tick: o.tick, players: o.players, gone: o.gone, entities, goneEntities };
     }
     case 'self': {
       if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.ackedSeq) || !isNetSelf(o.phys)) return null;

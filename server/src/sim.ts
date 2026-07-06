@@ -104,7 +104,7 @@ export class ServerSim {
   readonly players = new Map<string, ServerPlayer>();
   private nextSession = 1;
 
-  constructor(private readonly world: ServerWorld) {}
+  constructor(readonly world: ServerWorld) {}
 
   /**
    * Admit a new player. Spawns at the shared plaza, or at `spawn` (a persisted

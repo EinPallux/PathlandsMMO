@@ -4,6 +4,46 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 9 — Server-authoritative enemies, Stage 1 (2026-07-06)
+
+The first slice of the combat migration: the server owns the world's enemy population and
+replicates it to clients. Server-side + fully headless-tested; the client renders these
+enemies in Stage 2 (until then it still runs its local combat and ignores the new frames).
+
+#### Added
+
+- **`server/src/combat.ts` — `ServerCombat`**: one authoritative combat sim for the whole
+  world. Each tick it steps the deterministic shared spawner over **all** `WORLD_SPAWNS`
+  regions (the server owns the whole map, so it spawns globally, not proximity-gated like the
+  client) then `stepSim` (enemy AI + combat resolution) — the same pure shared code the
+  client ran locally. Exposes `netEntities()`, per-enemy `isDirty()` (via a quantised
+  change-digest so idle enemies make no traffic), `hasChanges()`, and `removed()`.
+- **Entity replication protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **5**):
+  a `NetEntity { id, enemyId, name, level, x/y/z/yaw, hp, maxHP, state }` now rides
+  `ServerSnapshot` (`entities`) and `ServerDelta` (`entities` + `goneEntities`), with an
+  `isNetEntity` validator. Decoding is tolerant of a missing `entities` field (defaults to
+  `[]`) so the change is forgiving.
+- **Entity interest** (`server/src/interest.ts`): `buildEntityCellIndex` + `visibleEntities`
+  — the enemy analogue of the player 3×3 chunk policy. The gateway diffs enemies per
+  connection (ENTER / UPDATE / LEAVE) against a new `knownEntities` set, in the same delta
+  frame as players; the join snapshot seeds the enemies in the joiner's interest.
+
+#### Changed
+
+- **`server/src/gateway.ts`**: constructs a `ServerCombat` from `sim.world`, steps it each
+  tick (`onTick`), and merges enemy ENTER/UPDATE/LEAVE into the per-subscriber snapshot/delta.
+- **`server/src/sim.ts`**: `ServerSim.world` is now public so the gateway can build the
+  combat sim from the shared world.
+
+#### Tests
+
+- `server/test/entities.test.ts` (+3): deterministic spawn + idle (two `ServerCombat` sims
+  agree byte-for-byte; enemies full-HP, `state:'idle'`, within region radius), no wire
+  changes once settled, and the replication path (a joiner at the boar region sees the boars
+  as `NetEntity`; a distant plaza player does not).
+- `shared/test/net.test.ts`: `NetEntity` snapshot/delta round-trip, malformed-entity
+  rejection, pre-v5 forward-compat, protocol version → 5.
+
 ### Part 8 — MMO-only pivot (2026-07-06)
 
 Direction change (owner call): Pathlands is now **MMO-only** — the standalone offline

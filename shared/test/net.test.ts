@@ -19,8 +19,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 4 (self channel + account token + chat)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(4);
+  it('is at protocol version 5 (self channel + account token + chat + entities)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(5);
   });
 
   it('round-trips a ServerSelf frame', () => {
@@ -87,19 +87,96 @@ describe('net protocol codec', () => {
       yaw: 0.5,
       move: 'walk' as const,
     };
-    expect(decodeServer(encodeServer({ t: 'snapshot', tick: 3, players: [player] }))).toEqual({
-      t: 'snapshot',
-      tick: 3,
-      players: [player],
-    });
     expect(
-      decodeServer(encodeServer({ t: 'delta', tick: 4, players: [player], gone: ['p9'] })),
-    ).toEqual({ t: 'delta', tick: 4, players: [player], gone: ['p9'] });
+      decodeServer(encodeServer({ t: 'snapshot', tick: 3, players: [player], entities: [] })),
+    ).toEqual({ t: 'snapshot', tick: 3, players: [player], entities: [] });
+    expect(
+      decodeServer(
+        encodeServer({
+          t: 'delta',
+          tick: 4,
+          players: [player],
+          gone: ['p9'],
+          entities: [],
+          goneEntities: [],
+        }),
+      ),
+    ).toEqual({
+      t: 'delta',
+      tick: 4,
+      players: [player],
+      gone: ['p9'],
+      entities: [],
+      goneEntities: [],
+    });
     // A player missing a coordinate is rejected wholesale.
     const badPlayer = { ...player, z: undefined };
     expect(
       decodeServer(JSON.stringify({ t: 'snapshot', tick: 3, players: [badPlayer] })),
     ).toBeNull();
+  });
+
+  it('round-trips + validates enemy entities in snapshot / delta', () => {
+    const player = {
+      id: 'p1',
+      name: 'Alia',
+      cls: 'ranger',
+      level: 5,
+      x: 1,
+      y: 2,
+      z: 3,
+      yaw: 0.5,
+      move: 'walk' as const,
+    };
+    const enemy = {
+      id: 'grove#0@10',
+      enemyId: 'wolf',
+      name: 'Grove Wolf',
+      level: 4,
+      x: 120,
+      y: 64,
+      z: 210,
+      yaw: 1.1,
+      hp: 60,
+      maxHP: 60,
+      state: 'idle',
+    };
+    // Snapshot carries entities.
+    expect(
+      decodeServer(encodeServer({ t: 'snapshot', tick: 3, players: [player], entities: [enemy] })),
+    ).toEqual({ t: 'snapshot', tick: 3, players: [player], entities: [enemy] });
+    // Delta carries entered/changed entities + gone entity ids.
+    expect(
+      decodeServer(
+        encodeServer({
+          t: 'delta',
+          tick: 4,
+          players: [],
+          gone: [],
+          entities: [enemy],
+          goneEntities: ['grove#1@8'],
+        }),
+      ),
+    ).toEqual({
+      t: 'delta',
+      tick: 4,
+      players: [],
+      gone: [],
+      entities: [enemy],
+      goneEntities: ['grove#1@8'],
+    });
+    // A malformed entity (non-finite hp) sinks the whole frame.
+    const badEnemy = { ...enemy, hp: 'lots' };
+    expect(
+      decodeServer(JSON.stringify({ t: 'snapshot', tick: 3, players: [], entities: [badEnemy] })),
+    ).toBeNull();
+    // A pre-v5 frame with no entities field still decodes (entities default to []).
+    expect(decodeServer(JSON.stringify({ t: 'snapshot', tick: 1, players: [] }))).toEqual({
+      t: 'snapshot',
+      tick: 1,
+      players: [],
+      entities: [],
+    });
   });
 
   it('round-trips + validates client frames (hello / intent / ping)', () => {

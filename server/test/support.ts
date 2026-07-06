@@ -11,6 +11,7 @@ import {
   NET_PROTOCOL_VERSION,
   type ClientMessage,
   type MoveIntent,
+  type NetEntity,
   type NetPlayer,
   type NetSelf,
 } from '@pathlands/shared';
@@ -63,6 +64,8 @@ export class TestClient {
   you: string | null = null;
   seed: number | null = null;
   readonly players = new Map<string, NetPlayer>();
+  /** Server-authoritative enemy entities this client currently sees. */
+  readonly enemies = new Map<string, NetEntity>();
   lastSelf: { ackedSeq: number; phys: NetSelf } | null = null;
   /** Every Move intent this client has sent, in send order — for reconcile replay. */
   readonly sent: { seq: number; intent: MoveIntent }[] = [];
@@ -100,11 +103,15 @@ export class TestClient {
       case 'snapshot':
         this.players.clear();
         for (const p of msg.players) this.players.set(p.id, p);
+        this.enemies.clear();
+        for (const e of msg.entities) this.enemies.set(e.id, e);
         break;
       case 'delta':
         this.deltaCount += 1;
         for (const p of msg.players) this.players.set(p.id, p);
         for (const id of msg.gone) this.players.delete(id);
+        for (const e of msg.entities) this.enemies.set(e.id, e);
+        for (const id of msg.goneEntities) this.enemies.delete(id);
         break;
       case 'self':
         this.lastSelf = { ackedSeq: msg.ackedSeq, phys: msg.phys };

@@ -18,12 +18,14 @@ import {
   findEmote,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
+  type NetEntity,
   type NetPlayer,
   type ServerChat,
   type ServerMessage,
 } from '@pathlands/shared';
 import type { ServerSim, ServerPlayer } from './sim.js';
-import { buildCellIndex, visibleIds } from './interest.js';
+import { ServerCombat } from './combat.js';
+import { buildCellIndex, buildEntityCellIndex, visibleEntities, visibleIds } from './interest.js';
 import { Auth } from './auth.js';
 import { MemoryStore, type Store } from './store.js';
 import { HttpApi } from './httpApi.js';
@@ -34,6 +36,8 @@ interface Conn {
   id: string | null;
   /** Player ids currently replicated to this connection (its interest membership). */
   readonly known: Set<string>;
+  /** Enemy entity ids currently replicated to this connection (its entity interest). */
+  readonly knownEntities: Set<string>;
   /** Cleared by the heartbeat each round; set true on a WebSocket-level pong. */
   isAlive: boolean;
   /** Fires if the socket never says hello — an anti-idle-DoS reaper. */
@@ -108,12 +112,15 @@ export class GameServer {
   private readonly auth: Auth;
   private readonly store: Store;
   private readonly api: HttpApi;
+  /** The world's authoritative enemy sim (spawns + AI + replication). */
+  private readonly combat: ServerCombat;
 
   constructor(
     private readonly sim: ServerSim,
     private readonly opts: GatewayOptions,
     deps: GatewayDeps = {},
   ) {
+    this.combat = new ServerCombat(sim.world);
     this.auth = deps.auth ?? new Auth('dev-insecure-secret-change-me');
     this.store = deps.store ?? new MemoryStore();
     this.api = new HttpApi(this.auth, this.store, {
@@ -225,6 +232,7 @@ export class GameServer {
       ws,
       id: null,
       known: new Set(),
+      knownEntities: new Set(),
       isAlive: true,
       helloTimer: null,
       msgWindowStart: 0,
@@ -367,7 +375,15 @@ export class GameServer {
             conn.known.add(id);
           }
         }
-        this.send(conn.ws, { t: 'snapshot', tick: this.sim.tick, players });
+        // Seed entity interest too: the enemies in the joiner's 3×3 region, tracked so the
+        // next deltas only send changes/leaves.
+        const entityIndex = buildEntityCellIndex(this.combat.netEntities());
+        const entities: NetEntity[] = [];
+        for (const e of visibleEntities(player, entityIndex)) {
+          entities.push(e);
+          conn.knownEntities.add(e.id);
+        }
+        this.send(conn.ws, { t: 'snapshot', tick: this.sim.tick, players, entities });
         this.membershipChanged = true;
         return;
       }
@@ -442,6 +458,7 @@ export class GameServer {
 
   private onTick(): void {
     this.sim.step();
+    this.combat.step(); // advance the world's enemies (spawn + AI + resolution)
     if (this.sim.tick % this.opts.broadcastEveryTicks === 0) this.broadcast();
   }
 
@@ -451,8 +468,12 @@ export class GameServer {
     // The delta pass is only needed when something could have changed; the `self` pass
     // always runs so reconciliation acks keep flowing (and the client prunes its input
     // history) even for a stationary player.
-    const buildDeltas = this.sim.anyDirty() || membershipChanged;
+    // A delta pass is worthwhile when a player moved/joined/left OR an enemy changed (a
+    // viewer's own movement also shifts which enemies are in its interest). The `self` pass
+    // below always runs so reconciliation acks keep flowing for a stationary player.
+    const buildDeltas = this.sim.anyDirty() || membershipChanged || this.combat.hasChanges();
     const index = buildDeltas ? buildCellIndex(this.sim.players.values()) : null;
+    const entityIndex = buildDeltas ? buildEntityCellIndex(this.combat.netEntities()) : null;
 
     for (const conn of this.conns.values()) {
       if (conn.id === null) continue;
@@ -468,8 +489,9 @@ export class GameServer {
         phys: self.phys,
       });
 
-      // 2) Interest-filtered delta of the OTHER players in the viewer's 3×3 region.
-      if (index !== null) {
+      // 2) Interest-filtered delta of the OTHER players + enemy entities in the viewer's
+      //    3×3 region. Players and entities share one delta frame.
+      if (index !== null && entityIndex !== null) {
         const visible = visibleIds(viewer, index);
         const players: NetPlayer[] = [];
         const gone: string[] = [];
@@ -487,8 +509,38 @@ export class GameServer {
         // LEAVE (walked out of interest) or DISCONNECT (removed from sim ⇒ not visible).
         for (const id of conn.known) if (!visible.has(id)) gone.push(id);
         for (const id of gone) conn.known.delete(id);
-        if (players.length > 0 || gone.length > 0) {
-          this.send(conn.ws, { t: 'delta', tick: this.sim.tick, players, gone });
+
+        // Enemy entities: same ENTER / UPDATE / LEAVE diff against a per-conn known set.
+        const visibleEnts = visibleEntities(viewer, entityIndex);
+        const seenEnts = new Set<string>();
+        const entities: NetEntity[] = [];
+        const goneEntities: string[] = [];
+        for (const e of visibleEnts) {
+          seenEnts.add(e.id);
+          if (!conn.knownEntities.has(e.id)) {
+            conn.knownEntities.add(e.id); // ENTER
+            entities.push(e);
+          } else if (this.combat.isDirty(e.id)) {
+            entities.push(e); // UPDATE
+          }
+        }
+        for (const id of conn.knownEntities) if (!seenEnts.has(id)) goneEntities.push(id);
+        for (const id of goneEntities) conn.knownEntities.delete(id);
+
+        if (
+          players.length > 0 ||
+          gone.length > 0 ||
+          entities.length > 0 ||
+          goneEntities.length > 0
+        ) {
+          this.send(conn.ws, {
+            t: 'delta',
+            tick: this.sim.tick,
+            players,
+            gone,
+            entities,
+            goneEntities,
+          });
         }
       }
     }
