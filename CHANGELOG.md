@@ -24,6 +24,15 @@ All notable changes to Pathlands are documented here, per working session. Forma
   never thrashes the chunk streamer; the user's persisted setting is the ceiling and is never
   overwritten.
 
+#### Fixed
+
+- **Vercel deploy** ("No Output Directory named 'dist' found"): the client now builds to the
+  repo-root `dist/` (Vite `outDir` → `../dist`, `emptyOutDir: true`) and `vercel.json`
+  `outputDirectory` is `dist`. Vercel's build looks for the output at the repo root and its
+  Project-Settings output directory can override `vercel.json` in some project configs — building
+  to the root `dist` makes the location unambiguous so the deploy always finds it. (`pnpm build`
+  now produces repo-root `dist/`; docs updated.)
+
 #### Notes
 
 - **Memory-dispose audit**: confirmed every per-`Game` GPU resource is freed in `dispose()`

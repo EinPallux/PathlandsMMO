@@ -16,7 +16,12 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    // Emit to the repo-root `dist/` (not `client/dist`). Vercel's build looks for
+    // the output at the repo root, and its Project-Settings output directory can
+    // override vercel.json in some project configs — building to the root `dist`
+    // makes the location unambiguous so the deploy always finds it.
+    outDir: resolve(repoRoot, 'dist'),
+    emptyOutDir: true, // required to clean an outDir outside the Vite root
     target: 'es2022',
     sourcemap: false,
     chunkSizeWarningLimit: 3072,
