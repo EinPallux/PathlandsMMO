@@ -48,11 +48,13 @@ describe('server-authoritative enemies — ServerCombat', () => {
 
   it('reports no wire changes once enemies have settled', () => {
     const combat = new ServerCombat(createServerWorld());
-    combat.step(); // first step spawns → changes
-    expect(combat.hasChanges()).toBe(true);
+    combat.step(); // first step spawns
+    combat.refreshDiff(); // diff is taken at broadcast cadence, not inside step()
+    expect(combat.hasChanges()).toBe(true); // the spawns are new → changed
     combat.step();
     combat.step();
-    // Idle enemies don't move, so subsequent steps produce no deltas.
+    combat.refreshDiff();
+    // Idle enemies don't move, so subsequent broadcasts produce no deltas.
     expect(combat.hasChanges()).toBe(false);
   });
 });

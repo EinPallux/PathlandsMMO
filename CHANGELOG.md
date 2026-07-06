@@ -28,13 +28,33 @@ Players` revives a dead player who sent `ReleaseSpirit`.
   inCombat — the wire form of what the combat HUD read from the local sim. Sent beside
   `ServerSelf`, interest-independent, with an `isNetCombatSelf` validator.
 
+#### Fixed (adversarial review of the combat server)
+
+- **Enemy deltas dropped between broadcasts**: `ServerCombat.step()` recomputed the
+  replication diff (clearing dirty flags + advancing the shadow) every tick, but the gateway
+  only broadcasts every Nth tick — so a change on a non-broadcast tick was silently lost. The
+  diff now refreshes **once per broadcast** (`ServerCombat.refreshDiff()`, called from
+  `broadcast()`), never inside `step()`.
+- **Boss adds leaked forever**: boss-summoned adds aren't owned by a spawner slot, so dead
+  ones were never reaped and live ones never despawned. `pruneAdds()` now removes a dead add
+  immediately and a live add once its boss is gone / dead / disengaged (adds exist only for an
+  active fight).
+- **Instant in-place resurrection**: `ReleaseSpirit` revived a dead player the very next tick.
+  A `RELEASE_DELAY_TICKS` (~2 s) gate now prevents chain-res; full death (Waystone relocation
+  - penalty, coordinated with the movement authority) is Stage 2c.
+- **Ally skills could target enemies** (shared `tryCast`): an `ally`-target heal/shield/buff
+  validated range but not hostility, so a Priest could heal an enemy (e.g. keep a rival's boss
+  topped up). `tryCast` now rejects an ally cast on a hostile target — symmetric to the
+  enemy-target check. (Pre-existing shared-sim gap; also fixes single-player combat.)
+
 #### Tests
 
-- `server/test/combat.test.ts` (+4): a player's instant `fireBlast` applies damage + spends
-  mana server-side; an enemy aggros and damages a stationary player (in combat); a dead
-  player who releases revives at full HP; over the wire the combat-self replicates (and
-  reflects the **persisted** character's level, not the hello's claim — server owns identity)
-  and a `SetTarget` intent round-trips.
+- `server/test/combat.test.ts` (+6): a player's instant `fireBlast` applies damage + spends
+  mana server-side; an enemy aggros and damages a stationary player (in combat); a released
+  spirit revives only after the delay; a mid-cadence enemy change survives to the next diff;
+  boss adds are reaped; over the wire the combat-self replicates (reflecting the **persisted**
+  character's level, not the hello's claim) and a `SetTarget` intent round-trips.
+- `shared/test/combat.test.ts`: an ally-target skill on a hostile enemy is rejected (no heal).
 - `shared/test/net.test.ts`: `ServerCombatSelf` round-trip + rejection; protocol → 6.
 
 ### Part 9 — Server-authoritative enemies, Stage 1 (2026-07-06)

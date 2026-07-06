@@ -32,6 +32,9 @@ import {
 } from '@pathlands/shared';
 import type { ServerWorld } from './world.js';
 
+/** Ticks a released spirit waits before reviving (~2 s at 20 Hz) — no instant chain-res. */
+const RELEASE_DELAY_TICKS = 40;
+
 /** Coerce an untrusted class string to a CharacterClass (defaults to Warrior). */
 function toClass(raw: string): CharacterClass {
   return (CHARACTER_CLASSES as readonly string[]).includes(raw)
@@ -157,7 +160,9 @@ export class ServerCombat {
     };
   }
 
-  /** Advance the world one authoritative tick and recompute the replication diff. */
+  /** Advance the world one authoritative tick. The replication diff is refreshed separately
+   * at broadcast cadence (refreshDiff) — NOT here — so a change on a non-broadcast tick isn't
+   * lost by advancing the shadow baseline before a broadcast ever reads it. */
   step(): void {
     // Maintain every region's population (the server owns the whole world, so — unlike the
     // client — it spawns globally, not just around one player). TODO(scale): gate stepping
@@ -167,16 +172,21 @@ export class ServerCombat {
     // players now in the state, enemies aggro/chase/attack and player casts resolve here.
     stepSim(this.state, this.ctx);
     this.reviveReleasedPlayers();
+    this.pruneAdds();
     // Stage 2a doesn't yet grant XP/loot from the drained events (that lands with the
     // client flip + persistence); drain so the queue can't grow unbounded.
     drainEvents(this.state);
-    this.recomputeDiff();
   }
 
-  /** A dead player who has released its spirit (ReleaseSpirit intent) revives at full HP. */
+  /**
+   * A dead player who has released their spirit revives after a short delay. The full death
+   * flow (Waystone relocation + penalty, coordinated with the ServerSim movement authority)
+   * lands in Stage 2c — this keeps a dead player from chain-resurrecting in place instantly.
+   */
   private reviveReleasedPlayers(): void {
     for (const e of this.state.entities.values()) {
       if (e.faction !== 'player' || !e.dead || e.respawnTick === undefined) continue;
+      if (this.state.tick - e.respawnTick < RELEASE_DELAY_TICKS) continue; // still a spirit
       e.dead = false;
       e.hp = e.maxHP;
       e.resource = e.resourceKind === 'rage' ? 0 : e.maxResource;
@@ -187,6 +197,31 @@ export class ServerCombat {
       e.cast = null;
       e.inCombatUntil = 0;
     }
+  }
+
+  /**
+   * Reap boss-summoned adds, which are NOT owned by a spawner slot and so would otherwise
+   * leak into the state forever (the spawner only reaps slot enemies). A dead add is removed
+   * immediately; a live add is removed once its boss is gone, dead, or no longer engaged
+   * (adds exist only for an active fight). Slot enemies (no '~' in their id) are left to the
+   * spawner, exactly as before.
+   */
+  private pruneAdds(): void {
+    for (const [id, e] of [...this.state.entities]) {
+      if (e.faction !== 'enemy') continue;
+      const sep = id.indexOf('~');
+      if (sep <= 0) continue; // a slot enemy — the spawner owns its lifecycle
+      const boss = this.state.entities.get(id.slice(0, sep));
+      if (e.dead || boss === undefined || boss.dead || boss.aiState !== 'aggro') {
+        this.state.entities.delete(id);
+      }
+    }
+  }
+
+  /** Refresh the enemy replication diff (dirty / removed). Call ONCE per broadcast, before
+   * reading isDirty/hasChanges — this advances the shadow baseline to "last broadcast". */
+  refreshDiff(): void {
+    this.recomputeDiff();
   }
 
   private recomputeDiff(): void {

@@ -26,6 +26,20 @@ function collect(events: CombatEvent[], type: CombatEvent['type']): CombatEvent[
 }
 
 describe('Combat resolver (GDD §4)', () => {
+  it('an ally-target skill cannot be cast on a hostile enemy (no healing the boss)', () => {
+    const state = createCombatState(999);
+    addEntity(state, makePlayerEntity('p1', 'Cleric', CharacterClass.Priest, 6, 0, 64, 0));
+    const boar = makeEnemyById('m1', 'thornbackBoar', 4, 0, 64, 1)!;
+    boar.hp = 10; // wounded — a heal would be visible if it landed
+    addEntity(state, boar);
+    // Mend is an ally-target heal; aiming it at the enemy must be rejected (badTarget),
+    // never start a cast, and leave the enemy's health untouched.
+    const ok = applyIntent(state, 'p1', { type: 'CastSkill', skillId: 'mend', targetId: 'm1' });
+    expect(ok).toBe(false);
+    expect(collect(drainEvents(state), 'castFail').length).toBeGreaterThan(0);
+    expect(state.entities.get('m1')!.hp).toBe(10);
+  });
+
   it('a Warrior kills a boar with skills + auto-attacks and gains XP', () => {
     const state = createCombatState(12345);
     const player = addEntity(

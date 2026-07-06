@@ -4,7 +4,7 @@
 // combat intent reaches the sim; the player's own combat state is replicated back).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createCharacter, WORLD_SPAWNS } from '@pathlands/shared';
+import { createCharacter, makeEnemyById, WORLD_SPAWNS } from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
 import { ServerCombat } from '../src/combat.js';
 import { ServerSim } from '../src/sim.js';
@@ -56,7 +56,7 @@ describe('server-authoritative player combat — ServerCombat', () => {
     expect(self.inCombat).toBe(true);
   });
 
-  it('revives a dead player who releases their spirit', () => {
+  it('revives a released spirit only after a delay (no instant chain-res)', () => {
     const combat = new ServerCombat(createServerWorld());
     const boar = spawnBoar(combat);
     combat.addPlayer('P', 'Boro', 'warrior', 6, boar.x, boar.y, boar.z);
@@ -65,10 +65,56 @@ describe('server-authoritative player combat — ServerCombat', () => {
     p.hp = 0;
     p.dead = true;
     combat.applyPlayerIntent('P', { type: 'ReleaseSpirit' });
+    // One tick later the player is still a spirit (the delay hasn't elapsed).
     combat.step();
+    expect(combat.combatSelf('P')!.dead).toBe(true);
+    // After the ~2 s release delay, they revive at full health.
+    for (let i = 0; i < 45; i++) combat.step();
     const self = combat.combatSelf('P')!;
     expect(self.dead).toBe(false);
-    expect(self.hp).toBe(self.maxHP);
+    expect(self.hp).toBeGreaterThan(0);
+  });
+
+  it('captures an enemy change across ticks between broadcasts (delta cadence)', () => {
+    // Regression: step() must NOT advance the replication shadow — only refreshDiff (called
+    // at broadcast cadence) may — else a change on a non-broadcast tick is lost.
+    const combat = new ServerCombat(createServerWorld());
+    for (let i = 0; i < 4; i++) combat.step();
+    combat.refreshDiff(); // first diff captures the spawns (all new)
+    combat.step();
+    combat.step();
+    combat.refreshDiff();
+    expect(combat.hasChanges()).toBe(false); // settled baseline
+
+    const boar = combat.netEntities().find((e) => e.id.startsWith('valeBoars#'))!;
+    combat.state.entities.get(boar.id)!.hp -= 3; // a change
+    combat.step(); // no refresh
+    combat.step(); // another tick, still no refresh — the old bug lost the change here
+    combat.refreshDiff();
+    expect(combat.isDirty(boar.id)).toBe(true);
+  });
+
+  it('reaps boss-summoned adds so they cannot leak forever', () => {
+    const combat = new ServerCombat(createServerWorld());
+    combat.step();
+    // A stand-in "boss" (aggro) with a dead add and, later, a live orphaned add.
+    const boss = makeEnemyById('bossX', 'thornbackBoar', 8, 0, 64, 0)!;
+    boss.aiState = 'aggro';
+    combat.state.entities.set('bossX', boss);
+    const deadAdd = makeEnemyById('bossX~add1', 'thornbackBoar', 5, 0, 64, 0)!;
+    deadAdd.dead = true;
+    combat.state.entities.set('bossX~add1', deadAdd);
+    combat.step();
+    expect(combat.state.entities.has('bossX~add1')).toBe(false); // dead add reaped
+
+    // A live add whose boss has disengaged (idle) is also reaped.
+    boss.aiState = 'idle';
+    combat.state.entities.set(
+      'bossX~add2',
+      makeEnemyById('bossX~add2', 'thornbackBoar', 5, 0, 64, 0)!,
+    );
+    combat.step();
+    expect(combat.state.entities.has('bossX~add2')).toBe(false);
   });
 });
 

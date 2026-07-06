@@ -484,6 +484,10 @@ export class GameServer {
   }
 
   private broadcast(): void {
+    // Recompute the enemy replication diff ONCE here, at broadcast cadence — the combat sim
+    // advances every tick but we only broadcast every Nth, so the diff must be taken against
+    // the last BROADCAST, not the last tick (else sub-cadence changes are silently dropped).
+    this.combat.refreshDiff();
     const membershipChanged = this.membershipChanged;
     this.membershipChanged = false;
     // The delta pass is only needed when something could have changed; the `self` pass

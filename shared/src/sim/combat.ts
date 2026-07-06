@@ -330,6 +330,9 @@ export function tryCast(
     const target = targetId ? state.entities.get(targetId) : undefined;
     if (!isAlive(target)) return fail('noTarget');
     if (needsEnemy && !hostile(caster, target)) return fail('badTarget');
+    // Ally-target skills (heal/shield/buff) may only land on a NON-hostile target — otherwise
+    // a Priest could keep an enemy (or a rival's boss) topped up. Symmetric to the enemy check.
+    if (needsAlly && hostile(caster, target)) return fail('badTarget');
     if (dist2D(caster, target) > skill.range) return fail('range');
   }
   // Ground-placed skills must land within range of the caster.
