@@ -6,6 +6,39 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 1: Server skeleton + the two-player vertical slice.**
+> **Phase 5 is tagged `v1.0-solo`; Phase 6 (the MMO) has begun.** The milestone of this part is
+> the one thing that turns Pathlands from a single-player game into an MMO: **two independent
+> clients see each other move, from server authority.** Landed:
+>
+> - **Network protocol** (`shared/proto/net.ts`) — pure, serialisable client↔server messages
+>   (`hello`/`intent`/`ping` up; `welcome`/`snapshot`/`delta`/`pong`/`error` down), a `NetPlayer`
+>   replication shape, `NET_PROTOCOL_VERSION`, and a **single-choke-point codec** (JSON now,
+>   swappable to length-prefixed MessagePack per ARCH §7 without touching a call site). Decoders
+>   are defensive: a malformed or hostile frame returns `null` and is dropped at the boundary.
+> - **Game server** (`server/` — new pnpm workspace, Node 22 + `ws`) — imports `@pathlands/shared`
+>   **unchanged**: a headless `VoxelSampler` from the same deterministic `World(WORLD_SEED)`, an
+>   **authoritative 20 Hz tick** that advances player movement through the very same shared
+>   `stepPlayerMovement`, a player registry, and snapshot-on-join + **10 Hz delta broadcast**.
+>   Wall-clock lives only at the tick edge; the sim stays fixed-tick and deterministic.
+> - **Client netcode** (`client/src/net/netClient.ts` + `engine/remotePlayers.ts`) — **opt-in**
+>   (connects only when `VITE_PATHLANDS_SERVER` is set, so the static single-player build keeps
+>   **zero server dependency**): streams the local player's exact applied intent up, renders other
+>   players interpolated **~120 ms** behind (smooth motion under a 10 Hz wire), and auto-reconnects
+>   with backoff. Own movement stays locally predicted (same shared function ⇒ it already agrees
+>   with the server; full reconciliation is Part 2).
+> - **Proof:** `server/test/twoPlayer.test.ts` boots the server, connects two real `ws` clients,
+>   moves one, and asserts the **other** sees the moved position **matching the server's
+>   authoritative sim** — plus distinct session ids plus departure cleanup. Spawn (`SPAWN_X`/
+>   `SPAWN_Z`) was promoted to a shared world constant so client and server agree on it.
+>
+> **307 tests green** (+3); `pnpm typecheck` (shared+client+**server**) + `lint` + `build`
+> (277 KB gzip) all clean; the server boots under `pnpm start:server` and listens at 20 Hz.
+> _Next (Part 2): client-side prediction **reconciliation** for the local player, latency/connection
+> HUD, chunk-grid **interest management**, then accounts + persistence (Postgres)._
+>
+> ---
+>
 > **Phase 5 (2026-07-06) — Part 8: Content gap-fill, Phase-5 acceptance, VPS deploy guide.**
 > **Content gap-fill is complete.** A new coverage audit (`shared/test/content-gaps.test.ts`,
 > building on the referential checks already in `quests.test.ts`) drives the authored world through
@@ -721,8 +754,8 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 
 ### Deliverables
 
-- [ ] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU).
-- [ ] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume).
+- [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Part 1: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement`, player registry, snapshot-on-join + 10 Hz delta broadcast, defensive protocol codec. Remaining: authoritative combat/loot/quests/professions on the same tick pipeline, chunk-grid interest management, load scaling.)_
+- [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Part 1: opt-in `NetClient` streams the applied intent up and renders remotes interpolated ~120 ms behind; auto-reconnect with backoff. Remaining: local-player prediction **reconciliation**, latency/connection HUD, session-resume.)_
 - [ ] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import).
 - [ ] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks).
 - [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).

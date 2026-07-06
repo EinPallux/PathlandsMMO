@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import {
   World,
   WORLD_SEED,
+  SPAWN_X,
+  SPAWN_Z,
   TICK_DT,
   buildCharacterModel,
   BIOMES,
@@ -24,6 +26,8 @@ import { EntityManager } from '../engine/entityManager.js';
 import { Environment } from '../engine/environment.js';
 import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
+import { RemotePlayerRenderer } from '../engine/remotePlayers.js';
+import { NetClient } from '../net/netClient.js';
 import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
@@ -36,9 +40,8 @@ import { BountyDirector } from './bountyDirector.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
-// Brookhollow plaza, just north of the fountain (which sits at 1536,1536).
-const SPAWN_X = 1536.5;
-const SPAWN_Z = 1524.5;
+// Spawn (Brookhollow plaza, north of the fountain at 1536,1536) is a shared world
+// constant (SPAWN_X/SPAWN_Z) so the Phase-6 server and the client agree on it.
 const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
@@ -89,6 +92,14 @@ export class Game {
   private adaptTimer = 0;
   /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
   private readonly shadowFocus = new THREE.Vector3();
+  /**
+   * Phase-6 netcode, OPT-IN: constructed only when a server URL is configured
+   * (VITE_PATHLANDS_SERVER), so the single-player build has no server dependency.
+   * The NetClient streams our intents up and other players down; the RemotePlayer-
+   * Renderer draws them. Our own player stays locally predicted.
+   */
+  private readonly net: NetClient | null;
+  private readonly remoteRenderer: RemotePlayerRenderer | null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -215,6 +226,25 @@ export class Game {
     this.gather.onMaterialGained = (id, qty) => this.bounties.onGather(id, qty);
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
+
+    // Opt-in multiplayer (Phase 6): connect only when a server URL is configured. The
+    // static single-player deploy leaves this unset and runs exactly as before.
+    const serverUrl = import.meta.env.VITE_PATHLANDS_SERVER as string | undefined;
+    if (serverUrl !== undefined && serverUrl.length > 0) {
+      this.net = new NetClient({
+        url: serverUrl,
+        identity: {
+          name: character?.name ?? 'Wanderer',
+          cls: this.currentClass,
+          level: character?.level ?? 1,
+        },
+      });
+      this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+      this.net.connect();
+    } else {
+      this.net = null;
+      this.remoteRenderer = null;
+    }
 
     this.effectiveVD = viewDist;
     this.registerCommands();
@@ -468,6 +498,9 @@ export class Game {
         // Keep the player settled (gravity only) while free-flying.
         this.controller.tick(this.sampler, freeInput, this.controller.physics.yaw, TICK_DT);
       }
+      // Phase 6: forward the exact intent we just applied to the authoritative server
+      // (the intent → sim boundary going over the wire). No-op in single-player.
+      this.net?.sendIntent(this.controller.lastIntent);
       const ph = this.controller.physics;
       this.combat.simTick(ph.x, ph.y, ph.z, ph.yaw);
       this.accumulator -= TICK_DT;
@@ -483,6 +516,12 @@ export class Game {
     this.playerModel.group.visible = thirdPerson;
     this.playerModel.update(dt);
     this.mount.render(rs, dt, thirdPerson);
+
+    // Draw the other players the server reports, interpolated ~120 ms behind. No-op
+    // (and no models in the scene) in single-player.
+    if (this.net !== null && this.remoteRenderer !== null) {
+      this.remoteRenderer.sync(this.net.remotePlayers(), dt);
+    }
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
     this.shadowFocus.set(rs.x, rs.y, rs.z);
@@ -669,6 +708,8 @@ export class Game {
       'webglcontextrestored',
       this.onContextRestored as EventListener,
     );
+    this.net?.dispose();
+    this.remoteRenderer?.dispose();
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();

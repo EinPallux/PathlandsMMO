@@ -81,9 +81,21 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 - P1–5: IndexedDB (a hand-rolled dependency-free wrapper, not `idb-keyval`), autosave every 30 s + on unload; a **rotating 3-deep backup ring** with **corruption recovery** — `loadSave()` falls through primary → backups (newest first) → fresh using the never-throwing `tryMigrate()`, so one bad record can't brick a save (a recovered load shows a title-screen notice). Explicit migration functions per version bump with round-trip tests; **save export/import** (JSON download/restore) and a **React error boundary + bug-report screen** guard against browser-storage loss and UI crashes. WebGL context loss is caught and recovered (pause + overlay + auto-resume).
 - P6: same schema decomposed into PostgreSQL tables (accounts, characters, character_state JSONB for cold data + hot columns for queryable bits); a one-time importer lets local solo saves upload as a starting character (best-effort, server re-validates all values against legal bounds — no trusting client-grown stats).
 
-## 7. Netcode (designed now, built in Phase 6)
+## 7. Netcode (Phase 6 — build in progress)
 
-- **Transport:** WebSocket (wss via nginx). Messages: length-prefixed binary (MessagePack initially; hand-rolled codecs only where profiling justifies).
+> **Status (Phase 6 Part 1):** the **movement slice** is built. `shared/proto/net.ts` defines the
+> message schema + codec; `server/` runs the authoritative 20 Hz sim on the shared movement rules
+> and broadcasts snapshot/delta at 10 Hz; `client/src/net/netClient.ts` (opt-in) sends intents and
+> interpolates remotes. Two clients see each other move (`server/test/twoPlayer.test.ts`). Not yet
+> built: authoritative combat/loot/quests on the tick pipeline, own-player reconciliation, chunk
+> interest management, quantised binary framing. The bullets below are the full target.
+>
+> - **Wire format now vs later:** the codec (`encodeClient`/`decodeClient`/`encodeServer`/
+>   `decodeServer`) is a single choke point. Part 1 ships **JSON** for legibility while the protocol
+>   is in flux; switching to length-prefixed MessagePack (below) is a change to those four functions
+>   only, no call-site churn.
+
+- **Transport:** WebSocket (wss via nginx). Messages: length-prefixed binary (MessagePack initially; hand-rolled codecs only where profiling justifies). _(Part 1: JSON text frames behind the codec choke point; binary is the documented upgrade.)_
 - **Authority:** server runs the same `shared/sim` at 20 Hz and is sole truth. Clients send intents (rate-limited, sequence-numbered); server responds with acks + authoritative state.
 - **Replication:** interest management = 3×3 chunk subscription around each player. Per tick-bundle (every 2nd tick, 10 Hz on the wire): entity deltas (pos quantized to 1/16 voxel, hp%, anim state, buff bits) for subscribed cells; full snapshot on subscribe. Reliable event channel for chat/loot/quests.
 - **Feel:** own movement client-predicted + reconciled (movement rules already live in `shared/`, so prediction is literally running the same function); remote entities interpolated 100–150 ms behind; casts show locally at cast-start, resolve on server confirm (tab-target tolerance makes this easy — the reason we chose it).
@@ -92,7 +104,7 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 
 ## 8. Server & Ops (Phase 6)
 
-- `server/`: ws gateway (auth handshake → session) · sim host (imports `shared/`) · persistence writer (dirty-state flush every 30 s + on logout/events) · REST endpoints for auth (register/login/reset, argon2id, rate-limited).
+- `server/`: ws gateway (auth handshake → session) · sim host (imports `shared/`) · persistence writer (dirty-state flush every 30 s + on logout/events) · REST endpoints for auth (register/login/reset, argon2id, rate-limited). _(Part 1 modules: `config.ts` (env at the edge), `world.ts` (headless `VoxelSampler` from the shared deterministic world), `sim.ts` (`ServerSim` — player registry + authoritative tick on `stepPlayerMovement`), `gateway.ts` (`GameServer` — ws lifecycle, tick clock, snapshot/delta broadcast), `index.ts` (entry). Run via `pnpm dev:server` / `pnpm start:server` (tsx). Auth + persistence land in later parts.)_
 - PostgreSQL via Drizzle; nightly `pg_dump` to VPS-local + offsite copy; restore drill documented in the runbook.
 - **Static client (P1–5):** the build is a self-contained `dist/` (repo root). Deploy on Vercel (zero-config via `vercel.json`) or serve from the VPS's nginx — see **docs/DEPLOY.md** for the Ubuntu VPS + nginx guide (SPA fallback, immutable asset caching, certbot TLS). Both must keep working.
 - **Docker Compose (P6):** `game` (Node), `db` (Postgres + volume), `nginx` (TLS via certbot companion, serves wss reverse-proxy — and optionally the static client). Client stays deployable on Vercel pointing at `wss://play.<domain>`; both topologies must work.

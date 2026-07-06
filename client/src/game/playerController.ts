@@ -9,6 +9,7 @@ import {
   makeMoveIntent,
   lerpAngle,
   lerp,
+  type MoveIntent,
   type PlayerPhysics,
   type VoxelSampler,
   type MoveState,
@@ -26,6 +27,12 @@ export interface RenderState {
 export class PlayerController {
   physics: PlayerPhysics;
   private prev: PlayerPhysics;
+  /**
+   * The MoveIntent applied on the most recent tick. In Phase 6 the NetClient sends
+   * this to the server so the authoritative sim runs the exact same input the local
+   * prediction ran — the intent → sim boundary going over the wire (ARCH §7).
+   */
+  lastIntent: MoveIntent = makeMoveIntent(0, 0, false, false, 0);
 
   constructor(x: number, y: number, z: number) {
     this.physics = makePlayerPhysics(x, y, z);
@@ -78,6 +85,7 @@ export class PlayerController {
       speedMult,
     );
     stepPlayerMovement(sampler, this.physics, intent, dt);
+    this.lastIntent = intent;
   }
 
   /** Interpolated render state between the previous and current tick. */

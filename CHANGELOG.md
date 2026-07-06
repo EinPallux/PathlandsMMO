@@ -2,6 +2,46 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
+## [Phase 6 — The MMO: Server Authority & Launch] — in progress
+
+### Part 1 — Server skeleton + two-player vertical slice (2026-07-06)
+
+Phase 5 is tagged **`v1.0-solo`** (the complete single-player game). Phase 6 begins by turning the
+intent → simulation boundary that has existed since Phase 1 into a network boundary: an
+authoritative server, and two clients that see each other move.
+
+#### Added
+
+- **Network protocol** (`shared/proto/net.ts`): pure, serialisable client↔server messages —
+  `hello`/`intent`/`ping` (up) and `welcome`/`snapshot`/`delta`/`pong`/`error` (down) — a
+  `NetPlayer` replication shape, `NET_PROTOCOL_VERSION`, and a **single-choke-point codec**. JSON
+  today; swapping to length-prefixed MessagePack (ARCH §7) touches only the four encode/decode
+  functions. Decoders structurally validate untrusted frames and return `null` on anything
+  malformed, so a hostile frame is dropped at the boundary before it can reach the sim.
+- **Game server** (`server/` — new pnpm workspace, Node 22 + `ws`, run via `pnpm dev:server` /
+  `pnpm start:server`): imports `@pathlands/shared` **unchanged**. A headless `VoxelSampler` from
+  the same deterministic `World(WORLD_SEED)`; an **authoritative 20 Hz** tick advancing players
+  through the identical shared `stepPlayerMovement`; a player registry; snapshot-on-join and a
+  **10 Hz delta broadcast** (interest-management seam left for the next part). Wall-clock is read
+  only at the tick edge — the sim stays fixed-tick and deterministic.
+- **Client netcode** (`client/src/net/netClient.ts` + `client/src/engine/remotePlayers.ts`):
+  **opt-in** via `VITE_PATHLANDS_SERVER` (unset ⇒ the single-player static build has **no server
+  dependency**, unchanged). Streams the local player's exact applied intent to the server, renders
+  other players interpolated **~120 ms** in the past for smooth motion under a 10 Hz wire, and
+  auto-reconnects with capped backoff. Own movement stays locally predicted (same shared function).
+- **Two-player proof** (`server/test/twoPlayer.test.ts`): boots the server, connects two real `ws`
+  clients, moves one, and asserts the **other** sees the moved position **matching the server's
+  authoritative sim** — plus distinct session ids and departure cleanup. (+3 tests → **307**.)
+- Root scripts: `dev:server`, `start:server`; `typecheck` now covers `server/` too.
+
+#### Changed
+
+- **`SPAWN_X` / `SPAWN_Z`** promoted from client-local literals to **shared world constants**
+  (`shared/core/constants.ts`), so the client and the Phase-6 server agree on where a character
+  enters the world. The client now imports them; no behaviour change single-player.
+- `PlayerController` retains `lastIntent` (the exact `MoveIntent` it applied each tick) so the
+  NetClient can send the authoritative server the same input the local prediction ran.
+
 ## [Phase 5 — Polish: The Complete Solo Game] — feature-complete & launch-ready
 
 ### Part 8 — Content gap-fill, Phase-5 acceptance, VPS deploy guide (2026-07-06)
