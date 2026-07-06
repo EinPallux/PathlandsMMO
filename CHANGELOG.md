@@ -4,6 +4,26 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 5 — Onboarding v2: client login (2026-07-06)
+
+Closes the accounts loop: the Part-4 server is now driven from the browser. Client-only
+and **opt-in** (`VITE_PATHLANDS_SERVER`) — single-player is unchanged and never sees a login.
+
+#### Added
+
+- **Auth API client** (`client/src/net/authClient.ts`): `register` / `login` (→ session
+  token), `fetchCharacter` / `putCharacter`, and a `httpBase` helper that maps the `wss://`
+  game URL to `https://` for the REST endpoints. Server error codes map to friendly copy.
+- **`LoginScreen`** (`client/src/ui/LoginScreen.tsx`): a themed email/password form with a
+  login/register toggle, inline errors, and a busy state. Rendered as a gate before the
+  character flow whenever a server is configured.
+- **Token wiring**: the session token is persisted in `localStorage` and threaded
+  `App → Game → NetClient` into the ws hello, so the connection binds to the account and the
+  server restores the character's last position. On entering the world the local character is
+  **best-effort uploaded** to the account (cloud-save migration). `NetClient` gained an
+  `onAuthError` callback (fired on a server `auth` error) → App clears the token and returns
+  to the login screen; a rejected token no longer reconnect-loops.
+
 ### Part 4 — Accounts & persistence (server foundation) (2026-07-06)
 
 Real accounts and durable characters, dependency-free (Node `crypto` only — no native

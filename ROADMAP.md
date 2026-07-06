@@ -6,6 +6,31 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 5: Onboarding v2 (client login → the account loop closes).**
+> The Part-4 accounts server is now usable from the browser. Landed:
+>
+> - **Auth API client** (`client/src/net/authClient.ts`) — register / login (→ token) and
+>   get / put character against the server's REST endpoints (maps the `wss://` game URL to
+>   `https://` for HTTP). Friendly error copy per server code.
+> - **Login/register screen** (`client/src/ui/LoginScreen.tsx`) — a themed email/password
+>   form (mode toggle, inline errors, busy state), shown **only when a server is configured**;
+>   single-player never sees it.
+> - **Token wiring** — the token is stored in `localStorage`, threaded through
+>   `Game → NetClient` into the ws hello, so the session binds to the account and the server
+>   restores the character's last position (Part 4). On entering the world the local character
+>   is **best-effort uploaded** to the account (cloud-save migration). An **expired/invalid
+>   token** is caught (`onAuthError`) → token cleared → back to the login screen.
+> - **App flow** — the login gate precedes the existing character select/create; single-player
+>   is byte-for-byte unchanged (`VITE_PATHLANDS_SERVER` unset ⇒ no login, no server).
+>
+> **337 tests green** (server-side unchanged); `pnpm typecheck` + `lint` + `build` (278 KB
+> gzip) clean. _This part is **client UI**, so its in-browser behaviour (the login screen,
+> the cloud-save round-trip, the reconnect-relogin) is verified on the first VPS test — the
+> server side it talks to is headless-proven in Part 4._ _Next: server-authoritative
+> combat/entities, then the social layer (chat)._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 4: Accounts & persistence (server foundation).**
 > Real accounts and durable characters, built dependency-free (Node `crypto` only — no
 > native argon2 to break a Docker build) and fully headless-tested. Landed:
@@ -849,7 +874,7 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 - [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Parts 1–2: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement` with a per-player input FIFO, player registry, **3×3 chunk interest management** + self-state ack channel, per-subscriber snapshot/delta broadcast, defensive protocol codec, and hardening — maxPayload / hello-timeout / connection cap / heartbeat. Remaining: authoritative combat/loot/quests/professions on the same tick pipeline, load scaling.)_
 - [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Parts 1–2: opt-in `NetClient` streams intents up, **predicts + reconciles** own movement against the server (replay + smoothed correction), interpolates remotes on the server-tick timeline ~150 ms behind, measures RTT, and shows a connection HUD with auto-reconnect. Remaining: session **resume** on reconnect — currently a reconnect starts a fresh server session.)_
 - [~] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import). _(Part 4: scrypt password hashing + HS256 JWT sessions (rate-limited), a durable `FileStore` (JSON, atomic writes) behind a `Store` interface, `/auth/*` + `/character` REST endpoints (character cloud save), and ws token binding that loads the persisted character and writes its authoritative position back. Remaining: the PostgreSQL `Store` impl (interface staged), argon2id if warranted, and richer server-owned state once combat/quests move server-side.)_
-- [ ] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks).
+- [~] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks). _(Part 5: a `LoginScreen` + auth API client gate the flow when a server is configured, the token binds the ws session (server restores the character position), and the local character is cloud-save-uploaded on entry, with expired-token → re-login. Remaining: a per-account character list / multi-slot picker fed by the server, and email verification.)_
 - [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).
 - [ ] **Multiplayer endgame** — weekly world boss at the restored final Waystone, group bounty variants, guild Deeds; anti-cheat essentials (server validates everything; speed/teleport/rate sanity checks; no client-trusted numbers).
 - [~] **Ops & launch** — VPS deployment via Docker Compose (server, PostgreSQL, nginx + TLS/wss, backups cron), GitHub Actions deploy pipeline, structured logging + metrics dashboard (CCU, tick time, DB health), load test at 200 simulated clients, GM tooling (kick/mute/teleport/item-grant), status page; launch checklist & rollback plan. _(Part 3: `server/Dockerfile` + `docker-compose.yml` (game + nginx TLS/wss; Postgres behind a profile) + `deploy/nginx/pathlands.conf` + a `/healthz` + `/status` endpoint + `docs/SERVER_DEPLOY.md` runbook — the movement slice is VPS-deployable now. Remaining: DB backups cron, CI deploy pipeline, metrics dashboard, 200-client load test, GM tooling, launch/rollback plan.)_

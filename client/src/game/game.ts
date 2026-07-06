@@ -120,6 +120,10 @@ export class Game {
     canvas: HTMLCanvasElement,
     character: CharacterSave | null = null,
     account: AccountSave = { pathPoints: 0, perks: {} },
+    /** Phase-6 account session token, threaded into the ws hello when multiplayer is on. */
+    serverToken: string | null = null,
+    /** Called if the server rejects the token (expired) so the UI can re-login. */
+    onAuthError?: () => void,
   ) {
     this.account = { pathPoints: account.pathPoints, perks: { ...account.perks } };
     this.canvas = canvas;
@@ -252,9 +256,11 @@ export class Game {
           name: character?.name ?? 'Wanderer',
           cls: this.currentClass,
           level: character?.level ?? 1,
+          ...(serverToken !== null ? { token: serverToken } : {}),
         },
         onStatus: (st) =>
           useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+        ...(onAuthError !== undefined ? { onAuthError } : {}),
       });
       this.remoteRenderer = new RemotePlayerRenderer(this.scene);
       this.net.connect();

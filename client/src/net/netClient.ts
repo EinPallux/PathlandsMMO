@@ -59,11 +59,14 @@ export interface NetStatus {
 
 export interface NetClientOptions {
   url: string;
-  identity: { name: string; cls: string; level: number };
+  /** Guest identity; plus an optional account session token (accounts, Phase-6 Part 4). */
+  identity: { name: string; cls: string; level: number; token?: string };
   /** How far in the past to render remotes (ms). ≥ ~1.5× the wire interval (ARCH §7). */
   renderDelayMs?: number;
   /** Notified whenever connection status changes. */
   onStatus?: (status: NetStatus) => void;
+  /** Called when the server rejects our token (expired/invalid) — the UI should re-login. */
+  onAuthError?: () => void;
 }
 
 interface Sample {
@@ -152,12 +155,14 @@ export class NetClient {
     this.ws = ws;
     ws.addEventListener('open', () => {
       this.reconnectMs = RECONNECT_BASE_MS;
+      const id = this.opts.identity;
       this.send({
         t: 'hello',
         protocol: NET_PROTOCOL_VERSION,
-        name: this.opts.identity.name,
-        cls: this.opts.identity.cls,
-        level: this.opts.identity.level,
+        name: id.name,
+        cls: id.cls,
+        level: id.level,
+        ...(id.token !== undefined ? { token: id.token } : {}),
       });
       this.startPinging();
     });
@@ -214,9 +219,11 @@ export class NetClient {
         break;
       }
       case 'error':
-        // The server rejected us and will close the socket. A protocol mismatch won't
-        // resolve on retry, so stop the reconnect loop for that case.
-        if (msg.code === 'protocol') this.closedByUser = true;
+        // The server rejected us and will close the socket. Neither a protocol mismatch
+        // nor a rejected token resolves on retry, so stop the reconnect loop; an auth
+        // failure additionally tells the UI to re-login.
+        if (msg.code === 'protocol' || msg.code === 'auth') this.closedByUser = true;
+        if (msg.code === 'auth') this.opts.onAuthError?.();
         break;
       default:
         break;

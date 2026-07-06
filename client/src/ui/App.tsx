@@ -30,7 +30,14 @@ import { BountyBoard } from './BountyBoard.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { FirstTimeTips } from './FirstTimeTips.js';
 import { NetStatusHud } from './NetStatusHud.js';
+import { LoginScreen } from './LoginScreen.js';
 import { Onboarding } from './Onboarding.js';
+import { putCharacter } from '../net/authClient.js';
+
+// Multiplayer server URL (opt-in). When set, accounts/login gate the world; unset ⇒
+// the standalone single-player build, exactly as Phases 1–5.
+const SERVER_URL = import.meta.env.VITE_PATHLANDS_SERVER as string | undefined;
+const TOKEN_KEY = 'pathlands.token';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,6 +47,11 @@ export function App(): JSX.Element {
     account: AccountSave;
     settings: Settings;
   } | null>(null);
+  // Account session token (multiplayer only): restored from localStorage, cleared on
+  // logout / server rejection. Null in single-player (SERVER_URL unset).
+  const [token, setToken] = useState<string | null>(() =>
+    SERVER_URL !== undefined ? localStorage.getItem(TOKEN_KEY) : null,
+  );
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
@@ -69,8 +81,20 @@ export function App(): JSX.Element {
       vfxDensity: entry.settings.vfxDensity,
       resolutionScale: entry.settings.resolutionScale,
     });
-    const game = new Game(canvasRef.current, entry.character, entry.account);
+    // On auth failure the server rejected our token — drop it and return to login.
+    const onAuthError = (): void => {
+      localStorage.removeItem(TOKEN_KEY);
+      setToken(null);
+      setEntry(null);
+    };
+    const game = new Game(canvasRef.current, entry.character, entry.account, token, onAuthError);
     gameRef.current = game;
+
+    // Best-effort cloud-save migration: hand the local character to the account so the
+    // server can restore its position on the next login (a no-op in single-player).
+    if (SERVER_URL !== undefined && token !== null) {
+      void putCharacter(SERVER_URL, token, entry.character);
+    }
 
     const save = (): void => {
       const snap = game.snapshotCharacter();
@@ -87,7 +111,20 @@ export function App(): JSX.Element {
       game.dispose();
       gameRef.current = null;
     };
-  }, [entry]);
+  }, [entry, token]);
+
+  // Multiplayer: gate the whole flow behind account login until we hold a token.
+  if (SERVER_URL !== undefined && token === null) {
+    return (
+      <LoginScreen
+        serverUrl={SERVER_URL}
+        onAuthed={(t) => {
+          localStorage.setItem(TOKEN_KEY, t);
+          setToken(t);
+        }}
+      />
+    );
+  }
 
   if (!entry) {
     return (
