@@ -273,7 +273,7 @@ export class GameServer {
 
   // --- character persistence (authenticated sessions) ---
 
-  /** Write a live player's authoritative position back into its stored character blob. */
+  /** Write a live player's authoritative position + progression back into its stored blob. */
   private async persistPosition(accountId: string, player: ServerPlayer): Promise<void> {
     const ch = await this.store.getCharacter(accountId);
     if (ch === null) return; // guest-with-account who never uploaded a character
@@ -281,6 +281,12 @@ export class GameServer {
     ch.y = player.phys.y;
     ch.z = player.phys.z;
     ch.yaw = player.phys.yaw;
+    // Server-authoritative progression (Stage 2c): XP + derived level.
+    const prog = this.combat.progressionOf(player.id);
+    if (prog !== null) {
+      ch.xp = prog.totalXp;
+      ch.level = prog.level;
+    }
     await this.store.putCharacter(accountId, ch);
   }
 
@@ -329,6 +335,7 @@ export class GameServer {
         let name = msg.name;
         let cls = msg.cls;
         let level = msg.level;
+        let totalXp = 0;
         let spawn: { x: number; y: number; z: number; yaw: number } | undefined;
         if (msg.token !== undefined) {
           const claims = this.auth.verify(msg.token, Math.floor(Date.now() / 1000));
@@ -343,6 +350,7 @@ export class GameServer {
             name = ch.name;
             cls = ch.class;
             level = ch.level;
+            totalXp = ch.xp;
             spawn = { x: ch.x, y: ch.y, z: ch.z, yaw: ch.yaw };
           }
         }
@@ -359,6 +367,7 @@ export class GameServer {
           player.phys.x,
           player.phys.y,
           player.phys.z,
+          totalXp,
         );
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);

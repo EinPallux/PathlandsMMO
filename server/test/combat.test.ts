@@ -4,7 +4,12 @@
 // combat intent reaches the sim; the player's own combat state is replicated back).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createCharacter, makeEnemyById, WORLD_SPAWNS } from '@pathlands/shared';
+import {
+  createCharacter,
+  makeEnemyById,
+  totalXpToReachLevel,
+  WORLD_SPAWNS,
+} from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
 import { ServerCombat } from '../src/combat.js';
 import { ServerSim } from '../src/sim.js';
@@ -115,6 +120,43 @@ describe('server-authoritative player combat — ServerCombat', () => {
     );
     combat.step();
     expect(combat.state.entities.has('bossX~add2')).toBe(false);
+  });
+
+  it('awards XP to the player who kills an enemy (server-authoritative progression)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    expect(combat.progressionOf('P')!.totalXp).toBe(0);
+    // Weaken the boar so one Fire Blast kills it, then cast.
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step(); // resolves the cast → enemy dies → xp event → awardXp
+    const xp = combat.progressionOf('P')!.totalXp;
+    expect(xp).toBeGreaterThan(0);
+    expect(combat.combatSelf('P')!.totalXp).toBe(xp); // replicated on the combat-self channel
+  });
+
+  it('levels a player up when a kill crosses the XP threshold', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    // A warrior sitting 1 XP short of level 2: any kill's XP crosses the threshold.
+    combat.addPlayer('P', 'Boro', 'warrior', 1, boar.x, boar.y, boar.z, totalXpToReachLevel(2) - 1);
+    expect(combat.progressionOf('P')!.level).toBe(1);
+    // Make the boar a near-dead, harmless target so one auto-attack kills it and it can't
+    // kill our low-level test player first.
+    const boarE = combat.state.entities.get(boar.id)!;
+    boarE.hp = 1;
+    boarE.autoAttack = false;
+    boarE.aggroRadius = 0;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'ToggleAutoAttack', on: true });
+    for (let i = 0; i < 80; i++) {
+      combat.syncPlayer('P', boar.x, boar.y, boar.z, 0);
+      combat.step();
+      if (combat.progressionOf('P')!.level > 1) break;
+    }
+    expect(combat.progressionOf('P')!.level).toBe(2);
   });
 });
 

@@ -22,9 +22,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v3 added the optional account `token` on the hello (accounts & persistence);
  * v4 added the chat channel (ClientChat / ServerChat);
  * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta);
- * v6 added the per-connection combat-self channel (ServerCombatSelf).
+ * v6 added the per-connection combat-self channel (ServerCombatSelf);
+ * v7 added server-authoritative XP progression (totalXp on NetCombatSelf).
  */
-export const NET_PROTOCOL_VERSION = 6;
+export const NET_PROTOCOL_VERSION = 7;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -246,6 +247,8 @@ export interface NetCombatSelf {
   /** ResourceKind value as a string (e.g. 'rage', 'mana'); decouples the wire from the enum. */
   resourceKind: string;
   level: number;
+  /** Total lifetime XP (the client derives level + xp-into-level; server-authoritative). */
+  totalXp: number;
   /** Current target entity id (player or enemy), or null. */
   targetId: string | null;
   /** Skill id currently being cast, or null when not casting. */
@@ -524,6 +527,7 @@ function isNetCombatSelf(v: unknown): v is NetCombatSelf {
     isFiniteNumber(o.maxResource) &&
     isString(o.resourceKind) &&
     isFiniteNumber(o.level) &&
+    isFiniteNumber(o.totalXp) &&
     (o.targetId === null || isString(o.targetId)) &&
     (o.castSkill === null || isString(o.castSkill)) &&
     isFiniteNumber(o.castFrac) &&

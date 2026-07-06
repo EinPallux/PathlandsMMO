@@ -932,7 +932,7 @@ export class CombatDirector {
     }
   }
 
-  /** Overwrite our own health/resource/alive-state with the server's authoritative combat-self. */
+  /** Overwrite our own health/resource/alive-state + XP with the server's authoritative combat-self. */
   private reconcileFromServer(): void {
     const cs = this.netSink?.combatSelf();
     if (cs === undefined || cs === null) return;
@@ -942,6 +942,13 @@ export class CombatDirector {
     p.resource = cs.resource;
     p.maxResource = cs.maxResource;
     p.dead = cs.dead;
+    // Server-authoritative XP (Stage 2c): adopt it and level up through the existing path
+    // (VFX + Waymeet mail). Only ever climbs — a lower server value (a guest / identity
+    // mismatch) is ignored so it can't corrupt the local XP bar.
+    if (cs.totalXp > this.totalXp) {
+      this.totalXp = cs.totalXp;
+      this.relevelIfNeeded();
+    }
     // A target the server dropped, or one that has despawned, clears the target frame.
     if (p.targetId !== null && this.state.entities.get(p.targetId) === undefined) {
       p.targetId = null;

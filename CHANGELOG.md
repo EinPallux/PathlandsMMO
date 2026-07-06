@@ -4,6 +4,41 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 12 — Server-authoritative combat, Stage 2c-1: XP + level-ups (2026-07-06)
+
+Progression moves server-side: the server awards XP on kills, derives level from total XP,
+persists both, and replicates them to the client. The server half is headless-proven; the
+client half (adopting the replicated XP + the level-up VFX) is verified on the VPS combat test.
+
+#### Added
+
+- **`ServerCombat` progression** (`server/src/combat.ts`): a per-player `progress` map of
+  authoritative **total lifetime XP**. `addPlayer` gains a `totalXp` parameter and **derives
+  the spawn level from it** (`levelProgressFromTotalXp`) rather than trusting the caller's
+  claimed level. Each `step()` now runs `processEvents`, which drains the shared sim's combat
+  events and calls `awardXp` on every **`xp` event** (a player's killing blow). `awardXp` adds
+  the amount and, when the total crosses a level threshold, **rebuilds the combat entity at the
+  new level** via `makePlayerEntity` (fresh stats + full HP), preserving position / yaw /
+  target / auto-attack. `progressionOf(id)` exposes `{ totalXp, level }` for persistence.
+- **`ServerCombatSelf.totalXp`** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **7**):
+  the combat-self frame now carries total XP; `combatSelf()` fills it and the codec validator
+  requires it to be finite.
+- **Progression persistence** (`server/src/gateway.ts`): the hello passes the persisted
+  character's `xp` into `addPlayer`; `persistPosition` writes `progressionOf`'s `totalXp` +
+  derived `level` back into the stored character alongside position, so progress survives logout.
+- **Client XP adoption** (`client/src/game/combatDirector.ts`): `reconcileFromServer` adopts
+  the server's `totalXp` when it **climbs** (a lower value — a guest / identity mismatch — is
+  ignored so it can't corrupt the local XP bar) and levels up through the existing
+  `relevelIfNeeded` path (level-up VFX + Waymeet mail). Local XP/level self-award stays
+  suppressed in networked mode.
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+2): a kill **awards XP** that also appears on the
+  combat-self channel; a player one XP short of level 2 **levels up on a kill**.
+- **`shared/test/net.test.ts`**: the v7 codec round-trips `totalXp` and rejects a non-finite
+  value; the version assertion updated to 7.
+
 ### Part 11 — Server-authoritative combat, Stage 2b: the client flip (2026-07-06)
 
 The client now renders the server's enemies and fights them server-authoritatively —

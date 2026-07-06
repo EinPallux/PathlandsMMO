@@ -6,6 +6,38 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 12: Server-authoritative combat, Stage 2c-1 (XP + level-ups).**
+> Progression now lives on the server: **XP is awarded, levels are derived, and both are
+> persisted server-side** — the first slice of Stage 2c. Server half is headless-proven; the
+> client half (adopting the replicated XP + firing the level-up VFX) lands for VPS test. Landed:
+>
+> - **`ServerCombat` owns progression.** A per-player `progress` map holds authoritative
+>   **total lifetime XP**; `addPlayer` seeds it from the persisted character and **derives the
+>   spawn level from that XP** (never trusting the hello's claimed level). Each `step()` drains
+>   the shared sim's combat events and, on an **`xp` event** (a player landed a killing blow),
+>   `awardXp` adds it and — when a threshold is crossed — **rebuilds the combat entity at the
+>   new level** (fresh stats + full HP, preserving position / yaw / target / auto-attack).
+>   Enemies key threat/target by string id, so the rebuild doesn't drop their aggro.
+> - **Replicated + persisted.** `ServerCombatSelf` now carries **`totalXp`**
+>   (`NET_PROTOCOL_VERSION` → **7**); `persistPosition` writes the derived `xp` + `level` back
+>   into the stored character alongside position, so progress survives logout.
+> - **Client adopts it.** `CombatDirector.reconcileFromServer` takes the server's `totalXp`
+>   when it **climbs** (a lower value — a guest / identity mismatch — is ignored so it can't
+>   corrupt the local bar) and levels up through the **existing `relevelIfNeeded` path** (VFX +
+>   Waymeet level-up mail). Client-side XP/level self-award stays suppressed in networked mode.
+> - **Tests** (+2 sim, codec updated): a kill awards XP that appears on the combat-self channel;
+>   a player one XP short of level 2 **levels up on a kill**; the v7 codec round-trips `totalXp`
+>   and rejects a non-finite value.
+>
+> **364 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Server half is
+> headless-proven; the browser half (XP bar climbing + level-up VFX off server truth) is what
+> the VPS test exercises._ _Next slices: **2c-2** item/gold loot + inventory replication +
+> persistence; **2c-3** a combat-events channel for authoritative damage floaters + death VFX;
+> **2c-4** proper Waystone respawn + the client adopting the server's persisted character
+> identity on login + server-timeline enemy interpolation._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 11: Server-authoritative combat, Stage 2b (the client flip).**
 > The client now **renders the server's enemies and fights them server-authoritatively** —
 > combat becomes truly multiplayer (every player sees + fights the same monsters). This half
@@ -1029,7 +1061,7 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 
 ### Deliverables
 
-- [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Parts 1–2: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement` with a per-player input FIFO, player registry, **3×3 chunk interest management** + self-state ack channel, per-subscriber snapshot/delta broadcast, defensive protocol codec, and hardening — maxPayload / hello-timeout / connection cap / heartbeat. Remaining: authoritative combat/loot/quests/professions on the same tick pipeline, load scaling.)_
+- [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Parts 1–2: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement` with a per-player input FIFO, player registry, **3×3 chunk interest management** + self-state ack channel, per-subscriber snapshot/delta broadcast, defensive protocol codec, and hardening — maxPayload / hello-timeout / connection cap / heartbeat. Parts 9–12: **combat is migrating server-side** — `ServerCombat` owns the world's enemies (spawn + AI) and hosts players as combat entities (aggro/casts resolve server-side), the client renders + fights them off replicated `NetEntity` / `ServerCombatSelf` frames, and Stage 2c-1 makes **XP + level-ups server-authoritative** (awarded on kill, derived level, replicated + persisted). Remaining: authoritative loot/gold/inventory + death/respawn (rest of Stage 2c), then quests/professions on the same tick pipeline, load scaling.)_
 - [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Parts 1–2: opt-in `NetClient` streams intents up, **predicts + reconciles** own movement against the server (replay + smoothed correction), interpolates remotes on the server-tick timeline ~150 ms behind, measures RTT, and shows a connection HUD with auto-reconnect. Remaining: session **resume** on reconnect — currently a reconnect starts a fresh server session.)_
 - [~] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import). _(Part 4: scrypt password hashing + HS256 JWT sessions (rate-limited), a durable `FileStore` (JSON, atomic writes) behind a `Store` interface, `/auth/*` + `/character` REST endpoints (character cloud save), and ws token binding that loads the persisted character and writes its authoritative position back. Remaining: the PostgreSQL `Store` impl (interface staged), argon2id if warranted, and richer server-owned state once combat/quests move server-side.)_
 - [~] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks). _(Part 5: a `LoginScreen` + auth API client gate the flow when a server is configured, the token binds the ws session (server restores the character position), and the local character is cloud-save-uploaded on entry, with expired-token → re-login. Remaining: a per-account character list / multi-slot picker fed by the server, and email verification.)_

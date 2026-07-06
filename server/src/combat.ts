@@ -15,6 +15,7 @@ import {
   createCombatState,
   createSpawner,
   drainEvents,
+  levelProgressFromTotalXp,
   makePlayerEntity,
   skillById,
   stepSim,
@@ -80,6 +81,8 @@ export class ServerCombat {
   private readonly dirtyIds = new Set<string>();
   /** Enemy ids removed from the sim on the most recent `step()` (died / despawned). */
   private removedIds: string[] = [];
+  /** Per-player authoritative progression (Stage 2c): total lifetime XP. */
+  private readonly progress = new Map<string, { totalXp: number }>();
 
   constructor(world: ServerWorld) {
     this.state = createCombatState(WORLD_SEED);
@@ -90,7 +93,8 @@ export class ServerCombat {
 
   // --- players in the combat sim (Stage 2a) ---
 
-  /** Admit a player as a combat entity so enemies can target it and it can cast. */
+  /** Admit a player as a combat entity so enemies can target it and it can cast. The level
+   * is derived from the (persisted) total XP so progression is authoritative from the start. */
   addPlayer(
     id: string,
     name: string,
@@ -99,20 +103,32 @@ export class ServerCombat {
     x: number,
     y: number,
     z: number,
+    totalXp = 0,
   ): void {
     if (this.state.entities.has(id)) return;
-    this.state.entities.set(id, makePlayerEntity(id, name, toClass(cls), level, x, y, z));
+    const lvl = totalXp > 0 ? levelProgressFromTotalXp(totalXp).level : level;
+    this.state.entities.set(id, makePlayerEntity(id, name, toClass(cls), lvl, x, y, z));
+    this.progress.set(id, { totalXp });
   }
 
   /** Remove a departed player's combat entity (and any enemy threat/target it held). */
   removePlayer(id: string): void {
     this.state.entities.delete(id);
+    this.progress.delete(id);
     for (const e of this.state.entities.values()) {
       if (e.faction === 'enemy') {
         if (e.targetId === id) e.targetId = null;
         if (e.threat[id] !== undefined) delete e.threat[id];
       }
     }
+  }
+
+  /** A player's authoritative progression (total XP + derived level), for persistence. */
+  progressionOf(id: string): { totalXp: number; level: number } | null {
+    const pr = this.progress.get(id);
+    const e = this.state.entities.get(id);
+    if (pr === undefined || e === undefined || e.faction !== 'player') return null;
+    return { totalXp: pr.totalXp, level: e.level };
   }
 
   /** Write a player's authoritative movement position into its combat entity (pre-step). */
@@ -152,6 +168,7 @@ export class ServerCombat {
       maxResource: e.maxResource,
       resourceKind: e.resourceKind,
       level: e.level,
+      totalXp: this.progress.get(id)?.totalXp ?? 0,
       targetId: e.targetId,
       castSkill,
       castFrac,
@@ -173,9 +190,43 @@ export class ServerCombat {
     stepSim(this.state, this.ctx);
     this.reviveReleasedPlayers();
     this.pruneAdds();
-    // Stage 2a doesn't yet grant XP/loot from the drained events (that lands with the
-    // client flip + persistence); drain so the queue can't grow unbounded.
-    drainEvents(this.state);
+    // Stage 2c: the shared sim emits an `xp` event when a player kills an enemy — award it
+    // server-side (level-up rebuilds the entity). Draining also keeps the queue bounded.
+    this.processEvents();
+  }
+
+  /** Apply the shared sim's combat events to server-authoritative progression (Stage 2c). */
+  private processEvents(): void {
+    for (const ev of drainEvents(this.state)) {
+      if (ev.type === 'xp') this.awardXp(ev.entityId, ev.amount);
+      // Loot (gold + items) and combat-event replication land in later Stage 2c slices.
+    }
+  }
+
+  /** Add XP to a player and level them up (rebuilding stats) when they cross a threshold. */
+  private awardXp(playerId: string, amount: number): void {
+    const pr = this.progress.get(playerId);
+    const e = this.state.entities.get(playerId);
+    if (pr === undefined || e === undefined || e.faction !== 'player' || amount <= 0) return;
+    pr.totalXp += amount;
+    const newLevel = levelProgressFromTotalXp(pr.totalXp).level;
+    if (newLevel > e.level) {
+      // Level up: rebuild the entity at the new level (fresh stats + full HP), preserving
+      // position, current target, and auto-attack toggle.
+      const rebuilt = makePlayerEntity(
+        e.id,
+        e.name,
+        e.cls ?? CharacterClass.Warrior,
+        newLevel,
+        e.x,
+        e.y,
+        e.z,
+      );
+      rebuilt.yaw = e.yaw;
+      rebuilt.targetId = e.targetId;
+      rebuilt.autoAttack = e.autoAttack;
+      this.state.entities.set(e.id, rebuilt);
+    }
   }
 
   /**

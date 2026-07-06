@@ -19,8 +19,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 6 (self / token / chat / entities / combat-self)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(6);
+  it('is at protocol version 7 (self / token / chat / entities / combat-self / xp)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(7);
   });
 
   it('round-trips + validates a ServerCombatSelf frame', () => {
@@ -31,6 +31,7 @@ describe('net protocol codec', () => {
       maxResource: 100,
       resourceKind: 'rage',
       level: 6,
+      totalXp: 12345,
       targetId: 'grove#0@10',
       castSkill: 'fireball',
       castFrac: 0.5,
