@@ -26,7 +26,14 @@ import {
 } from '@pathlands/shared';
 import type { ServerSim, ServerPlayer } from './sim.js';
 import { ServerCombat } from './combat.js';
-import { buildCellIndex, buildEntityCellIndex, visibleEntities, visibleIds } from './interest.js';
+import {
+  buildCellIndex,
+  buildEntityCellIndex,
+  cellOf,
+  INTEREST_RADIUS_CELLS,
+  visibleEntities,
+  visibleIds,
+} from './interest.js';
 import { Auth } from './auth.js';
 import { MemoryStore, type Store } from './store.js';
 import { HttpApi } from './httpApi.js';
@@ -83,10 +90,6 @@ const CHAT_MIN_INTERVAL_MS = 700;
 
 /** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
 const CHAT_BROADCAST_MAX = 200;
-
-/** Radius (squared, world units) within which a viewer gets combat visuals (Stage 2c-3). Roughly
- * the 3×3 chunk interest region — cosmetic, so a plain distance gate rather than the cell index. */
-const FX_RANGE_SQ = 72 * 72;
 
 /**
  * Clean an untrusted chat line for rebroadcast: strip control characters (incl. newlines,
@@ -554,15 +557,25 @@ export class GameServer {
       }
 
       // 1d) Authoritative combat visuals near this viewer (Stage 2c-3): incoming hits, other
-      //     players' fights, monster deaths, boss lines. Interest-filtered by distance, and the
-      //     viewer's OWN outgoing damage/heal is omitted (the client already predicts those).
+      //     players' fights, monster deaths, boss lines. Gated by the SAME 3×3-chunk interest as
+      //     entity replication (so a floater never plays for an enemy the viewer wasn't sent, and
+      //     no visible enemy's floater is dropped). The viewer's OWN outgoing damage/heal is
+      //     omitted — the client predicts those. NOTE: this omission assumes the client predicts
+      //     every own hit, which holds while targeting is enemy/self-only (both are in the local
+      //     sim). Revisit when friendly targeting lands (an own heal on ANOTHER player isn't
+      //     predicted locally, so it must NOT be omitted then).
       if (fx.length > 0) {
+        const vcx = cellOf(viewer.phys.x);
+        const vcz = cellOf(viewer.phys.z);
         const events: NetCombatEvent[] = [];
         for (const rec of fx) {
           if ((rec.kind === 'damage' || rec.kind === 'heal') && rec.sourceId === conn.id) continue;
-          const dx = rec.x - viewer.phys.x;
-          const dz = rec.z - viewer.phys.z;
-          if (dx * dx + dz * dz > FX_RANGE_SQ) continue;
+          if (
+            Math.abs(cellOf(rec.x) - vcx) > INTEREST_RADIUS_CELLS ||
+            Math.abs(cellOf(rec.z) - vcz) > INTEREST_RADIUS_CELLS
+          ) {
+            continue;
+          }
           const ev: NetCombatEvent = {
             kind: rec.kind,
             x: rec.x,

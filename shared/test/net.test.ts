@@ -25,7 +25,7 @@ describe('net protocol codec', () => {
   });
 
   it('round-trips + validates a ServerCombatEvents (fx) frame', () => {
-    const msg = {
+    const msg: ServerMessage = {
       t: 'fx',
       tick: 20,
       events: [
@@ -34,7 +34,7 @@ describe('net protocol codec', () => {
         { kind: 'death', x: 5, y: 63, z: 6, amount: 0, crit: false },
         { kind: 'boss', x: 7, y: 65, z: 8, amount: 0, crit: false, text: 'The Warden roars.' },
       ],
-    } as const;
+    };
     expect(decodeServer(encodeServer(msg))).toEqual(msg);
     // An empty batch round-trips.
     expect(decodeServer(encodeServer({ t: 'fx', tick: 1, events: [] }))).toEqual({
