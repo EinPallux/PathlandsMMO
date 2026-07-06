@@ -13,7 +13,7 @@ import {
   type CharacterSave,
   type SaveGame,
 } from '@pathlands/shared';
-import { loadSave, persistSave } from '../platform/saveStore.js';
+import { loadSave, persistSave, wasSaveRecovered } from '../platform/saveStore.js';
 import { CLASS_PORTRAITS } from '../platform/assetManifest.js';
 import { colors, panel } from './theme.js';
 
@@ -52,9 +52,13 @@ export function Onboarding({
 }): JSX.Element {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [screen, setScreen] = useState<'title' | 'select' | 'create'>('title');
+  const [recovered, setRecovered] = useState(false);
 
   useEffect(() => {
-    void loadSave().then(setSave);
+    void loadSave().then((s) => {
+      setSave(s);
+      setRecovered(wasSaveRecovered());
+    });
   }, []);
 
   const commit = async (next: SaveGame): Promise<void> => {
@@ -80,6 +84,21 @@ export function Onboarding({
         <button style={bigBtn} onClick={() => setScreen('select')}>
           Play
         </button>
+        {recovered && (
+          <div
+            style={{
+              ...panel,
+              marginTop: 18,
+              maxWidth: 420,
+              textAlign: 'center',
+              color: colors.inkDim,
+              borderColor: colors.gold,
+            }}
+          >
+            <b style={{ color: colors.gold }}>Save recovered.</b> Your main save couldn&apos;t be
+            read, so a recent backup was restored. Your progress should be intact.
+          </div>
+        )}
       </div>
     );
   }

@@ -41,6 +41,7 @@ export function App(): JSX.Element {
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
+  const contextLost = useStore((s) => s.contextLost);
   const masterVolume = useStore((s) => s.masterVolume);
 
   // Keep the audio master bus in sync with the Settings slider (and its seed on boot).
@@ -61,6 +62,11 @@ export function App(): JSX.Element {
     st.setSnapshot({ viewDistance: entry.settings.viewDistance });
     st.setKeybinds(entry.settings.keybinds);
     st.setMasterVolume(entry.settings.masterVolume);
+    st.setGraphics({
+      shadows: entry.settings.shadows,
+      vfxDensity: entry.settings.vfxDensity,
+      resolutionScale: entry.settings.resolutionScale,
+    });
     const game = new Game(canvasRef.current, entry.character, entry.account);
     gameRef.current = game;
 
@@ -116,6 +122,30 @@ export function App(): JSX.Element {
         {ready && showMap && <DebugMap />}
       </div>
       {!ready && <LoadingScreen />}
+      {contextLost && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            background: 'rgba(8, 6, 4, 0.82)',
+            color: '#f2ead9',
+            fontFamily: 'system-ui, sans-serif',
+            textAlign: 'center',
+            pointerEvents: 'auto',
+          }}
+        >
+          <div style={{ fontSize: 20, fontWeight: 700, color: '#c9a23f' }}>Rendering paused</div>
+          <div style={{ fontSize: 13, color: '#b8a888', maxWidth: 360, lineHeight: 1.5 }}>
+            The graphics context was lost (a GPU or driver hiccup). The game will resume
+            automatically once it&apos;s restored — your progress is safe.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

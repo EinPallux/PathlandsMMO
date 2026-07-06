@@ -6,6 +6,29 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 5 in progress (2026-07-06) — Part 5: Performance & Resilience (two pillars).**
+> **Resilience** is complete: the save layer (`save.ts` **v13**) gained never-throwing recovery —
+> `validateSave()` + `tryMigrate()` (returns `null` instead of throwing), a **rotating 3-deep
+> backup ring** in `saveStore.ts`, and a **load fall-through** (primary → backups newest-first →
+> fresh) so a single corrupt IndexedDB record can't brick a save; a recovered load shows a title-
+> screen notice. Added **save export/import** (download a JSON backup / restore from file, in
+> Settings) and a top-level **React error boundary** with a bug-report screen (copyable error
+> details + one-click save-backup download + reload). The **versioned migration test suite** now
+> covers v1→v13, graphics defaults, corruption recovery, and validate/tryMigrate (**282 tests**).
+> **Performance & compatibility**: player-facing **graphics settings** (view distance, **shadows**
+> off/low/high, **VFX density** off/low/full, **resolution scale** 75/85/100%) persisted in v13 and
+> applied live; a real **sun shadow map** (`environment.ts`: an orthographic frustum that follows
+> the player, actors + props cast, terrain receives — receive-only ground avoids voxel acne), a
+> `Vfx.setDensity` multiplier on burst counts, and renderer pixel-ratio scaling; and **WebGL
+> context-loss recovery** (preventDefault + pause + "Rendering paused" overlay + auto-resume on
+> restore, with three re-uploading resources lazily). `pnpm typecheck && lint && test (282) &&
+build` clean; in-browser the graphics controls render + apply (shadows High shows the character's
+> soft ground shadow, FPS reflects the shadow pass), a simulated context loss shows the overlay and
+> recovers, all with **zero console errors**. Remaining for Performance: a formal profiling/memory-
+> leak audit pass and the cross-browser/resolution matrix.
+>
+> ---
+>
 > **Phase 5 in progress (2026-07-06) — Part 4: VFX pass — a pooled particle system.** A new
 > `client/engine/vfx.ts`: one pooled `THREE.Points` object (700-particle ring buffer, a single
 > draw call, fixed memory) of **additive soft dots** driven by a `RawShaderMaterial` — per-particle
@@ -613,8 +636,8 @@ _Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass
 - [~] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels. _(Part 4: a pooled `THREE.Points` particle system (`client/engine/vfx.ts`, one additive-soft-dot draw call, 700-particle ring buffer, CPU gravity/drag/fade, colour fades to black over life) wired into the CombatDirector — hit sparks (crit-gold / heal-green), death puffs, **school-tinted cast flashes** (`SCHOOL_COLOR`), a golden level-up fountain, and a Waystone-blue attunement glow. Remaining: blight ambience in corrupted areas + water/foliage micro-motion.)_
 - [~] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors. _(Part 3: a portal-based tooltip system — item cards with vs-equipped stat-delta comparison + colourblind-safe rarity labels, and skill cards on the hotbar; wired into the Character/Vendor/Bank panels + hotbar. Remaining: loading/continue screens from the PNG art, first-time-player tips, wider art-direction pass.)_
 - [~] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning. _(Part 1: the leveling pace — curve lowered to `250·L^1.55` (~549k) + quest XP ×2, so quests are ~45% of the climb and 1→30 targets ~25–35 h; guarded by `acceptance-p4.test.ts`. Remaining: all-class TTK, itemization curve, Hollow difficulty, gold economy.)_
-- [ ] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery.
-- [ ] **Resilience** — autosave + rotating save backups, save-corruption recovery, versioned save migration test suite, error boundary + bug-report info screen.
+- [~] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery. _(Part 5: player-facing **graphics settings** — view distance, **shadows** (off/low/high), **VFX density** (off/low/full), **resolution scale** (75/85/100%) — persisted in **save v13** and applied live; a real **sun shadow map** (`environment.ts`, a player-following orthographic frustum; actors + props cast, terrain receives — receive-only to avoid voxel acne) gated by the quality setting; a `Vfx.setDensity` burst-count multiplier; renderer pixel-ratio scaling; and **WebGL context-loss recovery** (preventDefault → pause → overlay → auto-resume). Remaining: a formal profiling/memory-leak audit and the cross-browser/resolution matrix.)_
+- [x] **Resilience** — autosave + rotating save backups, save-corruption recovery, versioned save migration test suite, error boundary + bug-report info screen. _(Part 5: `save.ts` **v13** with `validateSave()` + never-throwing `tryMigrate()`; a rotating **3-deep backup ring** + **load fall-through** (primary → backups → fresh) in `saveStore.ts`, with a recovery notice on the title screen; **save export/import** (download/restore JSON) in Settings; a top-level React **error boundary** with a bug-report screen (copyable details + save-backup download + reload); and a **versioned migration test suite** (v1→v13, graphics defaults, corruption recovery, validate/tryMigrate). Autosave already ran every 30 s + on unload since Phase 4.)_
 - [ ] **Content gap fill** — whatever playtesting exposes: dead map corners, quest dead spots, missing vendor, confusing moments. Tracked as a checklist added to this file during the phase.
 
 ### Acceptance Criteria

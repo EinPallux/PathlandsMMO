@@ -3,6 +3,9 @@ import {
   createNewSave,
   migrate,
   normalizeSave,
+  tryMigrate,
+  validateSave,
+  DEFAULT_SETTINGS,
   SAVE_VERSION,
   type SaveGame,
 } from '../src/proto/save.js';
@@ -19,7 +22,7 @@ describe('save schema', () => {
 
   it('round-trips a populated save losslessly', () => {
     const save: SaveGame = {
-      version: 12,
+      version: 13,
       worldSeed: WORLD_SEED,
       account: { pathPoints: 3, perks: { deepPockets: 2 } },
       characters: [
@@ -77,6 +80,9 @@ describe('save schema', () => {
         viewDistance: 10,
         masterVolume: 0.5,
         keybinds: { ...DEFAULT_KEYBINDS, toggleMap: 'KeyN' },
+        shadows: 'high',
+        vfxDensity: 'low',
+        resolutionScale: 0.75,
       },
       updatedAtTick: 999,
     };
@@ -283,5 +289,87 @@ describe('save schema', () => {
   it('throws only on completely unrecoverable input', () => {
     expect(() => migrate(null)).toThrow();
     expect(() => migrate('not a save')).toThrow();
+  });
+});
+
+describe('save graphics settings (v13)', () => {
+  it('a fresh save carries the default graphics settings', () => {
+    const s = createNewSave().settings;
+    expect(s.shadows).toBe(DEFAULT_SETTINGS.shadows);
+    expect(s.vfxDensity).toBe(DEFAULT_SETTINGS.vfxDensity);
+    expect(s.resolutionScale).toBe(DEFAULT_SETTINGS.resolutionScale);
+  });
+
+  it('migrates a pre-graphics (v12) save, defaulting the graphics options', () => {
+    const v12 = {
+      version: 12,
+      account: { pathPoints: 0, perks: {} },
+      characters: [],
+      settings: { viewDistance: 9, masterVolume: 0.6, keybinds: {} },
+    };
+    const s = migrate(v12).settings;
+    expect(s.viewDistance).toBe(9); // existing setting preserved
+    expect(s.shadows).toBe(DEFAULT_SETTINGS.shadows);
+    expect(s.vfxDensity).toBe(DEFAULT_SETTINGS.vfxDensity);
+    expect(s.resolutionScale).toBe(DEFAULT_SETTINGS.resolutionScale);
+  });
+
+  it('keeps valid graphics settings and rejects out-of-range / bogus values', () => {
+    const good = migrate({
+      version: 13,
+      settings: { shadows: 'high', vfxDensity: 'off', resolutionScale: 0.75 },
+    }).settings;
+    expect(good.shadows).toBe('high');
+    expect(good.vfxDensity).toBe('off');
+    expect(good.resolutionScale).toBe(0.75);
+
+    const bad = migrate({
+      version: 13,
+      settings: { shadows: 'ultra', vfxDensity: 7, resolutionScale: 4 },
+    }).settings;
+    expect(bad.shadows).toBe(DEFAULT_SETTINGS.shadows); // unknown enum → default
+    expect(bad.vfxDensity).toBe(DEFAULT_SETTINGS.vfxDensity); // wrong type → default
+    expect(bad.resolutionScale).toBe(1); // clamped to the [0.5, 1] range
+  });
+
+  it('clamps an absurd view distance into the supported range', () => {
+    expect(migrate({ settings: { viewDistance: 999 } }).settings.viewDistance).toBe(16);
+    expect(migrate({ settings: { viewDistance: 1 } }).settings.viewDistance).toBe(4);
+  });
+});
+
+describe('save corruption recovery (validateSave / tryMigrate)', () => {
+  it('validateSave accepts a freshly migrated save', () => {
+    expect(validateSave(createNewSave())).toBe(true);
+    expect(validateSave(migrate({ version: 1, characters: [] }))).toBe(true);
+  });
+
+  it('validateSave rejects wrong-version, missing-field, and non-save shapes', () => {
+    const ok = createNewSave() as unknown as Record<string, unknown>;
+    expect(validateSave({ ...ok, version: 12 })).toBe(false); // stale version
+    expect(validateSave({ ...ok, worldSeed: 'nope' })).toBe(false);
+    expect(validateSave({ ...ok, characters: 'not-array' })).toBe(false);
+    expect(validateSave({ ...ok, settings: { viewDistance: 8 } })).toBe(false); // no keybinds
+    expect(validateSave(null)).toBe(false);
+    expect(validateSave('a string')).toBe(false);
+    expect(validateSave(42)).toBe(false);
+  });
+
+  it('tryMigrate recovers an old save and returns a valid current one', () => {
+    const recovered = tryMigrate({ version: 7, characters: [{ name: 'Old', class: 'ranger' }] });
+    expect(recovered).not.toBeNull();
+    expect(recovered!.version).toBe(SAVE_VERSION);
+    expect(validateSave(recovered)).toBe(true);
+    expect(recovered!.characters[0]!.name).toBe('Old');
+  });
+
+  it('tryMigrate returns null (never throws) on unrecoverable garbage', () => {
+    expect(tryMigrate(null)).toBeNull();
+    expect(tryMigrate('corrupt')).toBeNull();
+    expect(tryMigrate(undefined)).toBeNull();
+    expect(tryMigrate(12345)).toBeNull();
+    // A truncated JSON object that isn't a save still yields a *valid* empty save
+    // (migrate fills every default), so tryMigrate returns a usable save, not null.
+    expect(tryMigrate({ foo: 'bar' })).not.toBeNull();
   });
 });

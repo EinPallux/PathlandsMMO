@@ -4,6 +4,49 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 5 — Polish: The Complete Solo Game] — in progress
 
+### Part 5 — Performance & Resilience (2026-07-06)
+
+#### Added
+
+- **Save resilience** (`shared/proto/save.ts` **v13**, `client/platform/saveStore.ts`):
+  `validateSave()` (structural type guard) and `tryMigrate()` (migrate-or-`null`, never throws)
+  back a **rotating 3-deep backup ring** and a **load fall-through** — on boot the loader tries
+  the primary record, then each backup newest-first, then a fresh save, so a single corrupt
+  IndexedDB record can no longer brick a character. A recovered load surfaces a notice on the
+  title screen.
+- **Save export / import**: download the whole save as a JSON backup and restore it from a file
+  (Settings → Save data). Import validates through the same defensive migrator and reloads.
+- **Error boundary** (`client/ui/ErrorBoundary.tsx`): a top-level React boundary that replaces a
+  crashed UI with a calm bug-report screen — copyable error + component stack, a one-click
+  save-backup download, and reload.
+- **Graphics settings** (persisted in save v13, applied live): **shadows** (off / low / high),
+  **VFX density** (off / low / full), **resolution scale** (75 / 85 / 100 %), alongside the
+  existing view-distance slider — a new GRAPHICS section in the Settings panel.
+- **Sun shadow map** (`client/engine/environment.ts`): a directional-light shadow with an
+  orthographic frustum that follows the player each frame (1024/2048 map for low/high). Characters,
+  enemies, mounts, and instanced props **cast**; terrain **receives** (receive-only ground avoids
+  voxel shadow acne). Gated by the shadows setting; the renderer keeps `shadowMap.enabled` on so
+  toggling quality never triggers a shader recompile.
+- **WebGL context-loss recovery** (`client/game/game.ts`): `webglcontextlost` is `preventDefault`ed
+  and pauses the loop behind a "Rendering paused" overlay; `webglcontextrestored` resizes and
+  resumes (three re-uploads geometry/materials lazily). A `contextLost` store flag drives the
+  overlay.
+
+#### Changed
+
+- `Vfx.burst` scales its particle count by a density multiplier (`Vfx.setDensity`), wired to the
+  VFX-density setting; `off` mutes cosmetic particles entirely.
+- The renderer's pixel ratio is multiplied by the resolution-scale setting (a cheap way to hold
+  frame budget in heavy scenes).
+- `migrate()` now clamps `viewDistance`/`resolutionScale` into range and validates the graphics
+  enums, defaulting unknown values.
+
+#### Tests
+
+- Extended `shared/test/save.test.ts` to **282 total**: v1→v13 migration, graphics-setting
+  defaults + range/enum validation, `validateSave` accept/reject cases, and `tryMigrate`
+  recover-or-`null` (corruption recovery).
+
 ### Part 4 — VFX: a pooled particle system (2026-07-06)
 
 #### Added

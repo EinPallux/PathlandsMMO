@@ -537,6 +537,11 @@ export class CombatDirector {
     return skillsKnownAt(this.cls, this.level).slice(0, 10);
   }
 
+  /** Set the VFX particle-density multiplier (graphics setting). */
+  setVfxDensity(mult: number): void {
+    this.vfx.setDensity(mult);
+  }
+
   // --- input intents ---------------------------------------------------------
 
   castSlot(slot: number): void {

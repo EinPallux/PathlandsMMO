@@ -71,6 +71,8 @@ export class Vfx {
   private readonly grav = new Float32Array(MAX);
   private head = 0;
   private readonly scene: THREE.Scene;
+  /** Burst-count multiplier from the VFX-density graphics setting (0 mutes). */
+  private density = 1;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -103,9 +105,15 @@ export class Vfx {
     scene.add(this.points);
   }
 
+  /** Density multiplier for burst sizes (VFX-density graphics setting): 0..1. */
+  setDensity(mult: number): void {
+    this.density = Math.max(0, Math.min(1, mult));
+  }
+
   /** Spawn a burst of particles at a world position. */
   burst(x: number, y: number, z: number, o: BurstOpts): void {
-    const n = Math.min(o.count, MAX);
+    const n = Math.min(Math.round(o.count * this.density), MAX);
+    if (n <= 0) return;
     const speed = o.speed ?? 2.5;
     const up = o.up ?? 0;
     const life = o.life ?? 0.5;

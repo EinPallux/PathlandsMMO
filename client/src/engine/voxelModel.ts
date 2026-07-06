@@ -64,7 +64,9 @@ function buildPartMesh(partData: ModelPart, jitterSeed: number): THREE.Mesh | nu
   // Shift so the part's pivot sits at the local origin (rotation centre).
   geo.translate(minX - partData.pivot[0], minY - partData.pivot[1], minZ - partData.pivot[2]);
   geo.computeBoundingSphere();
-  return new THREE.Mesh(geo, MODEL_MATERIAL);
+  const mesh = new THREE.Mesh(geo, MODEL_MATERIAL);
+  mesh.castShadow = true; // characters, enemies, NPCs, and mounts cast sun shadows (Phase 5)
+  return mesh;
 }
 
 function sampleTrack(

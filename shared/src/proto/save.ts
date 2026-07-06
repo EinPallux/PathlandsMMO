@@ -26,13 +26,32 @@ import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
 // v10 → v11 (Phase 4): settings gained the rebindable keybind map.
-export const SAVE_VERSION = 12;
+// v11 → v12 (Phase 4): characters remember learned discovery recipes.
+// v12 → v13 (Phase 5): settings gained graphics options (shadow quality, VFX
+// density, resolution scale) for the Performance pass. All are additive with
+// defaults, so any prior save upgrades cleanly.
+export const SAVE_VERSION = 13;
+
+/** Sun-shadow quality; `off` disables the shadow map entirely (Phase 5). */
+export type ShadowQuality = 'off' | 'low' | 'high';
+/** Particle-effect density multiplier bucket (Phase 5). */
+export type VfxDensity = 'off' | 'low' | 'full';
 
 export interface SettingsV1 {
   viewDistance: number;
   masterVolume: number;
   /** Rebindable action → KeyboardEvent.code (GDD §14; defaults in data/keybinds). */
   keybinds: Record<string, string>;
+}
+
+/** v13: graphics options for the Performance & compatibility pass. */
+export interface SettingsV2 extends SettingsV1 {
+  /** Sun-shadow map quality (`off` skips shadows; `low`/`high` = 1024/2048 map). */
+  shadows: ShadowQuality;
+  /** VFX particle density; scales burst counts (`off` mutes cosmetic particles). */
+  vfxDensity: VfxDensity;
+  /** Render-resolution scale (0.5–1); multiplies the device pixel ratio. */
+  resolutionScale: number;
 }
 
 export interface ItemStackSave {
@@ -150,10 +169,21 @@ export interface SaveGameV12 {
   updatedAtTick: number;
 }
 
+export interface SaveGameV13 {
+  version: 13;
+  worldSeed: number;
+  account: AccountSaveV3;
+  characters: CharacterSaveV11[];
+  settings: SettingsV2;
+  /** Sim tick at last save (no wall-clock in the schema itself). */
+  updatedAtTick: number;
+}
+
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV12;
+export type SaveGame = SaveGameV13;
 export type CharacterSave = CharacterSaveV11;
 export type AccountSave = AccountSaveV3;
+export type Settings = SettingsV2;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -163,11 +193,17 @@ const DEFAULT_SKILLS = (): Record<string, number> => ({
   alchemy: 1,
 });
 
-export const DEFAULT_SETTINGS: SettingsV1 = {
+export const DEFAULT_SETTINGS: SettingsV2 = {
   viewDistance: 8,
   masterVolume: 0.8,
   keybinds: defaultKeybinds(),
+  shadows: 'low',
+  vfxDensity: 'full',
+  resolutionScale: 1,
 };
+
+const SHADOW_QUALITIES: readonly ShadowQuality[] = ['off', 'low', 'high'];
+const VFX_DENSITIES: readonly VfxDensity[] = ['off', 'low', 'full'];
 
 export function createNewSave(): SaveGame {
   return {
@@ -194,6 +230,15 @@ function str(v: unknown, fallback: string): string {
 
 function strArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
+  const n = num(v, fallback);
+  return Math.min(max, Math.max(min, n));
 }
 
 function itemStacks(v: unknown): ItemStackSave[] {
@@ -369,9 +414,12 @@ export function migrate(raw: unknown): SaveGame {
     account: accountMeta(account, chars),
     characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV11 => c !== null),
     settings: {
-      viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
-      masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
+      viewDistance: clampNum(settings.viewDistance, 4, 16, DEFAULT_SETTINGS.viewDistance),
+      masterVolume: clampNum(settings.masterVolume, 0, 1, DEFAULT_SETTINGS.masterVolume),
       keybinds: keybinds(settings.keybinds),
+      shadows: oneOf(settings.shadows, SHADOW_QUALITIES, DEFAULT_SETTINGS.shadows),
+      vfxDensity: oneOf(settings.vfxDensity, VFX_DENSITIES, DEFAULT_SETTINGS.vfxDensity),
+      resolutionScale: clampNum(settings.resolutionScale, 0.5, 1, DEFAULT_SETTINGS.resolutionScale),
     },
     updatedAtTick: num(raw.updatedAtTick, 0),
   };
@@ -380,6 +428,38 @@ export function migrate(raw: unknown): SaveGame {
 /** Round-trip safety: serialise then re-migrate to guarantee a canonical save. */
 export function normalizeSave(save: SaveGame): SaveGame {
   return migrate(JSON.parse(JSON.stringify(save)));
+}
+
+/**
+ * Structural sanity check on a *migrated* save. Cheap, not exhaustive — it
+ * catches the shapes a corrupt/foreign blob would produce after migrate() (so a
+ * backup can be tried) without duplicating every field validator. Use as a
+ * `SaveGame` type guard after `migrate()`/`tryMigrate()`.
+ */
+export function validateSave(save: unknown): save is SaveGame {
+  if (!isRecord(save)) return false;
+  if (save.version !== SAVE_VERSION) return false;
+  if (typeof save.worldSeed !== 'number' || !Number.isFinite(save.worldSeed)) return false;
+  if (!Array.isArray(save.characters)) return false;
+  if (!isRecord(save.account) || typeof save.account.pathPoints !== 'number') return false;
+  const s = save.settings;
+  if (!isRecord(s) || typeof s.viewDistance !== 'number' || !isRecord(s.keybinds)) return false;
+  // Every character must at least carry an id and a class (the migrator guarantees this).
+  return save.characters.every((c) => isRecord(c) && typeof c.id === 'string');
+}
+
+/**
+ * Migrate defensively: return a valid `SaveGame`, or `null` if `raw` cannot be
+ * recovered (not an object, migrate threw, or the result fails validation).
+ * Never throws — the caller (save store) falls through to a backup on `null`.
+ */
+export function tryMigrate(raw: unknown): SaveGame | null {
+  try {
+    const migrated = migrate(raw);
+    return validateSave(migrated) ? migrated : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A fresh level-1 character at the Brookhollow spawn. */

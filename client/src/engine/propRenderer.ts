@@ -84,6 +84,8 @@ export class PropRenderer {
       const mesh = new THREE.InstancedMesh(geometry, PROP_MATERIAL, capacity);
       mesh.count = 0;
       mesh.frustumCulled = false;
+      mesh.castShadow = true; // trees/rocks/props cast sun shadows (Phase 5)
+      mesh.receiveShadow = true;
       e = { mesh, geometry, capacity, chunks: new Map(), dirty: false };
       this.entries.set(id, e);
       this.scene.add(mesh);
@@ -133,6 +135,8 @@ export class PropRenderer {
         e.mesh.dispose();
         e.mesh = new THREE.InstancedMesh(e.geometry, PROP_MATERIAL, cap);
         e.mesh.frustumCulled = false;
+        e.mesh.castShadow = true;
+        e.mesh.receiveShadow = true;
         e.capacity = cap;
         this.scene.add(e.mesh);
       }

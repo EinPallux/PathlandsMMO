@@ -15,6 +15,8 @@ import {
   type CharacterSave,
   type AccountSave,
   type VoxelSampler,
+  type ShadowQuality,
+  type VfxDensity,
 } from '@pathlands/shared';
 import { ChunkManager } from '../engine/chunkManager.js';
 import { PropRenderer } from '../engine/propRenderer.js';
@@ -41,6 +43,9 @@ const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
 const UNDERGROUND_MARGIN = 3;
+
+// VFX-density graphics setting → burst-count multiplier (Phase 5).
+const VFX_DENSITY_MULT: Record<VfxDensity, number> = { off: 0, low: 0.5, full: 1 };
 
 export class Game {
   private readonly canvas: HTMLCanvasElement;
@@ -76,6 +81,11 @@ export class Game {
   private statsTimer = 0;
   private running = true;
   private started = false;
+  private contextLost = false;
+  /** Render-resolution multiplier on top of the device pixel ratio (Phase 5). */
+  private resolutionScale = 1;
+  /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
+  private readonly shadowFocus = new THREE.Vector3();
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -93,6 +103,11 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Shadow support stays enabled so materials compile with it once; the sun's
+    // castShadow flag (set by the graphics setting) is what turns shadows on/off,
+    // avoiding a runtime shader recompile when the player changes the setting.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.sampler = {
       isSolid: (x, y, z) => this.world.isSolidAt(x, y, z),
@@ -199,8 +214,11 @@ export class Game {
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
     this.registerCommands();
+    this.applyGraphics(); // shadows / VFX density / resolution scale from saved settings
     window.addEventListener('resize', this.onResize);
     this.canvas.addEventListener('mousedown', this.onCanvasClick);
+    this.canvas.addEventListener('webglcontextlost', this.onContextLost as EventListener);
+    this.canvas.addEventListener('webglcontextrestored', this.onContextRestored as EventListener);
 
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.loop);
@@ -227,6 +245,9 @@ export class Game {
         this.env.setViewDistance(chunks);
         useStore.getState().setSnapshot({ viewDistance: chunks });
       },
+      setShadows: (q) => this.applyShadows(q),
+      setVfxDensity: (d) => this.applyVfxDensity(d),
+      setResolutionScale: (scale) => this.applyResolutionScale(scale),
       toggleFreeFly: () => this.toggleFreeFly(),
       setDayNightSpeed: (speed) => {
         this.env.speed = speed;
@@ -277,6 +298,33 @@ export class Game {
     this.scene.add(this.playerModel.group);
     this.combat.setClass(cls);
     useStore.getState().setSelectedClass(cls);
+  }
+
+  // --- graphics settings (Phase 5) -------------------------------------------
+
+  private applyShadows(q: ShadowQuality): void {
+    this.env.setShadowQuality(q);
+    useStore.getState().setGraphics({ shadows: q });
+  }
+
+  private applyVfxDensity(d: VfxDensity): void {
+    this.combat.setVfxDensity(VFX_DENSITY_MULT[d]);
+    useStore.getState().setGraphics({ vfxDensity: d });
+  }
+
+  private applyResolutionScale(scale: number): void {
+    this.resolutionScale = Math.min(1, Math.max(0.5, scale));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * this.resolutionScale);
+    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    useStore.getState().setGraphics({ resolutionScale: this.resolutionScale });
+  }
+
+  /** Apply the current store graphics settings to the renderer/engine (boot). */
+  private applyGraphics(): void {
+    const st = useStore.getState();
+    this.applyShadows(st.shadows);
+    this.applyVfxDensity(st.vfxDensity);
+    this.applyResolutionScale(st.resolutionScale);
   }
 
   private toggleFreeFly(): void {
@@ -432,7 +480,8 @@ export class Game {
     this.mount.render(rs, dt, thirdPerson);
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
-    this.env.update(dt, this.camera.camera.position);
+    this.shadowFocus.set(rs.x, rs.y, rs.z);
+    this.env.update(dt, this.camera.camera.position, this.shadowFocus);
     this.chunks.update(rs.x, rs.z);
     this.propRenderer.update();
     this.entities.update(
@@ -524,6 +573,29 @@ export class Game {
     this.camera.setAspect(w / h);
   };
 
+  // WebGL context-loss recovery (Phase 5): the GPU process can drop the context
+  // (driver reset, tab backgrounding, OOM). preventDefault() lets the browser
+  // restore it; we pause the loop and show an overlay until it comes back, then
+  // resume — three re-uploads geometry/materials lazily on the next render.
+  private onContextLost = (e: Event): void => {
+    e.preventDefault();
+    this.contextLost = true;
+    this.running = false;
+    cancelAnimationFrame(this.rafId);
+    useStore.getState().setSnapshot({ contextLost: true });
+  };
+
+  private onContextRestored = (): void => {
+    this.contextLost = false;
+    useStore.getState().setSnapshot({ contextLost: false });
+    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    if (!this.running) {
+      this.running = true;
+      this.lastTime = performance.now();
+      this.rafId = requestAnimationFrame(this.loop);
+    }
+  };
+
   /** Merge live progression + position back into the character for autosave. */
   snapshotCharacter(): CharacterSave | null {
     if (!this.character) return null;
@@ -565,6 +637,11 @@ export class Game {
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
     this.canvas.removeEventListener('mousedown', this.onCanvasClick);
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost as EventListener);
+    this.canvas.removeEventListener(
+      'webglcontextrestored',
+      this.onContextRestored as EventListener,
+    );
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();

@@ -377,8 +377,16 @@ HUD (frames, hotbar, XP, buffs, minimap, tracker, chat[P6]) · Character sheet �
 > already holds **swaps** the two so no action is left unbound or duplicated; **Reset to
 > defaults** restores the map. View distance, master volume, and the keybind map persist to the
 > save's `settings` block (**save v11**; the migration defaults the keybind map and merges any
-> saved binds forward). Remaining polish for Phase 5: interface/graphics-quality options and an
-> actual audio bus for the volume slider to drive.
+> saved binds forward).
+>
+> **Implementation (Phase 5 Part 5) — graphics options + save data.** The panel gained a
+> **Graphics** group — **Shadows** (off / low / high), **VFX density** (off / low / full), and
+> **Resolution** (75 / 85 / 100 %) — plus a **Save data** group with **Download backup** and
+> **Restore from file**. All graphics options persist to the `settings` block (**save v13**;
+> the migration defaults them and validates the enums) and apply live: shadows drive the sun
+> shadow map, VFX density scales particle bursts, resolution scales the renderer's pixel ratio.
+> The Phase-4 note's two "remaining" items are now closed — the audio bus shipped in Part 2 and
+> graphics-quality options in Part 5.
 
 ## 15. Tuning Targets (Phase 5 checklist)
 

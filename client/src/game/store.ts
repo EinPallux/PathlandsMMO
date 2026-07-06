@@ -8,6 +8,8 @@ import {
   defaultKeybinds,
   type ItemDef,
   type ItemStackSave,
+  type ShadowQuality,
+  type VfxDensity,
 } from '@pathlands/shared';
 
 export interface Nameplate {
@@ -288,6 +290,10 @@ export interface GameCommands {
   teleport(x: number, z: number): void;
   setClass(cls: CharacterClass): void;
   setViewDistance(chunks: number): void;
+  /** Graphics (Phase 5): sun-shadow quality, VFX particle density, resolution scale. */
+  setShadows(q: ShadowQuality): void;
+  setVfxDensity(d: VfxDensity): void;
+  setResolutionScale(scale: number): void;
   toggleFreeFly(): void;
   setDayNightSpeed(speed: number): void;
   setWeather(w: WeatherKind): void;
@@ -335,6 +341,8 @@ export interface GameCommands {
 export interface UiState {
   ready: boolean;
   loadProgress: number; // 0..1
+  /** WebGL context lost → rendering paused, awaiting GPU restore (Phase 5). */
+  contextLost: boolean;
 
   fps: number;
   drawCalls: number;
@@ -360,6 +368,9 @@ export interface UiState {
   showMap: boolean;
   showDev: boolean;
   viewDistance: number;
+  shadows: ShadowQuality;
+  vfxDensity: VfxDensity;
+  resolutionScale: number;
   weather: WeatherKind;
   selectedClass: CharacterClass;
 
@@ -440,6 +451,11 @@ export interface UiState {
   toggleBounties: () => void;
   setKeybinds: (k: Record<string, string>) => void;
   setMasterVolume: (v: number) => void;
+  setGraphics: (g: {
+    shadows?: ShadowQuality;
+    vfxDensity?: VfxDensity;
+    resolutionScale?: number;
+  }) => void;
   toggleSettings: () => void;
   openTravel: () => void;
   closeTravel: () => void;
@@ -449,6 +465,7 @@ export interface UiState {
 }
 
 export const useStore = create<UiState>((set) => ({
+  contextLost: false,
   ready: false,
   loadProgress: 0,
 
@@ -474,6 +491,9 @@ export const useStore = create<UiState>((set) => ({
   showMap: false,
   showDev: true,
   viewDistance: 7,
+  shadows: 'low',
+  vfxDensity: 'full',
+  resolutionScale: 1,
   weather: 'clear',
   selectedClass: CharacterClass.Warrior,
 
@@ -552,6 +572,7 @@ export const useStore = create<UiState>((set) => ({
   toggleBounties: () => set((st) => ({ showBounties: !st.showBounties })),
   setKeybinds: (keybinds) => set({ keybinds }),
   setMasterVolume: (masterVolume) => set({ masterVolume }),
+  setGraphics: (g) => set(g),
   toggleSettings: () => set((st) => ({ showSettings: !st.showSettings })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
