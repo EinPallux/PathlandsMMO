@@ -94,6 +94,8 @@ const CLOCK_ALPHA = 0.1;
 const PING_INTERVAL_MS = 1000;
 const PING_TIMEOUT_MS = 5000;
 const RTT_ALPHA = 0.2;
+/** If no pong arrives within this window the link is presumed dead → force a reconnect. */
+const LIVENESS_TIMEOUT_MS = 3 * PING_INTERVAL_MS;
 
 function toClass(raw: string): CharacterClass {
   return (CHARACTER_CLASSES as readonly string[]).includes(raw)
@@ -129,6 +131,8 @@ export class NetClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pingId = 0;
   private readonly inflightPings = new Map<number, number>();
+  /** Local time of the last proof of server liveness (pong/welcome); null while down. */
+  private lastPongMs: number | null = null;
 
   constructor(private readonly opts: NetClientOptions) {
     this.renderDelayMs = opts.renderDelayMs ?? DEFAULT_RENDER_DELAY_MS;
@@ -171,6 +175,7 @@ export class NetClient {
         this.seed = msg.seed;
         this.connected = true;
         this.phase = 'connected';
+        this.lastPongMs = this.nowMs(); // the welcome itself proves the link is alive
         // Fresh session: the server's ack sequence starts over, so reset ours too.
         this.seq = 0;
         this.history.length = 0;
@@ -197,6 +202,7 @@ export class NetClient {
         this.pendingSelf = msg; // last-wins — only the newest authoritative state matters
         break;
       case 'pong': {
+        this.lastPongMs = this.nowMs(); // any pong proves the server is alive
         const sent = this.inflightPings.get(msg.id);
         if (sent !== undefined) {
           this.inflightPings.delete(msg.id);
@@ -207,6 +213,11 @@ export class NetClient {
         }
         break;
       }
+      case 'error':
+        // The server rejected us and will close the socket. A protocol mismatch won't
+        // resolve on retry, so stop the reconnect loop for that case.
+        if (msg.code === 'protocol') this.closedByUser = true;
+        break;
       default:
         break;
     }
@@ -255,6 +266,17 @@ export class NetClient {
     this.ws = null;
     this.stopPinging();
     this.latencyMs = null;
+    this.lastPongMs = null;
+    // Drop the session identity so the sendIntent gate (`you === null`) closes until the
+    // next welcome. Otherwise, during the reconnect window (new socket OPEN but no welcome
+    // yet), the game loop would keep sending intents on the OLD seq counter to the server's
+    // brand-new player, poisoning its sequence gate so every real input after the welcome
+    // reset is dropped — a hard freeze after every reconnect. welcome reseeds all of these.
+    this.you = null;
+    this.seq = 0;
+    this.history.length = 0;
+    this.pendingSelf = null;
+    this.clockInit = false;
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
       this.scheduleReconnect();
@@ -276,6 +298,9 @@ export class NetClient {
 
   private startPinging(): void {
     this.stopPinging();
+    // Start the liveness clock now, so a server that never answers a single ping from the
+    // very start is still caught by the timeout (rather than leaving lastPongMs null).
+    this.lastPongMs = this.nowMs();
     this.sendPing();
     this.pingTimer = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
   }
@@ -291,6 +316,13 @@ export class NetClient {
   private sendPing(): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN) return;
     const now = this.nowMs();
+    // Application-level liveness: on a silent server death / partition (no TCP RST) the
+    // socket stays OPEN and 'close' never fires. If no pong has arrived in the liveness
+    // window, close the socket ourselves so onClose() drives the reconnect/backoff path.
+    if (this.lastPongMs !== null && now - this.lastPongMs > LIVENESS_TIMEOUT_MS) {
+      this.ws.close();
+      return;
+    }
     // Prune probes whose pong never arrived so a flaky link can't leak memory.
     for (const [id, t] of this.inflightPings)
       if (now - t > PING_TIMEOUT_MS) this.inflightPings.delete(id);

@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     maxConnections: config.maxConnections,
     helloTimeoutMs: config.helloTimeoutMs,
     heartbeatMs: config.heartbeatMs,
+    maxMsgsPerSec: config.maxMsgsPerSec,
   });
 
   await server.listen();

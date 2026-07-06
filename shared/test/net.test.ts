@@ -131,6 +131,15 @@ describe('net protocol codec', () => {
       ),
     ).toBeNull();
 
+    // seq/tick must be non-negative integers — a fractional/negative/huge value would
+    // poison the server's monotonic sequence gate. All of these are rejected.
+    const moveIntent = { type: 'Move', wishX: 0, wishZ: 0, jump: false, sprint: false, yaw: 0 };
+    for (const bad of [1.5, -1, Number.MAX_VALUE]) {
+      expect(
+        decodeClient(JSON.stringify({ t: 'intent', seq: bad, tick: 0, intent: moveIntent })),
+      ).toBeNull();
+    }
+
     expect(decodeClient('not json')).toBeNull();
     expect(decodeClient(JSON.stringify({ t: 'unknown' }))).toBeNull();
   });

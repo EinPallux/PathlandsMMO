@@ -47,6 +47,8 @@ export function gatewayOptions(port = 0): GatewayOptions {
     // Large so the reaper never fires mid-test; the tests close their own sockets.
     helloTimeoutMs: 60_000,
     heartbeatMs: 60_000,
+    // High so the move-every-tick tests are never throttled; a focused test overrides it.
+    maxMsgsPerSec: 1000,
   };
 }
 

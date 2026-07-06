@@ -41,4 +41,11 @@ export const config = {
    * drops with no TCP FIN) so their player doesn't linger as a frozen ghost.
    */
   heartbeatMs: envInt('HEARTBEAT_MS', 30_000),
+  /**
+   * Per-connection inbound frame cap (frames/second). A legitimate client sends one
+   * intent per tick (20/s) plus a ping/second; 60 leaves generous headroom. Excess frames
+   * are dropped BEFORE decode, so a flood can't burn JSON.parse/validate CPU and starve
+   * the tick loop — the rate backstop the size cap (maxPayload) can't provide.
+   */
+  maxMsgsPerSec: envInt('MAX_MSGS_PER_SEC', 60),
 } as const;

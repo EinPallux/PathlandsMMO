@@ -32,6 +32,9 @@ interface Conn {
   isAlive: boolean;
   /** Fires if the socket never says hello — an anti-idle-DoS reaper. */
   helloTimer: ReturnType<typeof setTimeout> | null;
+  /** Sliding 1s window for the inbound frame-rate limiter. */
+  msgWindowStart: number;
+  msgCount: number;
 }
 
 export interface GatewayOptions {
@@ -43,7 +46,11 @@ export interface GatewayOptions {
   maxConnections: number;
   helloTimeoutMs: number;
   heartbeatMs: number;
+  maxMsgsPerSec: number;
 }
+
+/** Frames past this multiple of the per-second cap in one window ⇒ terminate, not just drop. */
+const FLOOD_TERMINATE_FACTOR = 8;
 
 export class GameServer {
   private readonly wss: WebSocketServer;
@@ -109,7 +116,15 @@ export class GameServer {
       ws.terminate();
       return;
     }
-    const conn: Conn = { ws, id: null, known: new Set(), isAlive: true, helloTimer: null };
+    const conn: Conn = {
+      ws,
+      id: null,
+      known: new Set(),
+      isAlive: true,
+      helloTimer: null,
+      msgWindowStart: 0,
+      msgCount: 0,
+    };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
     }, this.opts.helloTimeoutMs);
@@ -136,6 +151,20 @@ export class GameServer {
   }
 
   private onMessage(conn: Conn, raw: string): void {
+    // Frame-rate limit BEFORE decoding, so a flood can't burn JSON.parse/validate CPU.
+    // Wall-clock is fine here at the gateway edge (never in the sim).
+    const now = Date.now();
+    if (now - conn.msgWindowStart >= 1000) {
+      conn.msgWindowStart = now;
+      conn.msgCount = 0;
+    }
+    conn.msgCount += 1;
+    if (conn.msgCount > this.opts.maxMsgsPerSec) {
+      // Sustained flooding: drop the frame; egregious abuse loses the connection.
+      if (conn.msgCount > this.opts.maxMsgsPerSec * FLOOD_TERMINATE_FACTOR) conn.ws.terminate();
+      return;
+    }
+
     const msg = decodeClient(raw);
     if (msg === null) return; // malformed / hostile frame — drop at the boundary
 

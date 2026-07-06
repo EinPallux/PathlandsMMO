@@ -57,6 +57,32 @@ server-hardening gaps fixed below).
   reaping half-open sockets (client sleep / dropped wifi) so their player no longer lingers as a
   frozen ghost.
 
+#### Fixed (from a follow-up adversarial review of the Part-2 diff)
+
+- **Reconnect no longer freezes movement.** `NetClient.onClose` now clears the session identity
+  (`you`/`seq`/`history`/`pendingSelf`), so during the reconnect window the `sendIntent` gate stays
+  closed — previously stale-sequence intents from the old session leaked to the server's brand-new
+  player and poisoned its sequence gate, dropping every real input after the welcome reset (a hard
+  freeze after every reconnect).
+- **Gameplay reads authoritative physics, not the smoothed render state.** Quest explore, gathering
+  (the "moved" test), discovery, and the HUD/minimap `live` position now read `controller.physics`;
+  previously the decaying reconciliation offset in `rs` could spuriously cancel an in-progress
+  gather channel while the player stood still. (Combat already read physics.)
+- **Per-connection message rate limit** (`maxMsgsPerSec`, default 60) — excess frames are dropped
+  before the decoder and egregious floods terminate the socket, so an intent flood can't burn
+  parse/validate CPU and starve the tick loop (the rate backstop `maxPayload` couldn't provide).
+- **Client liveness timeout** — if no pong arrives within ~3 ping intervals the client closes the
+  socket itself, driving the reconnect path, instead of freezing until the OS TCP timeout on a
+  silent server death / partition.
+- **Protocol-mismatch reconnect loop stopped** — the client now handles the server `error` frame and
+  stops retrying on a `protocol` error (a version mismatch won't fix itself on retry).
+- **Sequence/tick validation** — the codec now requires non-negative safe integers for `seq`/`tick`,
+  so a fractional/negative/absurd value can't poison the server's monotonic gate.
+
+_(Left as a documented, 2×-bounded known gap: the server still trusts the clamped client `speedMult`
+— the correct fix is coupled to server-side mount/combat state and would otherwise break a mounted
+client's reconciliation, so it lands with those systems.)_
+
 ### Part 1 — Server skeleton + two-player vertical slice (2026-07-06)
 
 Phase 5 is tagged **`v1.0-solo`** (the complete single-player game). Phase 6 begins by turning the

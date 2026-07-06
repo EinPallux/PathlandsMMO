@@ -588,21 +588,28 @@ export class Game {
         : (this.entities.nearestVendor(rs.x, rs.z, 4.5)?.name ?? null);
     if (st.nearbyVendor !== promptName) st.setNearbyVendor(promptName);
 
+    // Gameplay/state systems read AUTHORITATIVE physics, never the render state `rs`
+    // (which carries the cosmetic reconciliation offset). Otherwise a sub-snap server
+    // correction's decaying slide would spuriously trip the gather "moved" test and
+    // cancel an in-progress channel, or offset quest/discovery/HUD position, while the
+    // player is standing still. Visual consumers (model, camera, streaming) keep `rs`.
+    const ph = this.controller.physics;
+
     // Quest explore-objective checks (throttled inside).
-    this.quests.tickExplore(dt, rs.x, rs.z);
+    this.quests.tickExplore(dt, ph.x, ph.z);
 
     // Gathering: node proximity, channel/fishing progress (cancels on movement).
-    const gMoved = Math.hypot(rs.x - this.lastGx, rs.z - this.lastGz) > 0.04;
-    this.lastGx = rs.x;
-    this.lastGz = rs.z;
-    this.gather.update(dt, rs.x, rs.y, rs.z, gMoved);
+    const gMoved = Math.hypot(ph.x - this.lastGx, ph.z - this.lastGz) > 0.04;
+    this.lastGx = ph.x;
+    this.lastGz = ph.z;
+    this.gather.update(dt, ph.x, ph.y, ph.z, gMoved);
 
-    this.discovery.reveal(rs.x, rs.z);
+    this.discovery.reveal(ph.x, ph.z);
     this.discovery.tick(dt);
     const live = useStore.getState().live;
-    live.x = rs.x;
-    live.z = rs.z;
-    live.yaw = rs.yaw;
+    live.x = ph.x;
+    live.z = ph.z;
+    live.yaw = ph.yaw;
 
     this.renderer.render(this.scene, this.camera.camera);
 

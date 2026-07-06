@@ -222,6 +222,15 @@ function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
+/**
+ * A non-negative SAFE integer — the shape of a sequence number / tick counter on the
+ * wire. Safe-integer bounds it (≤ 2^53−1, ~14k years at 20 Hz) so a fractional, negative,
+ * or absurdly large value can't poison the server's monotonic sequence gate.
+ */
+function isNonNegInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+}
+
 function isString(v: unknown): v is string {
   return typeof v === 'string';
 }
@@ -304,7 +313,9 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (!isFiniteNumber(o.level)) return null;
       return { t: 'hello', protocol: o.protocol, name: o.name, cls: o.cls, level: o.level };
     case 'intent': {
-      if (!isFiniteNumber(o.seq) || !isFiniteNumber(o.tick)) return null;
+      // seq/tick must be non-negative integers: the server's monotonic seq gate would be
+      // poisoned by a huge or fractional value (dropping all later inputs of that session).
+      if (!isNonNegInt(o.seq) || !isNonNegInt(o.tick)) return null;
       const intent = validateIntent(o.intent);
       if (intent === null) return null;
       return { t: 'intent', seq: o.seq, tick: o.tick, intent };
