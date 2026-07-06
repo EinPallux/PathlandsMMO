@@ -5,10 +5,11 @@ behind nginx with TLS so browsers can reach it over `wss://`. The **client** sta
 static build (Vercel or the same VPS — see `docs/DEPLOY.md`); it only connects to a
 server when built with `VITE_PATHLANDS_SERVER` set.
 
-> Scope: as of Phase 6 Parts 1–2 the server is authoritative over **player movement**
-> (two players see each other move, reconciled + interest-managed). Accounts/persistence
-> (PostgreSQL) and server-side combat land in later parts — this deploy is what you need
-> for the first multiplayer movement test.
+> Scope: as of Phase 6 Parts 1–4 the server is authoritative over **player movement**
+> (two players see each other move, reconciled + interest-managed) and has **accounts +
+> durable character persistence** (register/login, cloud-saved characters). Server-side
+> combat and the client login UI land in later parts — this deploy is what you need for the
+> first multiplayer movement test.
 
 ---
 
@@ -46,7 +47,21 @@ to `/etc/letsencrypt`, which the compose file mounts read-only into nginx:
 sudo certbot certonly --standalone -d play.yourdomain.com
 ```
 
-## 4. Start the server + nginx
+## 4. Set the auth secret
+
+Accounts sign session tokens with a server secret. It is **required** — compose refuses to
+start without it. Create a `.env` file next to `docker-compose.yml` with a strong random
+value (changing it later logs everyone out):
+
+```bash
+echo "AUTH_SECRET=$(openssl rand -base64 32)" > .env
+```
+
+Accounts and characters persist in the `gamedata` Docker volume (the server's `FileStore`,
+`/data/pathlands.json`), so they survive restarts and redeploys. Back it up with
+`docker run --rm -v pathlandsmmo_gamedata:/d -v "$PWD":/b alpine tar czf /b/gamedata.tgz -C /d .`.
+
+## 5. Start the server + nginx
 
 ```bash
 sudo docker compose up -d --build
@@ -62,7 +77,7 @@ curl https://play.yourdomain.com/status      # → {"status":"ok","players":0,..
 `docker compose logs -f game` should show
 `[pathlands] server listening on ws://0.0.0.0:8080 (20 Hz sim ...)`.
 
-## 5. Build the client to point at your server
+## 6. Build the client to point at your server
 
 The client is a **static build**; the server URL is baked in at build time. It must be
 `wss://` (an `https://` page cannot open an insecure `ws://` socket):
@@ -70,6 +85,12 @@ The client is a **static build**; the server URL is baked in at build time. It m
 ```bash
 VITE_PATHLANDS_SERVER=wss://play.yourdomain.com pnpm build
 ```
+
+> Accounts are live on the server — `POST /auth/register` and `/auth/login` return a token,
+> and `GET`/`PUT /character` is the bearer-authenticated cloud save. The **client login UI**
+> that uses them ships in the next part; until then the client connects as a guest, and you
+> can exercise accounts directly against the REST API
+> (e.g. `curl -X POST https://play.yourdomain.com/auth/register -d '{"email":"…","password":"…"}'`).
 
 Deploy the resulting `dist/` however you like (Vercel, or the VPS nginx — see
 `docs/DEPLOY.md`). Open it in two browsers, create a character in each, and walk around —
@@ -126,5 +147,6 @@ sudo POSTGRES_PASSWORD=<strong-password> docker compose --profile db up -d
   pulled in.
 - Single game process target is ~200 CCU (ARCH §7). Zone-sharding is the documented escape
   hatch, not built until load tests demand it.
-- The server holds world state in memory only — until the persistence phase, a restart
-  resets connected sessions (players simply reconnect and re-spawn).
+- Accounts + characters are durable (the `gamedata` volume); live in-world state (who is
+  connected, exact positions between saves) is in memory, so a restart drops sessions and
+  players reconnect — an authenticated character resumes at its last saved position.

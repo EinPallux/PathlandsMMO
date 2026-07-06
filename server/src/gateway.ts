@@ -20,8 +20,11 @@ import {
   type NetPlayer,
   type ServerMessage,
 } from '@pathlands/shared';
-import type { ServerSim } from './sim.js';
+import type { ServerSim, ServerPlayer } from './sim.js';
 import { buildCellIndex, visibleIds } from './interest.js';
+import { Auth } from './auth.js';
+import { MemoryStore, type Store } from './store.js';
+import { HttpApi } from './httpApi.js';
 
 interface Conn {
   readonly ws: WebSocket;
@@ -36,6 +39,8 @@ interface Conn {
   /** Sliding 1s window for the inbound frame-rate limiter. */
   msgWindowStart: number;
   msgCount: number;
+  /** Account id once the player authenticated with a token; null for guest sessions. */
+  accountId: string | null;
 }
 
 export interface GatewayOptions {
@@ -48,6 +53,17 @@ export interface GatewayOptions {
   helloTimeoutMs: number;
   heartbeatMs: number;
   maxMsgsPerSec: number;
+  authRatePerMin: number;
+  maxAuthBodyBytes: number;
+  maxCharacterBodyBytes: number;
+  /** How often to flush authenticated players' authoritative positions to the store. */
+  saveIntervalMs: number;
+}
+
+/** Dependencies the gateway needs for accounts; defaulted for tests. */
+export interface GatewayDeps {
+  auth?: Auth;
+  store?: Store;
 }
 
 /** Frames past this multiple of the per-second cap in one window ⇒ terminate, not just drop. */
@@ -59,18 +75,30 @@ export class GameServer {
   private readonly conns = new Map<WebSocket, Conn>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private saveTimer: ReturnType<typeof setInterval> | null = null;
   /** Set when a player joined or disconnected — forces a delta pass past the idle-skip. */
   private membershipChanged = false;
   /** Server start time (ms, wall-clock at the edge) — for the /status uptime. */
   private startedAtMs = 0;
+  private readonly auth: Auth;
+  private readonly store: Store;
+  private readonly api: HttpApi;
 
   constructor(
     private readonly sim: ServerSim,
     private readonly opts: GatewayOptions,
+    deps: GatewayDeps = {},
   ) {
+    this.auth = deps.auth ?? new Auth('dev-insecure-secret-change-me');
+    this.store = deps.store ?? new MemoryStore();
+    this.api = new HttpApi(this.auth, this.store, {
+      authRatePerMin: opts.authRatePerMin,
+      maxAuthBodyBytes: opts.maxAuthBodyBytes,
+      maxCharacterBodyBytes: opts.maxCharacterBodyBytes,
+    });
     // The ws server rides on our own HTTP server so `wss://` upgrades and the plain-HTTP
-    // health/status routes share one port — the shape nginx reverse-proxies in production.
-    this.http = createServer((req, res) => this.onHttpRequest(req, res));
+    // account/health routes share one port — the shape nginx reverse-proxies in production.
+    this.http = createServer((req, res) => void this.handleHttp(req, res));
     this.wss = new WebSocketServer({
       server: this.http,
       // Reject oversized frames before they reach JSON.parse (event-loop / OOM DoS).
@@ -87,6 +115,7 @@ export class GameServer {
         this.startedAtMs = Date.now();
         this.timer = setInterval(() => this.onTick(), this.opts.tickDurationMs);
         this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
+        this.saveTimer = setInterval(() => this.persistAll(), this.opts.saveIntervalMs);
         resolve();
       });
     });
@@ -107,6 +136,10 @@ export class GameServer {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    if (this.saveTimer !== null) {
+      clearInterval(this.saveTimer);
+      this.saveTimer = null;
+    }
     for (const conn of this.conns.values()) {
       if (conn.helloTimer !== null) clearTimeout(conn.helloTimer);
       conn.ws.terminate();
@@ -116,7 +149,19 @@ export class GameServer {
     await new Promise<void>((resolve) => this.http.close(() => resolve()));
   }
 
-  // --- HTTP: health + status (for nginx upstream checks and monitoring, ARCH §8) ---
+  // --- HTTP: account API + health + status (ARCH §8) ---
+
+  private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      if (await this.api.handle(req, res)) return; // /auth/*, /character
+      this.onHttpRequest(req, res); // /healthz, /status, 404
+    } catch {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+    }
+  }
 
   private onHttpRequest(req: IncomingMessage, res: ServerResponse): void {
     if (req.method === 'GET' && req.url === '/healthz') {
@@ -159,12 +204,13 @@ export class GameServer {
       helloTimer: null,
       msgWindowStart: 0,
       msgCount: 0,
+      accountId: null,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
     }, this.opts.helloTimeoutMs);
     this.conns.set(ws, conn);
-    ws.on('message', (data: RawData) => this.onMessage(conn, data.toString()));
+    ws.on('message', (data: RawData) => void this.onMessage(conn, data.toString()));
     ws.on('pong', () => {
       conn.isAlive = true; // answered the heartbeat — still alive
     });
@@ -179,13 +225,40 @@ export class GameServer {
     }
     if (!this.conns.delete(conn.ws)) return;
     if (conn.id !== null) {
+      const player = this.sim.players.get(conn.id);
+      // Persist the departing authenticated player's authoritative position (fire-and-forget).
+      if (conn.accountId !== null && player !== undefined) {
+        void this.persistPosition(conn.accountId, player);
+      }
       this.sim.remove(conn.id);
       // The player's departure surfaces to peers as a `gone` on the next delta.
       this.membershipChanged = true;
     }
   }
 
-  private onMessage(conn: Conn, raw: string): void {
+  // --- character persistence (authenticated sessions) ---
+
+  /** Write a live player's authoritative position back into its stored character blob. */
+  private async persistPosition(accountId: string, player: ServerPlayer): Promise<void> {
+    const ch = await this.store.getCharacter(accountId);
+    if (ch === null) return; // guest-with-account who never uploaded a character
+    ch.x = player.phys.x;
+    ch.y = player.phys.y;
+    ch.z = player.phys.z;
+    ch.yaw = player.phys.yaw;
+    await this.store.putCharacter(accountId, ch);
+  }
+
+  /** Periodic sweep: flush every authenticated live player's position. */
+  private persistAll(): void {
+    for (const conn of this.conns.values()) {
+      if (conn.id === null || conn.accountId === null) continue;
+      const player = this.sim.players.get(conn.id);
+      if (player !== undefined) void this.persistPosition(conn.accountId, player);
+    }
+  }
+
+  private async onMessage(conn: Conn, raw: string): Promise<void> {
     // Frame-rate limit BEFORE decoding, so a flood can't burn JSON.parse/validate CPU.
     // Wall-clock is fine here at the gateway edge (never in the sim).
     const now = Date.now();
@@ -215,7 +288,32 @@ export class GameServer {
           conn.ws.close();
           return;
         }
-        const player = this.sim.join(msg.name, msg.cls, msg.level);
+        // Accounts: a valid token binds the session and loads the persisted character
+        // (its identity + last position override the guest fields). A present-but-invalid
+        // token is a hard error — the client should re-login rather than play as a guest.
+        let name = msg.name;
+        let cls = msg.cls;
+        let level = msg.level;
+        let spawn: { x: number; y: number; z: number; yaw: number } | undefined;
+        if (msg.token !== undefined) {
+          const claims = this.auth.verify(msg.token, Math.floor(Date.now() / 1000));
+          if (claims === null) {
+            this.send(conn.ws, { t: 'error', code: 'auth', message: 'invalid or expired token' });
+            conn.ws.close();
+            return;
+          }
+          conn.accountId = claims.sub;
+          const ch = await this.store.getCharacter(claims.sub);
+          if (ch !== null) {
+            name = ch.name;
+            cls = ch.class;
+            level = ch.level;
+            spawn = { x: ch.x, y: ch.y, z: ch.z, yaw: ch.yaw };
+          }
+        }
+        // The socket may have closed while we awaited the store; bail if so.
+        if (!this.conns.has(conn.ws)) return;
+        const player = this.sim.join(name, cls, level, spawn);
         conn.id = player.id;
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);

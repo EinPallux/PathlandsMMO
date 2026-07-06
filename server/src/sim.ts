@@ -18,6 +18,8 @@ import {
   SPAWN_Z,
   stepPlayerMovement,
   TICK_DT,
+  WORLD_SIZE_X,
+  WORLD_SIZE_Z,
   type MoveIntent,
   type NetPlayer,
   type NetSelf,
@@ -86,6 +88,16 @@ function sanitizeLevel(raw: number): number {
   return Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, Math.floor(raw)));
 }
 
+/** A persisted spawn position is trusted only if finite and inside the world bounds. */
+function validSpawn(
+  s: { x: number; y: number; z: number; yaw: number } | undefined,
+): s is { x: number; y: number; z: number; yaw: number } {
+  if (s === undefined) return false;
+  if (!Number.isFinite(s.x) || !Number.isFinite(s.y) || !Number.isFinite(s.z)) return false;
+  if (!Number.isFinite(s.yaw)) return false;
+  return s.x >= 0 && s.x < WORLD_SIZE_X && s.z >= 0 && s.z < WORLD_SIZE_Z && s.y > 0 && s.y < 512;
+}
+
 export class ServerSim {
   /** Monotonic simulation tick since server start. */
   tick = 0;
@@ -94,11 +106,25 @@ export class ServerSim {
 
   constructor(private readonly world: ServerWorld) {}
 
-  /** Admit a new player at the shared spawn plaza. Marks it dirty so others learn of it. */
-  join(name: string, cls: string, level: number): ServerPlayer {
+  /**
+   * Admit a new player. Spawns at the shared plaza, or at `spawn` (a persisted
+   * character's last position) when given and in-bounds. Marks it dirty so others learn
+   * of it.
+   */
+  join(
+    name: string,
+    cls: string,
+    level: number,
+    spawn?: { x: number; y: number; z: number; yaw: number },
+  ): ServerPlayer {
     const id = `p${this.nextSession++}`;
-    const spawnY = this.world.surfaceSpawnY(SPAWN_X, SPAWN_Z);
-    const phys = makePlayerPhysics(SPAWN_X, spawnY, SPAWN_Z);
+    let phys;
+    if (validSpawn(spawn)) {
+      phys = makePlayerPhysics(spawn.x, spawn.y, spawn.z);
+      phys.yaw = spawn.yaw;
+    } else {
+      phys = makePlayerPhysics(SPAWN_X, this.world.surfaceSpawnY(SPAWN_X, SPAWN_Z), SPAWN_Z);
+    }
     const player: ServerPlayer = {
       id,
       name: sanitizeName(name),

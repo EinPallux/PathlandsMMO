@@ -49,6 +49,11 @@ export function gatewayOptions(port = 0): GatewayOptions {
     heartbeatMs: 60_000,
     // High so the move-every-tick tests are never throttled; a focused test overrides it.
     maxMsgsPerSec: 1000,
+    authRatePerMin: 1000,
+    maxAuthBodyBytes: 4 * 1024,
+    maxCharacterBodyBytes: 512 * 1024,
+    // Long so the periodic position flush never races the tests; they persist explicitly.
+    saveIntervalMs: 3_600_000,
   };
 }
 
@@ -105,8 +110,10 @@ export class TestClient {
     this.ws.send(encodeClient(msg));
   }
 
-  hello(name: string, cls: string, level: number): void {
-    this.send({ t: 'hello', protocol: NET_PROTOCOL_VERSION, name, cls, level });
+  hello(name: string, cls: string, level: number, token?: string): void {
+    const msg: ClientMessage = { t: 'hello', protocol: NET_PROTOCOL_VERSION, name, cls, level };
+    if (token !== undefined) msg.token = token;
+    this.send(msg);
   }
 
   /** Send one move intent (increasing seq so the server never drops it); record it. */

@@ -6,6 +6,35 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 4: Accounts & persistence (server foundation).**
+> Real accounts and durable characters, built dependency-free (Node `crypto` only — no
+> native argon2 to break a Docker build) and fully headless-tested. Landed:
+>
+> - **Auth** (`server/auth.ts`) — scrypt password hashing (per-password salt, constant-time
+>   compare) and compact **HS256 JWT** session tokens (sign/verify with expiry + tamper
+>   rejection). No dependencies.
+> - **Persistence** (`server/store.ts`) — a `Store` interface with a durable **`FileStore`**
+>   (JSON on disk, debounced **atomic** writes, loads on start) as the default and a
+>   `MemoryStore` for tests. Postgres stays staged (compose `--profile db`) for scale.
+> - **REST auth API** (`server/httpApi.ts`, on the existing HTTP server) — `POST
+/auth/register` & `/auth/login` → a session token; `GET`/`PUT /character` (bearer-auth)
+>   for the **character cloud save**. Per-IP rate-limited, body-size-capped, validated.
+> - **ws session binding** — the hello now carries an optional account `token`
+>   (`NET_PROTOCOL_VERSION` → 3). A valid token binds the session, **loads the persisted
+>   character** (identity + last position) and, on disconnect / every 30 s, writes the
+>   **authoritative position back** — so a character resumes where it logged off. An invalid
+>   token is rejected (no silent guest fallback); absent ⇒ a guest session (unchanged).
+>
+> **337 tests green** (+14: auth crypto, store CRUD + file durability, the full register →
+> login → cloud-save → token-session → position-persists-across-reconnect flow);
+> `pnpm typecheck` + `lint` + `build` clean; `docker compose config` validates (and now
+> requires `AUTH_SECRET`); the server boots and the REST flow works over real HTTP with the
+> FileStore persisting to disk. _Next: **client Onboarding v2** (login/register UI wiring the
+> token into the hello + uploading the local save), then server-authoritative
+> combat/entities._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 3: Server Ops — deployable to a VPS.**
 > The authoritative server can now actually **run on a Linux VPS behind TLS**, so the
 > two-player movement slice is testable with real players, not just headless. Landed:
@@ -819,7 +848,7 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 
 - [~] **Game server** (`server/`) — Node.js + WebSocket server importing `shared/` unchanged: authoritative fixed-tick simulation (movement validation, combat, loot, quests, professions, economy), interest management by chunk grid, snapshot/delta protocol per ARCHITECTURE.md §Netcode, zone-sharded processes if needed (single process target: ~200 CCU). _(Parts 1–2: workspace scaffolded; authoritative **20 Hz movement** sim on the shared `stepPlayerMovement` with a per-player input FIFO, player registry, **3×3 chunk interest management** + self-state ack channel, per-subscriber snapshot/delta broadcast, defensive protocol codec, and hardening — maxPayload / hello-timeout / connection cap / heartbeat. Remaining: authoritative combat/loot/quests/professions on the same tick pipeline, load scaling.)_
 - [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Parts 1–2: opt-in `NetClient` streams intents up, **predicts + reconciles** own movement against the server (replay + smoothed correction), interpolates remotes on the server-tick timeline ~150 ms behind, measures RTT, and shows a connection HUD with auto-reconnect. Remaining: session **resume** on reconnect — currently a reconnect starts a fresh server session.)_
-- [ ] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import).
+- [~] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import). _(Part 4: scrypt password hashing + HS256 JWT sessions (rate-limited), a durable `FileStore` (JSON, atomic writes) behind a `Store` interface, `/auth/*` + `/character` REST endpoints (character cloud save), and ws token binding that loads the persisted character and writes its authoritative position back. Remaining: the PostgreSQL `Store` impl (interface staged), argon2id if warranted, and richer server-owned state once combat/quests move server-side.)_
 - [ ] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks).
 - [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).
 - [ ] **Multiplayer endgame** — weekly world boss at the restored final Waystone, group bounty variants, guild Deeds; anti-cheat essentials (server validates everything; speed/teleport/rate sanity checks; no client-trusted numbers).

@@ -4,6 +4,44 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 4 — Accounts & persistence (server foundation) (2026-07-06)
+
+Real accounts and durable characters, dependency-free (Node `crypto` only — no native
+argon2 to break a Docker build) and fully headless-tested.
+
+#### Added
+
+- **Auth** (`server/src/auth.ts`): scrypt password hashing (per-password random salt,
+  constant-time comparison) and compact **HS256 JWT** session tokens (`Auth.issue`/`verify`
+  with expiry + signature-tamper rejection). No dependencies; argon2id is a documented
+  drop-in upgrade later.
+- **Persistence** (`server/src/store.ts`): a `Store` interface (accounts + character
+  blobs) with a durable **`FileStore`** — JSON on disk, debounced **atomic** writes
+  (temp-file + rename), loads on start, tolerates a missing/corrupt file — as the default,
+  and a `MemoryStore` for tests. Characters are stored as the opaque `CharacterSave` blob
+  (a cloud save). PostgreSQL stays the staged scale option (compose `--profile db`).
+- **REST auth API** (`server/src/httpApi.ts`, served on the existing HTTP port): `POST
+/auth/register` and `/auth/login` → a session token; `GET`/`PUT /character` (bearer-auth)
+  for the character cloud save. Per-IP rate-limited, request-body size-capped, and
+  structurally validated at the boundary.
+- **ws session binding**: the hello now carries an optional account `token`
+  (`NET_PROTOCOL_VERSION` → 3, decoder validates it). A valid token binds the session,
+  loads the persisted character (its identity + last position override the guest fields),
+  and the server writes the **authoritative position back** on disconnect and every 30 s —
+  so a character resumes where it logged off. An invalid token is rejected outright (no
+  silent guest fallback); absent ⇒ an ephemeral guest session (the prior behaviour).
+- Tests (+14 → **337**): auth crypto (hash round-trip / wrong-password / salt uniqueness /
+  JWT expiry+tamper), store CRUD + FileStore durability across reopen, and the full
+  register → login → cloud-save → token-session → position-persists-across-reconnect flow
+  (`server/test/{auth,store,accounts}.test.ts`).
+
+#### Changed
+
+- `docker-compose.yml`: the `game` service now takes a required `AUTH_SECRET` (from a
+  `.env` file — compose refuses to start without it) and mounts a `gamedata` volume at
+  `/data` for the FileStore. `sim.join` accepts an optional persisted spawn (validated
+  in-bounds). The entry point warns and mints an ephemeral secret if `AUTH_SECRET` is unset.
+
 ### Part 3 — Server Ops: deployable to a VPS (2026-07-06)
 
 The authoritative server can now run on a Linux VPS behind TLS, so the two-player movement

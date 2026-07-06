@@ -18,8 +18,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 2 (self channel)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(2);
+  it('is at protocol version 3 (self channel + account token)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(3);
   });
 
   it('round-trips a ServerSelf frame', () => {

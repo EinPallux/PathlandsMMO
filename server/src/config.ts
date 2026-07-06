@@ -48,4 +48,22 @@ export const config = {
    * the tick loop — the rate backstop the size cap (maxPayload) can't provide.
    */
   maxMsgsPerSec: envInt('MAX_MSGS_PER_SEC', 60),
+
+  // --- accounts & persistence ---
+  /**
+   * Secret for signing session JWTs. MUST be set in production (a stable, random value);
+   * an unset secret uses a dev default and logs a warning — tokens don't survive a
+   * secret change, so rotating it logs everyone out.
+   */
+  authSecret: process.env.AUTH_SECRET ?? '',
+  /** Where the FileStore persists accounts + characters (a mounted volume in Docker). */
+  dataFile: process.env.DATA_FILE ?? './data/pathlands.json',
+  /** Per-IP auth attempts allowed per minute (brute-force backstop). */
+  authRatePerMin: envInt('AUTH_RATE_PER_MIN', 20),
+  /** Max body for an auth request (email+password is tiny). */
+  maxAuthBodyBytes: envInt('MAX_AUTH_BODY_BYTES', 4 * 1024),
+  /** Max body for a character upload (inventories/quests can be sizeable). */
+  maxCharacterBodyBytes: envInt('MAX_CHARACTER_BODY_BYTES', 512 * 1024),
+  /** How often authenticated players' positions flush to the store. */
+  saveIntervalMs: envInt('SAVE_INTERVAL_MS', 30_000),
 } as const;

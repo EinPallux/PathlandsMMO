@@ -14,10 +14,18 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: '8080'
+      # REQUIRED in production: a stable random secret for signing session tokens.
+      # Put it in a .env file next to this compose (AUTH_SECRET=...). Changing it logs
+      # everyone out. Generate one with:  openssl rand -base64 32
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in a .env file}
+      # Accounts + characters persist here (mounted volume below).
+      DATA_FILE: /data/pathlands.json
       # Optional tuning (defaults are sensible — see server/src/config.ts):
       # MAX_CONNECTIONS: '512'
       # MAX_MSGS_PER_SEC: '60'
       # HEARTBEAT_MS: '30000'
+    volumes:
+      - gamedata:/data
     # Not published to the host — nginx is the only thing that talks to it.
     expose:
       - '8080'
@@ -49,4 +57,5 @@ services:
       - pgdata:/var/lib/postgresql/data
 
 volumes:
+  gamedata:
   pgdata:

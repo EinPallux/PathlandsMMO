@@ -18,9 +18,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
 
 /**
  * Bumped on any breaking wire change; the server rejects a mismatched client.
- * v2 added the per-connection `self` reconciliation channel (ServerSelf).
+ * v2 added the per-connection `self` reconciliation channel (ServerSelf);
+ * v3 added the optional account `token` on the hello (accounts & persistence).
  */
-export const NET_PROTOCOL_VERSION = 2;
+export const NET_PROTOCOL_VERSION = 3;
 
 /** How another player appears to everyone else — the replication view of a player. */
 export interface NetPlayer {
@@ -101,6 +102,13 @@ export interface ClientHello {
   name: string;
   cls: string;
   level: number;
+  /**
+   * Optional account session token (from POST /auth/login). When present and valid the
+   * server binds the session to that account and loads the persisted character (its
+   * class/level/position override the name/cls/level fields, which are the guest identity
+   * used when no token is supplied). Absent ⇒ an ephemeral guest session.
+   */
+  token?: string;
 }
 
 /**
@@ -308,10 +316,22 @@ export function decodeClient(raw: string): ClientMessage | null {
   const o = parseObject(raw);
   if (o === null) return null;
   switch (o.t) {
-    case 'hello':
+    case 'hello': {
       if (!isFiniteNumber(o.protocol) || !isString(o.name) || !isString(o.cls)) return null;
       if (!isFiniteNumber(o.level)) return null;
-      return { t: 'hello', protocol: o.protocol, name: o.name, cls: o.cls, level: o.level };
+      const hello: ClientHello = {
+        t: 'hello',
+        protocol: o.protocol,
+        name: o.name,
+        cls: o.cls,
+        level: o.level,
+      };
+      if (o.token !== undefined) {
+        if (!isString(o.token)) return null;
+        hello.token = o.token;
+      }
+      return hello;
+    }
     case 'intent': {
       // seq/tick must be non-negative integers: the server's monotonic seq gate would be
       // poisoned by a huge or fractional value (dropping all later inputs of that session).
