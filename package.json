@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @pathlands/client dev",
-    "build": "pnpm --filter @pathlands/client build",
+    "build": "pnpm --filter @pathlands/client build && node scripts/mirror-dist.mjs",
     "preview": "pnpm --filter @pathlands/client preview",
     "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "test": "vitest run",

@@ -14,6 +14,7 @@ export default tseslint.config(
       'client/vite.config.ts',
       'vitest.config.ts',
       'eslint.config.js',
+      'scripts/**', // Node build tooling (mirror-dist.mjs)
     ],
   },
   js.configs.recommended,

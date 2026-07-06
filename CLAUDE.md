@@ -51,7 +51,7 @@ A phase is complete only when **every** acceptance criterion in ROADMAP.md passe
 
 ### Deployment
 
-- Phases 1–5: `client/` must always build to a static site deployable on Vercel (`pnpm build` → repo-root `dist/`; the client's Vite `outDir` targets the root so Vercel finds the output unambiguously — see `vercel.json`). Never introduce a hard server dependency before Phase 6.
+- Phases 1–5: `client/` must always build to a static site deployable on Vercel (`pnpm build` → `client/dist`, then mirrored to repo-root `dist/` by `scripts/mirror-dist.mjs` so Vercel finds the output whether its Root Directory resolves to `client/dist` or repo-root `dist` — see `vercel.json`). Never introduce a hard server dependency before Phase 6.
 - Phase 6: server runs on a Linux VPS via Docker Compose (Node.js + PostgreSQL + nginx/TLS). Client stays a static deploy (Vercel or served by the VPS nginx — both must work). See ARCHITECTURE.md §Deployment.
 - Saves in Phases 1–5 are local (IndexedDB) using the same versioned character/world-state schema that PostgreSQL stores in Phase 6.
 
