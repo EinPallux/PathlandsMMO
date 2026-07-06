@@ -2,8 +2,67 @@
 // cooldowns, and floating combat text. Reads the combat slice the CombatDirector
 // publishes; buttons call back through GameCommands. Purely presentational.
 
-import { useStore } from '../game/store.js';
+import { useStore, type HotbarSlot } from '../game/store.js';
 import { colors, panel } from './theme.js';
+import { useHoverTip, TooltipPortal, SkillTooltipCard } from './Tooltip.js';
+
+/** One hotbar button with a skill tooltip on hover. */
+function HotbarButton({
+  slot,
+  keyLabel,
+  onCast,
+}: {
+  slot: HotbarSlot;
+  keyLabel: string;
+  onCast: () => void;
+}): JSX.Element {
+  const { pos, handlers } = useHoverTip();
+  return (
+    <>
+      <button
+        {...handlers}
+        onClick={onCast}
+        style={{
+          position: 'relative',
+          width: 46,
+          height: 46,
+          borderRadius: 6,
+          border: `1px solid ${colors.panelBorder}`,
+          background: slot.ready ? '#43331f' : '#2a2018',
+          color: slot.ready ? colors.ink : colors.inkDim,
+          cursor: 'pointer',
+          overflow: 'hidden',
+          fontSize: 10,
+          padding: 2,
+        }}
+      >
+        <span style={{ position: 'absolute', top: 2, left: 3, color: colors.gold, fontSize: 10 }}>
+          {keyLabel}
+        </span>
+        <span style={{ display: 'block', marginTop: 14, lineHeight: 1.05 }}>
+          {slot.name.split(' ')[0]}
+        </span>
+        {slot.cooldownFrac > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              bottom: 0,
+              width: '100%',
+              height: `${slot.cooldownFrac * 100}%`,
+              background: 'rgba(0,0,0,0.6)',
+            }}
+          />
+        )}
+      </button>
+      {pos && (
+        <TooltipPortal pos={pos}>
+          <SkillTooltipCard skillId={slot.skillId} />
+        </TooltipPortal>
+      )}
+    </>
+  );
+}
 
 const RESOURCE_COLOR: Record<string, string> = {
   rage: '#b5423a',
@@ -168,45 +227,12 @@ function Hotbar(): JSX.Element | null {
       {hotbar.map((slot, i) => {
         const key = i === 9 ? '0' : String(i + 1);
         return (
-          <button
+          <HotbarButton
             key={slot.skillId}
-            title={slot.name}
-            onClick={() => cmd?.castSlot(i)}
-            style={{
-              position: 'relative',
-              width: 46,
-              height: 46,
-              borderRadius: 6,
-              border: `1px solid ${colors.panelBorder}`,
-              background: slot.ready ? '#43331f' : '#2a2018',
-              color: slot.ready ? colors.ink : colors.inkDim,
-              cursor: 'pointer',
-              overflow: 'hidden',
-              fontSize: 10,
-              padding: 2,
-            }}
-          >
-            <span
-              style={{ position: 'absolute', top: 2, left: 3, color: colors.gold, fontSize: 10 }}
-            >
-              {key}
-            </span>
-            <span style={{ display: 'block', marginTop: 14, lineHeight: 1.05 }}>
-              {slot.name.split(' ')[0]}
-            </span>
-            {slot.cooldownFrac > 0 && (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  bottom: 0,
-                  width: '100%',
-                  height: `${slot.cooldownFrac * 100}%`,
-                  background: 'rgba(0,0,0,0.6)',
-                }}
-              />
-            )}
-          </button>
+            slot={slot}
+            keyLabel={key}
+            onCast={() => cmd?.castSlot(i)}
+          />
         );
       })}
       <button

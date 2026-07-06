@@ -4,6 +4,25 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 5 — Polish: The Complete Solo Game] — in progress
 
+### Part 3 — UI/UX polish: rich tooltips (2026-07-06)
+
+#### Added
+
+- **Tooltip system** (`client/ui/Tooltip.tsx`): a cursor-following card portalled to the body
+  (escapes panel clipping), flipping to the left / clamping vertically near screen edges.
+- **Item tooltips** (`ItemTooltipCard`): rarity-coloured name, a **colourblind-safe rarity
+  label** (text, not just colour), slot, item level + required level, weapon dps, armor, primary
+  stats, bonus crit, trinket effect, bind-on-equip, and value — plus a **vs-equipped
+  comparison** block (`▲` green upgrade / `▼` red downgrade per stat, ilvl, dps, armor, crit)
+  when hovering a bag or shop item. Wired into the Character sheet, Vendor, and Bank panels.
+- **Skill tooltips** (`SkillTooltipCard`) on the hotbar: cost, cooldown, and the skill
+  description, looked up from shared skill data.
+
+#### Changed
+
+- Replaced the plain native `title=` hover text across the Character/Vendor/Bank cells and the
+  hotbar buttons with the rich tooltip.
+
 ### Part 2 — audio: music + basic SFX (2026-07-06)
 
 #### Added

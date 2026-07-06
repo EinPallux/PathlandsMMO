@@ -6,7 +6,22 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 5 in progress (2026-07-06) — Part 2: audio (music + basic SFX).** A small WebAudio
+> **Phase 5 in progress (2026-07-06) — Part 3: UI/UX polish — rich tooltips.** Replaced the
+> plain native `title=` hovers with a portal-based **tooltip system** (`client/ui/Tooltip.tsx`):
+> a cursor-following card that escapes panel clipping and flips at screen edges. **Item
+> tooltips** show the rarity-coloured name, a **colourblind-safe rarity label**, slot, item
+> level / required level, weapon dps, armor, stats, crit, trinket, bind-on-equip, and value —
+> plus a **vs-equipped comparison** block with ▲/▼ stat deltas (green upgrade / red downgrade)
+> when hovering a bag or shop item. **Skill tooltips** on the hotbar show cost, cooldown, and
+> the skill's description. Wired into the Character sheet (bag compares vs equipped), the
+> hotbar, and the Vendor + Bank panels. **274 tests green** (UI is verified by play);
+> `pnpm typecheck && lint && build` clean; in-browser hovering a hotbar skill shows the styled
+> card (name + cost + description) with zero console errors. The rest of the UI/UX deliverable
+> (loading/continue screens from the PNG art, first-time tips, coherent art direction) follows.
+>
+> ---
+>
+> **Part 2 (2026-07-06): audio (music + basic SFX).** A small WebAudio
 > layer (`client/platform/audio.ts`): a **master-gain bus** wired live to the Settings
 > master-volume slider, two looping **music beds** — `loginscreen.mp3` on the title/character-
 > select screens and `bgm.mp3` in-game (user-supplied mp3s in `public/assets/audio/`; **missing
@@ -580,7 +595,7 @@ _Status: **PHASE COMPLETE** (2026-07-06, after Part 18). Criteria **#1–#4 pass
 
 - [x] **Audio** — a WebAudio layer (`client/platform/audio.ts`) with a master-gain bus wired to the Settings volume slider, two looping music beds (`loginscreen.mp3` on the title/select screens, `bgm.mp3` in-game; user-supplied mp3s in `public/assets/audio/`, missing files play silently), and synthesized SFX for skill cast / enemy defeat / level-up / quest-complete; autoplay-policy handled by gesture unlock. _Scope simplified per direction: one in-game bed rather than per-zone/situation beds, and a compact procedural SFX set rather than footsteps-by-surface/ambience — those richer layers can return as later polish if wanted._
 - [ ] **VFX pass** — skill effects per class (slashes, arrows, holy glows, frost/fire), hit sparks, level-up burst, Waystone activation, blight ambience in corrupted areas, water/foliage micro-motion; particle system on instanced quads/voxels.
-- [ ] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors.
+- [~] **UI/UX polish** — coherent art direction across every screen (per ART_GUIDE UI kit), controller-quality keybinding UX, tooltips everywhere (items with comparisons, skills, stats), loading/continue screens using the PNG art, first-time-player tips, colorblind-safe target/rarity colors. _(Part 3: a portal-based tooltip system — item cards with vs-equipped stat-delta comparison + colourblind-safe rarity labels, and skill cards on the hotbar; wired into the Character/Vendor/Bank panels + hotbar. Remaining: loading/continue screens from the PNG art, first-time-player tips, wider art-direction pass.)_
 - [~] **Balance & tuning pass** — all-class 1→30 tuning against GDD pace targets, itemization curve audit, Hollow difficulty audit (solo at-level = challenging-but-fair), economy audit (gold faucets vs. sinks), respec/potion/travel cost tuning. _(Part 1: the leveling pace — curve lowered to `250·L^1.55` (~549k) + quest XP ×2, so quests are ~45% of the climb and 1→30 targets ~25–35 h; guarded by `acceptance-p4.test.ts`. Remaining: all-class TTK, itemization curve, Hollow difficulty, gold economy.)_
 - [ ] **Performance & compatibility** — profiling pass to hold budgets in worst spots; memory leak audit across long sessions; Chrome/Firefox/Safari + 1080p/1440p/ultrawide; graphics settings (view distance, shadows, VFX density); WebGL context-loss recovery.
 - [ ] **Resilience** — autosave + rotating save backups, save-corruption recovery, versioned save migration test suite, error boundary + bug-report info screen.

@@ -6,6 +6,7 @@
 import { useStore, type MountUi } from '../game/store.js';
 import { EQUIP_SLOTS, RARITY_COLOR, type ItemDef } from '@pathlands/shared';
 import { colors, panel } from './theme.js';
+import { useHoverTip, TooltipPortal, ItemTooltipCard } from './Tooltip.js';
 
 const SLOT_LABEL: Record<string, string> = {
   mainHand: 'Main Hand',
@@ -33,54 +34,55 @@ const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
 /** Rarity color with a safe fallback for unknown/corrupt rarities (old saves). */
 const rarityHex = (item: ItemDef): string => hex(RARITY_COLOR[item.rarity] ?? 0x888888);
 
-function itemSummary(item: ItemDef): string {
-  const parts = [item.name, `Item Level ${item.ilvl} · requires level ${item.reqLevel}`];
-  if (item.weapon) parts.push(`${item.weapon.kind} · ${item.weapon.dps.toFixed(1)} dps`);
-  if (item.armor) parts.push(`${item.armor} armor`);
-  for (const [k, v] of Object.entries(item.stats)) if (v) parts.push(`+${v} ${k}`);
-  if (item.bonusCritChance) parts.push(`+${(item.bonusCritChance * 100).toFixed(1)}% crit`);
-  parts.push(`Value ${item.value}c`);
-  return parts.join('\n');
-}
-
 function ItemCell({
   item,
+  equipped,
   onClick,
   onContext,
 }: {
   item?: ItemDef;
+  /** The item currently in this item's slot, for a vs-equipped comparison. */
+  equipped?: ItemDef;
   onClick?: () => void;
   onContext?: () => void;
 }): JSX.Element {
   const border = item ? rarityHex(item) : colors.panelBorder;
+  const { pos, handlers } = useHoverTip();
   return (
-    <button
-      title={item ? itemSummary(item) : undefined}
-      onClick={onClick}
-      onContextMenu={(e) => {
-        if (onContext) {
-          e.preventDefault();
-          onContext();
-        }
-      }}
-      disabled={!item && !onClick}
-      style={{
-        width: 52,
-        height: 52,
-        borderRadius: 6,
-        border: `2px solid ${border}`,
-        background: item ? '#1c1610' : '#120d09',
-        color: colors.ink,
-        cursor: item ? 'pointer' : 'default',
-        fontSize: 9,
-        lineHeight: 1.1,
-        padding: 3,
-        overflow: 'hidden',
-        textAlign: 'center',
-      }}
-    >
-      {item ? item.name.split(' ').slice(-1)[0] : ''}
-    </button>
+    <>
+      <button
+        {...handlers}
+        onClick={onClick}
+        onContextMenu={(e) => {
+          if (onContext) {
+            e.preventDefault();
+            onContext();
+          }
+        }}
+        disabled={!item && !onClick}
+        style={{
+          width: 52,
+          height: 52,
+          borderRadius: 6,
+          border: `2px solid ${border}`,
+          background: item ? '#1c1610' : '#120d09',
+          color: colors.ink,
+          cursor: item ? 'pointer' : 'default',
+          fontSize: 9,
+          lineHeight: 1.1,
+          padding: 3,
+          overflow: 'hidden',
+          textAlign: 'center',
+        }}
+      >
+        {item ? item.name.split(' ').slice(-1)[0] : ''}
+      </button>
+      {item && pos && (
+        <TooltipPortal pos={pos}>
+          <ItemTooltipCard item={item} equipped={equipped} />
+        </TooltipPortal>
+      )}
+    </>
   );
 }
 
@@ -178,6 +180,7 @@ export function CharacterPanel(): JSX.Element | null {
                 <ItemCell
                   key={i}
                   item={stack?.item}
+                  equipped={stack ? inv.equipment[stack.item.slot] : undefined}
                   onClick={stack ? () => cmd?.equipItem(i) : undefined}
                   onContext={stack ? () => cmd?.sellItem(i) : undefined}
                 />

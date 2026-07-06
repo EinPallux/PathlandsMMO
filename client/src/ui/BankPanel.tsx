@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useStore } from '../game/store.js';
 import { RARITY_COLOR, type ItemDef } from '@pathlands/shared';
 import { colors, panel } from './theme.js';
+import { useHoverTip, TooltipPortal, ItemTooltipCard } from './Tooltip.js';
 
 const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
 const rarityHex = (item: ItemDef): string => hex(RARITY_COLOR[item.rarity] ?? 0x888888);
@@ -20,36 +21,44 @@ function Cell({
   qty?: number;
   onClick?: () => void;
 }): JSX.Element {
+  const { pos, handlers } = useHoverTip();
   return (
-    <button
-      title={item ? `${item.name} · ilvl ${item.ilvl}` : undefined}
-      onClick={onClick}
-      disabled={!item}
-      style={{
-        position: 'relative',
-        width: 50,
-        height: 50,
-        borderRadius: 6,
-        border: `2px solid ${item ? rarityHex(item) : colors.panelBorder}`,
-        background: item ? '#1c1610' : '#120d09',
-        color: colors.ink,
-        cursor: item ? 'pointer' : 'default',
-        fontSize: 9,
-        lineHeight: 1.1,
-        padding: 3,
-        overflow: 'hidden',
-        textAlign: 'center',
-      }}
-    >
-      {item ? item.name.split(' ').slice(-1)[0] : ''}
-      {item && qty && qty > 1 ? (
-        <span
-          style={{ position: 'absolute', right: 2, bottom: 1, fontSize: 9, color: colors.gold }}
-        >
-          {qty}
-        </span>
-      ) : null}
-    </button>
+    <>
+      <button
+        {...handlers}
+        onClick={onClick}
+        disabled={!item}
+        style={{
+          position: 'relative',
+          width: 50,
+          height: 50,
+          borderRadius: 6,
+          border: `2px solid ${item ? rarityHex(item) : colors.panelBorder}`,
+          background: item ? '#1c1610' : '#120d09',
+          color: colors.ink,
+          cursor: item ? 'pointer' : 'default',
+          fontSize: 9,
+          lineHeight: 1.1,
+          padding: 3,
+          overflow: 'hidden',
+          textAlign: 'center',
+        }}
+      >
+        {item ? item.name.split(' ').slice(-1)[0] : ''}
+        {item && qty && qty > 1 ? (
+          <span
+            style={{ position: 'absolute', right: 2, bottom: 1, fontSize: 9, color: colors.gold }}
+          >
+            {qty}
+          </span>
+        ) : null}
+      </button>
+      {item && pos && (
+        <TooltipPortal pos={pos}>
+          <ItemTooltipCard item={item} />
+        </TooltipPortal>
+      )}
+    </>
   );
 }
 
