@@ -117,6 +117,14 @@ At least two per zone, wandering, 2–6 h respawn, unique-drop tables: Old Thorn
 > the list above already exist as quest targets. Remaining toward ~15: a few more slots +
 > bespoke unique-drop tables (Phase-5 loot polish).
 
+> **Implementation (Phase 4 Part 17) — world event.** The **Grand Waystone** world-boss event
+> is live south of Waymeet on the crypt road (`worldEvent.ts` `GRAND_WAYSTONE_EVENT`, site
+> 1712,2050): a Boss-rank **Grand Warden** (`bossGrandWarden`) guards the dormant Grand Waystone
+> in a `count: 1`, ~7.5-min-respawn `WORLD_SPAWNS` region. It wards itself and calls a stone-guard
+> add, drops the **Grand Waystone Shard** signature Epic, and on death advances the **Waystone-
+> Restorer** Deed (new `worldEvent` metric) with the network-waking announcement. Solo-tuned at
+> the cap; the Phase-6 world boss just adds player scaling on top of this same encounter.
+
 ## 5. Content Budget Reconciliation (vs. GDD)
 
 - Quests: 20+22+20+18+18+12 = **110** ✔ (≈30 of these are main-story chapters ch.1–6)

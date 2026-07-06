@@ -89,6 +89,15 @@ export const DEEDS: readonly DeedDef[] = [
     threshold: 5,
     pathPoints: 3,
   },
+  {
+    id: 'd_waystone_restorer',
+    name: 'Waystone-Restorer',
+    description: 'Restore the Grand Waystone by defeating its Warden.',
+    category: DeedCategory.Combat,
+    metric: 'worldEvent',
+    threshold: 1,
+    pathPoints: 4,
+  },
   // --- Quests ---
   {
     id: 'd_helping_hand',

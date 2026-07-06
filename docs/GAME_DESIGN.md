@@ -312,6 +312,18 @@ Solo-viable loop, weekly cadence:
 > other endgame pillars (Hollow-mastery re-runs, named rare hunts, the world-event stub) are
 > later parts.
 
+> **Implementation (Phase 4 Parts 12–17) — the rest of the endgame loop.** Pillars 2–4 and
+> the world boss (6) now ship as their Phase-4 forms: **Hollow-boss signature loot** (Part 15
+> — five bespoke Epic uniques on the Hollow bosses, `BOSS_SIGNATURES`), **named rare hunts**
+> (Part 12 — eight wandering Elite rares + the Rarebane Deed), **profession masteries** (Part 16
+> — a skill-100 passive per profession), and the **world-boss event** (Part 17). The world boss
+> is _Restore the Grand Waystone_: a Boss-rank **Grand Warden** (`bossGrandWarden`) at a fixed
+> site south of Waymeet, in a long-respawn `WORLD_SPAWNS` region, that a solo capped player can
+> re-run. Killing it feeds the `worldEvent` Deed metric (**Waystone-Restorer**), announces the
+> network's waking, and can drop the **Grand Waystone Shard** signature. `worldEvent.ts` holds
+> the event data (boss ↔ Deed ↔ site). The Phase-6 job is only to make the world boss _scale_
+> to 5–10 players — the encounter, rewards, and data model are already here.
+
 ## 12. Social & MMO Features (Phase 6)
 
 - **Chat:** say (30 m), zone, party, guild, whisper, system; slash commands; profanity filter + mute.

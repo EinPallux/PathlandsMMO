@@ -438,6 +438,21 @@ export const WORLD_SPAWNS: readonly SpawnRegion[] = [
     count: 1,
     respawnTicks: 18000,
   },
+
+  // --- World event (WORLD.md §4): the Grand Waystone site, south of Waymeet on the
+  // road to the Sunken Crypt. Its Grand Warden (Boss rank) respawns on a long timer;
+  // defeating it "restores" the Waystone (a Deed + the network's waking). Coords are
+  // kept in sync with GRAND_WAYSTONE_EVENT in worldEvent.ts (guarded by a test).
+  {
+    id: 'grandWaystoneWarden',
+    enemyId: 'bossGrandWarden',
+    level: 30,
+    cx: 1712,
+    cz: 2050,
+    radius: 8,
+    count: 1,
+    respawnTicks: 9000,
+  },
 ];
 
 /** A Hollow's end-boss encounter (for docs, the atlas, and acceptance tests). */

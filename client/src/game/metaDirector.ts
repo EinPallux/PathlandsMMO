@@ -11,6 +11,7 @@ import {
   perkById,
   enemyById,
   EnemyRank,
+  worldEventForBoss,
   DEEDS,
   PERKS,
   type DeedState,
@@ -66,6 +67,13 @@ export class MetaDirector {
     if (def?.named) {
       notices.push(...applyDeedProgress(this.deeds, 'rare'));
       this.toast(`Rare slain: ${def.name}!`);
+    }
+    // A world-event boss (the Grand Warden) restores its Waystone: a distinct Deed
+    // metric + the network's waking announcement (WORLD.md §4).
+    const event = worldEventForBoss(enemyId);
+    if (event) {
+      notices.push(...applyDeedProgress(this.deeds, 'worldEvent'));
+      this.toast(event.restoreText);
     }
     this.award(notices);
   }

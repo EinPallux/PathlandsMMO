@@ -4,6 +4,30 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 17 — the Grand Waystone world event (2026-07-06)
+
+#### Added
+
+- **Repeatable solo world-boss event, "Restore the Grand Waystone"** — closes the Endgame-loop
+  deliverable. A Boss-rank **Grand Warden** (`bossGrandWarden`, `shared/data/enemies`): a warded,
+  add-summoning stone construct at level 30, modelled on the crypt sentinel, with a bespoke Epic
+  signature (**Grand Waystone Shard**, +4% crit).
+- **`shared/data/worldEvent.ts`** — `WorldEventDef` + `GRAND_WAYSTONE_EVENT` + `worldEventForBoss`,
+  tying the event's boss ↔ Deed ↔ site coords ↔ restoration text into one data source (exported
+  from the data barrel).
+- A **`grandWaystoneWarden` spawn region** in `WORLD_SPAWNS` (south of Waymeet on the crypt road,
+  `count: 1`, ~7.5-min respawn) — the encounter reuses the ordinary spawn → loot → kill pipeline.
+- A **Waystone-Restorer Deed** (`d_waystone_restorer`, new `worldEvent` metric, 4 Path Points).
+- **`metaDirector.handleKill`**: on the world-event boss, feeds the `worldEvent` metric and the
+  restoration announcement (mirrors the named-rare path).
+
+#### Tests
+
+- +6 in `worldEvent.test.ts`: the event's boss (Boss-rank), Deed (`worldEvent` metric), spawn
+  region (at the event coords, count 1), and signature all resolve and stay in sync;
+  `worldEventForBoss` resolves only the warden; exactly one Deed uses the metric. Updated the
+  content test's boss count (5 Hollow bosses + the world boss = 6). **266 total.**
+
 ### Part 16 — profession masteries (2026-07-06)
 
 #### Added

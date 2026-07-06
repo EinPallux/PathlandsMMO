@@ -328,6 +328,36 @@ export const ENEMIES: readonly EnemyDef[] = [
     blurb: 'The final Waymaker, bound to its flooded tomb — the three-phase story finale.',
   }),
 
+  // --- World event boss (WORLD.md §4): the repeatable "Restore the Grand Waystone"
+  // encounter. A Boss-rank stone warden bound to the dormant Grand Waystone; solo-tuned
+  // at the cap, it wards itself and calls stone-guard adds. In Phase 6 this becomes the
+  // scaling world-boss event; for now it is a fixed-site, long-respawn solo world boss.
+  e('bossGrandWarden', 'The Grand Warden', EnemyFamily.Elemental, [30, 30], {
+    modelId: 'enemy.cryptSentinel',
+    rank: EnemyRank.Boss,
+    school: 'arcane',
+    moveSpeed: 3.6,
+    aggroRadius: 22,
+    leashRadius: 48,
+    abilities: ['crystalSpit'],
+    boss: {
+      phases: [
+        {
+          atHpPct: 0.66,
+          shield: 0.14,
+          say: 'The Grand Warden raises a Waystone ward — the air hums with old power!',
+        },
+        {
+          atHpPct: 0.33,
+          summon: { enemyId: 'cryptSentinel', count: 1 },
+          enrage: 0.22,
+          say: 'The Warden blazes — the stone-guard wakes to defend the Waystone!',
+        },
+      ],
+    },
+    blurb: 'The bound warden of the dormant Grand Waystone; defeat it to wake the network anew.',
+  }),
+
   // --- Named rare-elite hunt targets (GDD §11, WORLD.md §4) ---------------------
   // Wandering, Elite-rank, one per key zone; reuse a family model, drop better loot,
   // and feed the "Rarebane" Deed. Spawn points + long respawns live in spawns.ts.
@@ -483,6 +513,14 @@ export const BOSS_SIGNATURES: Record<string, BossSignature> = {
     bonusCritChance: 0.035,
     chance: 0.22,
     blurb: 'The lantern the last Waymaker carried into the dark, still lit against all reason.',
+  },
+  bossGrandWarden: {
+    name: 'Grand Waystone Shard',
+    key: 'grandWaystoneShard',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.04,
+    chance: 0.25,
+    blurb: 'A shard of the Grand Waystone itself, warm with the whole network’s waking song.',
   },
 };
 

@@ -18,3 +18,4 @@ export * from './mounts.js';
 export * from './mail.js';
 export * from './bounties.js';
 export * from './keybinds.js';
+export * from './worldEvent.js';

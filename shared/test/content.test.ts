@@ -79,7 +79,7 @@ describe('Class skills (GDD §3)', () => {
 });
 
 describe('Enemies (GDD §4, WORLD.md)', () => {
-  it('includes the 10 asset enemies and the five Hollow bosses', () => {
+  it('includes the 10 asset enemies, the five Hollow bosses, and the world boss', () => {
     const ids = new Set(ENEMIES.map((e) => e.id));
     for (const asset of [
       'briarGoblin',
@@ -95,7 +95,18 @@ describe('Enemies (GDD §4, WORLD.md)', () => {
     ]) {
       expect(ids.has(asset), asset).toBe(true);
     }
-    expect(ENEMIES.filter((e) => e.rank === EnemyRank.Boss).length).toBe(5);
+    // The five Hollow bosses plus the Grand Waystone world-event boss.
+    for (const boss of [
+      'bossBriarking',
+      'bossGloommother',
+      'bossCrystalWyrm',
+      'bossIronvein',
+      'bossLastWaymaker',
+      'bossGrandWarden',
+    ]) {
+      expect(ids.has(boss), boss).toBe(true);
+    }
+    expect(ENEMIES.filter((e) => e.rank === EnemyRank.Boss).length).toBe(6);
   });
 
   it('has named rare-elites, each Elite-ranked, buildable, and world-spawned', () => {
