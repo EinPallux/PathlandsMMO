@@ -280,6 +280,7 @@ export class Game {
       enemies: () => net.enemies(),
       combatSelf: () => net.combatSelf(),
       drainKills: () => net.drainKills(),
+      drainFx: () => net.drainFx(),
       send: (intent) => net.sendIntent(intent),
     });
     // Fresh session: clear any scrollback left from a previous game instance.

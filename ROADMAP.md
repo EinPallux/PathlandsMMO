@@ -6,6 +6,38 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 14: Server-authoritative combat, Stage 2c-3 (combat-events channel).**
+> Combat the client **can't predict** — incoming hits on you, other players' fights, monster
+> deaths, boss lines — is now replicated as authoritative visuals, so the world's combat reads
+> correctly instead of only your own predicted swings. Cosmetic only (the numbers that matter ride
+> the combat-self channel); server half headless-proven, the visuals land for VPS test. Landed:
+>
+> - **`ServerCombat` buffers combat visuals.** `collectFx` turns the shared sim's
+>   damage / heal / death / boss-phase events into positioned `FxRecord`s each tick (damage/heal
+>   at the live target; a **death at the position now carried on the death event**, so the poof
+>   plays even though an instant-cast corpse is reaped before the drain). `drainFx` hands the
+>   buffer to the gateway once per broadcast (capped so a big pull can't balloon a frame).
+> - **Interest-filtered, own-hits omitted.** The gateway drains fx once, then per connection
+>   sends a **`ServerCombatEvents`** frame (`t:'fx'`, `NET_PROTOCOL_VERSION` → **9**) of the
+>   visuals within range of that viewer — **omitting the viewer's own outgoing damage/heal**,
+>   which the client already predicts (so no double floaters).
+> - **Client renders them.** `CombatDirector.renderServerFx` (networked) plays the floaters +
+>   hit sparks + gray death poofs + boss lines at the server positions, reusing the exact
+>   single-player visual code (now split into a position-based `pushFloaterAt`). Incoming-damage
+>   feedback on the player — previously missing, since mirrored enemies are passive locally —
+>   now shows; enemy deaths poof instead of vanishing silently.
+> - **Tests** (+3, codec updated): a non-lethal hit buffers a damage visual tagged to the
+>   attacker; a kill buffers a death poof at the victim **even after the corpse is reaped**; the
+>   v9 codec round-trips an `fx` batch (damage/heal/death/boss) and rejects an unknown kind /
+>   non-finite coordinate.
+>
+> **370 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Next slice:
+> **2c-4** — proper Waystone respawn on death (server-coordinated with the movement authority) +
+> the client adopting the server's persisted character identity on login + server-timeline enemy
+> interpolation + enemy cast-bar replication for the target frame._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 13: Server-authoritative combat, Stage 2c-2 (kill loot + gold).**
 > Killing a monster is now credited **server-side**: the server rolls the enemy's loot table and
 > hands the killer the gold + items. Same authority split as XP — the server owns **what drops**,

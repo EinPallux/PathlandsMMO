@@ -18,6 +18,7 @@ import {
   findEmote,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
+  type NetCombatEvent,
   type NetEntity,
   type NetPlayer,
   type ServerChat,
@@ -82,6 +83,10 @@ const CHAT_MIN_INTERVAL_MS = 700;
 
 /** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
 const CHAT_BROADCAST_MAX = 200;
+
+/** Radius (squared, world units) within which a viewer gets combat visuals (Stage 2c-3). Roughly
+ * the 3×3 chunk interest region — cosmetic, so a plain distance gate rather than the cell index. */
+const FX_RANGE_SQ = 72 * 72;
 
 /**
  * Clean an untrusted chat line for rebroadcast: strip control characters (incl. newlines,
@@ -501,6 +506,9 @@ export class GameServer {
     // advances every tick but we only broadcast every Nth, so the diff must be taken against
     // the last BROADCAST, not the last tick (else sub-cadence changes are silently dropped).
     this.combat.refreshDiff();
+    // Authoritative combat visuals accumulated since the last broadcast — drained ONCE, then
+    // filtered per connection below (interest + omit the viewer's own predicted hits).
+    const fx = this.combat.drainFx();
     const membershipChanged = this.membershipChanged;
     this.membershipChanged = false;
     // The delta pass is only needed when something could have changed; the `self` pass
@@ -543,6 +551,30 @@ export class GameServer {
           gold: kill.gold,
           items: kill.items,
         });
+      }
+
+      // 1d) Authoritative combat visuals near this viewer (Stage 2c-3): incoming hits, other
+      //     players' fights, monster deaths, boss lines. Interest-filtered by distance, and the
+      //     viewer's OWN outgoing damage/heal is omitted (the client already predicts those).
+      if (fx.length > 0) {
+        const events: NetCombatEvent[] = [];
+        for (const rec of fx) {
+          if ((rec.kind === 'damage' || rec.kind === 'heal') && rec.sourceId === conn.id) continue;
+          const dx = rec.x - viewer.phys.x;
+          const dz = rec.z - viewer.phys.z;
+          if (dx * dx + dz * dz > FX_RANGE_SQ) continue;
+          const ev: NetCombatEvent = {
+            kind: rec.kind,
+            x: rec.x,
+            y: rec.y,
+            z: rec.z,
+            amount: rec.amount,
+            crit: rec.crit,
+          };
+          if (rec.text !== undefined) ev.text = rec.text;
+          events.push(ev);
+        }
+        if (events.length > 0) this.send(conn.ws, { t: 'fx', tick: this.sim.tick, events });
       }
 
       // 2) Interest-filtered delta of the OTHER players + enemy entities in the viewer's

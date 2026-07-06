@@ -58,6 +58,11 @@ export type CombatEvent =
        * an instant-cast kill is reaped before the next tick's event drain. */
       enemyId?: string;
       level: number;
+      /** Where the death happened (for the death VFX), captured at death — the corpse may be
+       * gone by the time a consumer reads this. */
+      x: number;
+      y: number;
+      z: number;
     }
   | { type: 'xp'; entityId: string; amount: number; enemyLevel: number }
   | { type: 'resource'; entityId: string; kind: ResourceKind; value: number }
@@ -276,6 +281,9 @@ function killEntity(state: CombatState, victim: CombatEntity, killer: CombatEnti
     killerId: killer?.id ?? null,
     enemyId: victim.enemyId,
     level: victim.level,
+    x: victim.x,
+    y: victim.y,
+    z: victim.z,
   });
 
   // Award XP when a player fells an enemy (pets credit their owner in Part 5).

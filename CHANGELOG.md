@@ -4,6 +4,47 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 14 — Server-authoritative combat, Stage 2c-3: combat-events channel (2026-07-06)
+
+Combat the client can't predict — incoming hits on you, other players' fights, monster deaths,
+boss lines — is replicated as authoritative visuals so the world's combat reads correctly, not
+just your own predicted swings. Cosmetic only (hp/resource ride the combat-self channel). Server
+half is headless-proven; the visuals are verified on the VPS combat test.
+
+#### Added
+
+- **`ServerCombatEvents` frame** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **9**): a
+  batch of `NetCombatEvent` (kind `damage`/`heal`/`death`/`boss`, world position, amount, crit,
+  optional boss text) for the recipient's vicinity. Decoder validates kind + finite
+  position/amount + bool crit + optional text.
+- **`ServerCombat` fx buffer** (`server/src/combat.ts`): `collectFx` turns each tick's shared
+  combat events into positioned `FxRecord`s (damage/heal read the live target; death reads the
+  position now on the death event, so an instant-cast-reaped corpse still poofs); `drainFx`
+  returns + clears the buffer (capped at `FX_CAP` = 256).
+- **Interest-filtered fx replication** (`server/src/gateway.ts`): `broadcast` drains the fx buffer
+  once, then per connection sends a `ServerCombatEvents` frame of the visuals within `FX_RANGE_SQ`
+  of the viewer, **omitting the viewer's own outgoing damage/heal** (predicted client-side).
+- **Client fx rendering** (`client/src/net/netClient.ts`, `client/src/game/combatDirector.ts`,
+  `client/src/game/game.ts`): NetClient queues `fx` events (cleared on disconnect) and exposes
+  `drainFx()`; the CombatDirector's `netSink` gains `drainFx`, and `renderServerFx` plays the
+  floaters + hit sparks + gray death poofs + boss lines at the server positions — reusing the
+  single-player visual code, now split into a position-based `pushFloaterAt`. This restores
+  incoming-damage feedback on the player (mirrored enemies are passive locally, so it was
+  missing) and enemy death poofs (previously the enemy vanished silently in networked mode).
+
+#### Changed
+
+- **`death` combat event** (`shared/src/sim/combat.ts`): now also carries the victim's `x`/`y`/`z`
+  (captured at death), so the death VFX plays at the right spot even after the corpse is reaped.
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+2): a non-lethal hit buffers a damage visual tagged to the
+  attacker (so the gateway can omit it for them, send to others); a kill buffers a death poof at
+  the victim even after the corpse is reaped.
+- **`shared/test/net.test.ts`** (+1): the v9 codec round-trips an `fx` batch (damage/heal/death/
+  boss, incl. empty) and rejects an unknown kind + a non-finite coordinate.
+
 ### Part 13 — Server-authoritative combat, Stage 2c-2: kill loot + gold (2026-07-06)
 
 Killing a monster is credited server-side: the server rolls the loot table and hands the killer

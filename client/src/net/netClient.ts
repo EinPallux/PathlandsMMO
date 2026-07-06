@@ -26,6 +26,7 @@ import {
   type Intent,
   type MoveIntent,
   type MoveState,
+  type NetCombatEvent,
   type NetCombatSelf,
   type NetEntity,
   type NetPlayer,
@@ -135,6 +136,8 @@ export class NetClient {
   private lastCombatSelf: NetCombatSelf | null = null;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
   private readonly killQueue: ServerKill[] = [];
+  /** Authoritative combat visuals (floaters / sparks / death poofs) awaiting render. */
+  private readonly fxQueue: NetCombatEvent[] = [];
   private seq = 0;
   private localTick = 0;
   private readonly renderDelayMs: number;
@@ -238,6 +241,9 @@ export class NetClient {
       case 'kill':
         this.killQueue.push(msg); // queued (not last-wins) — every kill credits loot + quest progress
         break;
+      case 'fx':
+        for (const ev of msg.events) this.fxQueue.push(ev); // authoritative floaters / VFX to render
+        break;
       case 'pong': {
         this.lastPongMs = this.nowMs(); // any pong proves the server is alive
         const sent = this.inflightPings.get(msg.id);
@@ -328,6 +334,7 @@ export class NetClient {
     this.enemyMap.clear();
     this.lastCombatSelf = null;
     this.killQueue.length = 0;
+    this.fxQueue.length = 0;
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
       this.scheduleReconnect();
@@ -434,6 +441,12 @@ export class NetClient {
   drainKills(): ServerKill[] {
     if (this.killQueue.length === 0) return [];
     return this.killQueue.splice(0, this.killQueue.length);
+  }
+
+  /** Take and clear the authoritative combat visuals to render this frame (Stage 2c-3). */
+  drainFx(): NetCombatEvent[] {
+    if (this.fxQueue.length === 0) return [];
+    return this.fxQueue.splice(0, this.fxQueue.length);
   }
 
   // --- remote rendering ---

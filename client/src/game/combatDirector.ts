@@ -63,6 +63,7 @@ import {
   type QuestReward,
   type ConsumableEffect,
   type Intent,
+  type NetCombatEvent,
   type NetEntity,
   type NetCombatSelf,
   type ServerKill,
@@ -200,6 +201,7 @@ export class CombatDirector {
     enemies: () => NetEntity[];
     combatSelf: () => NetCombatSelf | null;
     drainKills: () => ServerKill[];
+    drainFx: () => NetCombatEvent[];
     send: (intent: Intent) => void;
   } | null = null;
 
@@ -879,6 +881,7 @@ export class CombatDirector {
       }
       this.reconcileFromServer();
       this.applyServerKills();
+      if (this.netSink !== null) this.renderServerFx(this.netSink.drainFx());
       return;
     }
 
@@ -1110,16 +1113,74 @@ export class CombatDirector {
   }
 
   private pushFloater(e: CombatEntity, text: string, kind: Floater['kind']): void {
+    this.pushFloaterAt(e.x, e.y, e.z, text, kind);
+  }
+
+  private pushFloaterAt(
+    x: number,
+    y: number,
+    z: number,
+    text: string,
+    kind: Floater['kind'],
+  ): void {
     this.worldFloaters.push({
       id: this.floaterId++,
-      wx: e.x,
-      wy: e.y + 1.8,
-      wz: e.z,
+      wx: x,
+      wy: y + 1.8,
+      wz: z,
       text,
       kind,
       age: 0,
     });
     if (this.worldFloaters.length > 40) this.worldFloaters.shift();
+  }
+
+  /**
+   * Render the server's authoritative combat visuals (Stage 2c-3): floaters + hit sparks for
+   * incoming hits / other players' fights, enemy death poofs, and boss-phase lines — the things
+   * the client can't predict. Own outgoing hits are omitted server-side (predicted locally), so
+   * these never double a predicted floater. Position is server-resolved, so a poof still plays
+   * for a corpse the client already dropped.
+   */
+  private renderServerFx(events: readonly NetCombatEvent[]): void {
+    for (const ev of events) {
+      if (ev.kind === 'damage' || ev.kind === 'heal') {
+        const kind = ev.kind === 'heal' ? 'heal' : ev.crit ? 'crit' : 'damage';
+        const text = ev.amount <= 0 && ev.kind === 'damage' ? 'absorb' : String(ev.amount);
+        this.pushFloaterAt(ev.x, ev.y, ev.z, text, kind);
+        if (ev.kind === 'heal') {
+          this.vfx.burst(ev.x, ev.y + 1.0, ev.z, {
+            count: 8,
+            color: [0.4, 1.0, 0.5],
+            speed: 1.6,
+            up: 1.2,
+            life: 0.5,
+            size: 0.16,
+            gravity: -1,
+          });
+        } else if (ev.amount > 0) {
+          this.vfx.burst(ev.x, ev.y + 1.0, ev.z, {
+            count: ev.crit ? 14 : 8,
+            color: ev.crit ? [1.0, 0.85, 0.3] : [1.0, 0.5, 0.35],
+            speed: ev.crit ? 4 : 3,
+            life: 0.4,
+            size: ev.crit ? 0.2 : 0.14,
+          });
+        }
+      } else if (ev.kind === 'death') {
+        this.vfx.burst(ev.x, ev.y + 0.9, ev.z, {
+          count: 20,
+          color: [0.55, 0.55, 0.6],
+          speed: 2.6,
+          up: 1,
+          life: 0.7,
+          size: 0.22,
+          gravity: -3,
+        });
+      } else if (ev.kind === 'boss' && ev.text !== undefined) {
+        this.pushFloaterAt(ev.x, ev.y, ev.z, ev.text, 'crit');
+      }
+    }
   }
 
   // The Verdigris Blight seeps up around the Hollows: a slow drizzle of green

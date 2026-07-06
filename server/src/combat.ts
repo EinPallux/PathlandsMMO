@@ -25,6 +25,7 @@ import {
   stepSpawner,
   WORLD_SPAWNS,
   WORLD_SEED,
+  type CombatEvent,
   type CombatState,
   type CombatContext,
   type CombatEntity,
@@ -44,6 +45,22 @@ export interface KillCredit {
   gold: number;
   items: NetItemStack[];
 }
+
+/** An authoritative combat visual (floater / hit spark / death poof / boss line) with the world
+ * position to play it at + the source id (so a viewer's own predicted hits can be omitted). */
+export interface FxRecord {
+  kind: 'damage' | 'heal' | 'death' | 'boss';
+  sourceId: string;
+  x: number;
+  y: number;
+  z: number;
+  amount: number;
+  crit: boolean;
+  text?: string;
+}
+
+/** Cap the per-broadcast fx buffer so a big pull can't balloon the frame (cosmetic; oldest win). */
+const FX_CAP = 256;
 
 /** Ticks a released spirit waits before reviving (~2 s at 20 Hz) — no instant chain-res. */
 const RELEASE_DELAY_TICKS = 40;
@@ -98,6 +115,8 @@ export class ServerCombat {
   /** Per-player queue of kills to credit (loot + quest-objective enemy id), drained by the
    * gateway each broadcast and sent to that player as ServerKill frames (Stage 2c-2). */
   private readonly killFeed = new Map<string, KillCredit[]>();
+  /** Authoritative combat visuals accumulated since the last broadcast drain (Stage 2c-3). */
+  private fxBuffer: FxRecord[] = [];
 
   constructor(world: ServerWorld) {
     this.state = createCombatState(WORLD_SEED);
@@ -216,8 +235,62 @@ export class ServerCombat {
       else if (ev.type === 'death' && ev.killerId !== null && ev.enemyId !== undefined) {
         this.creditKill(ev.killerId, ev.enemyId, ev.level);
       }
-      // Combat-event replication (authoritative floaters / death VFX) lands in Stage 2c-3.
+      this.collectFx(ev); // authoritative floaters / hit sparks / death poofs (Stage 2c-3)
     }
+  }
+
+  /**
+   * Buffer the visual side of a combat event (a floater / hit spark / death poof / boss line) at
+   * a world position, for the gateway to replicate. Damage/heal read the (live) target's
+   * position; a death reads the position carried on the event (the corpse may already be reaped).
+   */
+  private collectFx(ev: CombatEvent): void {
+    if (this.fxBuffer.length >= FX_CAP) return;
+    if (ev.type === 'damage' || ev.type === 'heal') {
+      const target = this.state.entities.get(ev.targetId);
+      if (target === undefined) return; // reaped by an instant-cast kill — the death poof covers it
+      this.fxBuffer.push({
+        kind: ev.type,
+        sourceId: ev.sourceId,
+        x: target.x,
+        y: target.y,
+        z: target.z,
+        amount: ev.amount,
+        crit: ev.crit,
+      });
+    } else if (ev.type === 'death' && ev.enemyId !== undefined) {
+      this.fxBuffer.push({
+        kind: 'death',
+        sourceId: ev.killerId ?? '',
+        x: ev.x,
+        y: ev.y,
+        z: ev.z,
+        amount: 0,
+        crit: false,
+      });
+    } else if (ev.type === 'bossPhase') {
+      const boss = this.state.entities.get(ev.entityId);
+      if (boss === undefined) return;
+      this.fxBuffer.push({
+        kind: 'boss',
+        sourceId: '',
+        x: boss.x,
+        y: boss.y,
+        z: boss.z,
+        amount: 0,
+        crit: false,
+        text: ev.say,
+      });
+    }
+  }
+
+  /** Take and clear the combat visuals accumulated since the last broadcast (Stage 2c-3). The
+   * gateway filters these per-connection (interest + omit the viewer's own predicted hits). */
+  drainFx(): FxRecord[] {
+    if (this.fxBuffer.length === 0) return [];
+    const out = this.fxBuffer;
+    this.fxBuffer = [];
+    return out;
   }
 
   /**

@@ -179,6 +179,36 @@ describe('server-authoritative player combat — ServerCombat', () => {
     // Draining is idempotent — a second drain is empty (no double loot on the next broadcast).
     expect(combat.drainKills('P')).toHaveLength(0);
   });
+
+  it('buffers a damage-floater visual tagged to the attacker (Stage 2c-3)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    // A non-lethal Fire Blast: the boar survives, so a damage visual is buffered at its position.
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+    const fx = combat.drainFx();
+    const dmg = fx.find((f) => f.kind === 'damage');
+    expect(dmg).toBeDefined();
+    expect(dmg!.sourceId).toBe('P'); // tagged to the caster — the gateway omits it for them, sends to others
+    expect(dmg!.amount).toBeGreaterThan(0);
+    expect(Math.hypot(dmg!.x - boar.x, dmg!.z - boar.z)).toBeLessThan(2); // at the struck body
+    expect(combat.drainFx()).toHaveLength(0); // draining clears the buffer
+  });
+
+  it('buffers a death-poof visual at the victim, even after the corpse is reaped (Stage 2c-3)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step(); // instant-cast kill: the corpse is reaped before the drain, but the event carries the position
+    const death = combat.drainFx().find((f) => f.kind === 'death');
+    expect(death).toBeDefined();
+    expect(Math.hypot(death!.x - boar.x, death!.z - boar.z)).toBeLessThan(2);
+  });
 });
 
 describe('server-authoritative player combat — over the wire', () => {

@@ -20,8 +20,47 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 8 (self / token / chat / entities / combat-self / xp / loot)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(8);
+  it('is at protocol version 9 (self / token / chat / entities / combat-self / xp / loot / fx)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(9);
+  });
+
+  it('round-trips + validates a ServerCombatEvents (fx) frame', () => {
+    const msg = {
+      t: 'fx',
+      tick: 20,
+      events: [
+        { kind: 'damage', x: 1, y: 64, z: 2, amount: 37, crit: true },
+        { kind: 'heal', x: 3, y: 64, z: 4, amount: 12, crit: false },
+        { kind: 'death', x: 5, y: 63, z: 6, amount: 0, crit: false },
+        { kind: 'boss', x: 7, y: 65, z: 8, amount: 0, crit: false, text: 'The Warden roars.' },
+      ],
+    } as const;
+    expect(decodeServer(encodeServer(msg))).toEqual(msg);
+    // An empty batch round-trips.
+    expect(decodeServer(encodeServer({ t: 'fx', tick: 1, events: [] }))).toEqual({
+      t: 'fx',
+      tick: 1,
+      events: [],
+    });
+    // Malformed: an unknown kind, and a non-finite coordinate, each sink the frame.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'fx',
+          tick: 1,
+          events: [{ kind: 'nope', x: 0, y: 0, z: 0, amount: 0, crit: false }],
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'fx',
+          tick: 1,
+          events: [{ kind: 'damage', x: 'x', y: 0, z: 0, amount: 0, crit: false }],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips + validates a ServerKill (loot credit) frame', () => {

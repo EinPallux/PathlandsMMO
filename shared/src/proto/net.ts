@@ -25,9 +25,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta);
  * v6 added the per-connection combat-self channel (ServerCombatSelf);
  * v7 added server-authoritative XP progression (totalXp on NetCombatSelf);
- * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items).
+ * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items);
+ * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX).
  */
-export const NET_PROTOCOL_VERSION = 8;
+export const NET_PROTOCOL_VERSION = 9;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -293,6 +294,35 @@ export interface ServerKill {
   items: NetItemStack[];
 }
 
+/**
+ * One authoritative combat visual to play at a world position: a damage / heal floater (+ hit
+ * spark), an enemy death poof, or a boss-phase line. Purely cosmetic — the numbers that matter
+ * (hp / resource) ride the combat-self channel; this makes the WORLD's combat legible (incoming
+ * hits on you, other players' fights, monster deaths) which client prediction alone can't show.
+ * The position is server-resolved so the client renders it even for a corpse it has already
+ * dropped.
+ */
+export interface NetCombatEvent {
+  kind: 'damage' | 'heal' | 'death' | 'boss';
+  x: number;
+  y: number;
+  z: number;
+  /** Damage / heal amount (0 for death / boss). */
+  amount: number;
+  /** Whether the hit crit (false for death / boss). */
+  crit: boolean;
+  /** Boss-phase line (only on `kind:'boss'`). */
+  text?: string;
+}
+
+/** A batch of authoritative combat visuals for the recipient's vicinity this broadcast. Interest-
+ * filtered, and the recipient's OWN outgoing hits are omitted (the client predicts those). */
+export interface ServerCombatEvents {
+  t: 'fx';
+  tick: number;
+  events: NetCombatEvent[];
+}
+
 /** Echo of a ping, with the server tick for a coarse clock estimate. */
 export interface ServerPong {
   t: 'pong';
@@ -331,6 +361,7 @@ export type ServerMessage =
   | ServerSelf
   | ServerCombatSelf
   | ServerKill
+  | ServerCombatEvents
   | ServerPong
   | ServerError
   | ServerChat;
@@ -579,6 +610,24 @@ function isNetItemStack(v: unknown): v is NetItemStack {
   return isString(item.id) && isString(item.name);
 }
 
+const FX_KINDS = new Set(['damage', 'heal', 'death', 'boss']);
+
+/** Validate one combat-visual record. Position + amount finite; kind known; optional boss text. */
+function isNetCombatEvent(v: unknown): v is NetCombatEvent {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.kind) &&
+    FX_KINDS.has(o.kind) &&
+    isFiniteNumber(o.x) &&
+    isFiniteNumber(o.y) &&
+    isFiniteNumber(o.z) &&
+    isFiniteNumber(o.amount) &&
+    isBool(o.crit) &&
+    (o.text === undefined || isString(o.text))
+  );
+}
+
 /** Decode a server frame on the client. Null ⇒ drop (protocol drift / corruption). */
 export function decodeServer(raw: string): ServerMessage | null {
   const o = parseObject(raw);
@@ -644,6 +693,16 @@ export function decodeServer(raw: string): ServerMessage | null {
         return null;
       }
       return { t: 'kill', tick: o.tick, enemyId: o.enemyId, gold: o.gold, items: o.items };
+    }
+    case 'fx': {
+      if (
+        !isFiniteNumber(o.tick) ||
+        !Array.isArray(o.events) ||
+        !o.events.every(isNetCombatEvent)
+      ) {
+        return null;
+      }
+      return { t: 'fx', tick: o.tick, events: o.events };
     }
     case 'pong':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime) || !isFiniteNumber(o.serverTick)) {
