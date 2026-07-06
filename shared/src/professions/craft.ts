@@ -5,6 +5,7 @@
 
 import type { Rng } from '../core/rng.js';
 import { skillUpForReq } from './skill.js';
+import { CRAFT_MASTERY_BONUS_CHANCE, isMastered } from '../data/professions.js';
 import type { RecipeDef, RecipeOutput } from '../data/recipes.js';
 
 /** Whether the player can craft `recipe` given their materials + profession skill. */
@@ -38,5 +39,19 @@ export function craft(
     if (left > 0) materials[i.id] = left;
     else delete materials[i.id];
   }
-  return { output: recipe.output, newSkill: skillUpForReq(rng, skill, recipe.skillReq) };
+
+  // Crafting mastery (skill 100): Efficient Smelting / Potent Brews have a chance to
+  // yield one extra stackable output for free. Only material/consumable outputs stack;
+  // gear is one-off. The proc rng is only drawn when mastered, so sub-cap crafts are
+  // byte-identical to before. (skillUpForReq draws nothing at the cap.)
+  let output: RecipeOutput = recipe.output;
+  if (
+    isMastered(skill) &&
+    (output.kind === 'material' || output.kind === 'consumable') &&
+    rng.next() < CRAFT_MASTERY_BONUS_CHANCE
+  ) {
+    output = { ...output, qty: output.qty + 1 };
+  }
+
+  return { output, newSkill: skillUpForReq(rng, skill, recipe.skillReq) };
 }

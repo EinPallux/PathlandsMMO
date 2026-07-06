@@ -4,6 +4,29 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
+### Part 16 — profession masteries (2026-07-06)
+
+#### Added
+
+- **Skill-100 profession masteries** (`shared/data/professions` `MASTERIES` + `masteryFor` /
+  `isMastered`): a permanent passive per profession, unlocked at the skill cap — Rich Veins
+  (Mining: +1 ore per vein, 2× gem-shard chance), Nature's Bounty (Herbalism: +1 herb),
+  Master Angler (Fishing: better big-catch + fish-oil odds), Efficient Smelting (Blacksmithing)
+  and Potent Brews (Alchemy: 25% chance of a free extra stackable craft output).
+- The bonuses are applied in the existing engine: `gatherNode` / `rollFish` (`shared/professions/skill`)
+  and `craft` (`shared/professions/craft`) derive `skill >= SKILL_MAX` from their skill argument.
+  No new save data and no signature change; because sub-cap paths draw no additional RNG, gather/
+  fish/craft results below 100 are byte-identical to before.
+- The Professions panel (**P**) shows each profession's mastery — dim "Mastery at 100: …" while
+  locked, gold "★ Mastery: …" once earned — via a mastery/mastered rider on the professions slice.
+
+#### Tests
+
+- +6 in `masteries.test.ts`: every profession has a mastery and `isMastered` gates on the cap;
+  mining/herbalism grant +1 over the same sub-cap roll; fishing lifts the fish-oil rate; crafting
+  procs a bonus stackable output at the cap and never below it; equipment crafts never gain qty.
+  **260 total.**
+
 ### Part 15 — Hollow boss signature loot (2026-07-06)
 
 #### Added

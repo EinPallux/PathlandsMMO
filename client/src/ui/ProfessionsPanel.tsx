@@ -70,9 +70,22 @@ export function ProfessionsPanel(): JSX.Element | null {
                   style={{
                     width: `${(s.skill / s.max) * 100}%`,
                     height: '100%',
-                    background: '#5fbf4e',
+                    background: s.mastered ? colors.gold : '#5fbf4e',
                   }}
                 />
+              </div>
+              <div
+                style={{ fontSize: 10, marginTop: 2 }}
+                title={s.masteryDesc}
+                aria-label={s.masteryDesc}
+              >
+                {s.mastered ? (
+                  <span style={{ color: colors.gold }}>★ Mastery: {s.mastery}</span>
+                ) : (
+                  <span style={{ color: colors.inkDim }}>
+                    Mastery at {s.max}: {s.mastery}
+                  </span>
+                )}
               </div>
             </div>
           ))}

@@ -250,6 +250,16 @@ Each character learns **all five** (no pick restrictions — indie population is
 > on the combat director: heal / restore resource / a timed buff aura, save v5). Discovery
 > recipes, station proximity (forge/anvil/alembic), and trainers are follow-up polish.
 
+> **Implementation (Phase 4 Part 16 — masteries).** Maxing a profession (skill 100) unlocks
+> a permanent **Mastery** — a passive bonus and part of the endgame loop (`MASTERIES` in
+> `shared/data/professions.ts`): Rich Veins (Mining: +1 ore/vein, 2× gem chance), Nature's
+> Bounty (Herbalism: +1 herb), Master Angler (Fishing: better big-catch + fish-oil odds),
+> Efficient Smelting (Blacksmithing) and Potent Brews (Alchemy: a 25% chance of a free extra
+> stackable craft output). Masteries derive from the **already-persisted skill** — `gatherNode`
+> / `rollFish` / `craft` read `skill >= SKILL_MAX` internally — so there is no new save field
+> and no engine-signature change, and because sub-cap paths draw no extra RNG the results below
+> 100 are byte-identical. The Professions panel (P) shows each mastery, locked until earned.
+
 ## 10. Meta Progression — Deeds & Path Points
 
 - **Deeds** = achievements across exploration (Waystones, subzones), combat (named rares, Hollow bosses, solo-boss Deeds), quests (chapters, zone completion), professions (50/100 skill, rare catches), and collection (mount skins, titles).

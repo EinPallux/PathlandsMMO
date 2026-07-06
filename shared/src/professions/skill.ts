@@ -81,10 +81,14 @@ export function gatherNode(
   const primary = primaryMaterial(prof, tier);
   if (!primary) return null;
 
-  const yields: GatherYield[] = [{ materialId: primary.id, qty: rng.int(1, 2) }];
+  // Mastery (skill 100): Rich Veins / Nature's Bounty grant +1 primary yield; a
+  // master miner also doubles the gem-shard chance. Below the cap, nothing changes.
+  const mastered = skill >= SKILL_MAX;
+  const bonus = mastered ? 1 : 0;
+  const yields: GatherYield[] = [{ materialId: primary.id, qty: rng.int(1, 2) + bonus }];
   if (prof === Profession.Mining) {
     yields.push({ materialId: 'roughStone', qty: rng.int(1, 2) });
-    if (rng.next() < 0.06) yields.push({ materialId: 'gemShard', qty: 1 });
+    if (rng.next() < (mastered ? 0.12 : 0.06)) yields.push({ materialId: 'gemShard', qty: 1 });
   }
   return { yields, newSkill: skillUp(rng, skill, tier) };
 }
@@ -101,15 +105,17 @@ export function fishBiteDelaySeconds(rng: Rng): number {
  * Yields a fish (rare chance of the next tier's fish) plus an occasional fish oil.
  */
 export function rollFish(rng: Rng, tier: number, skill: number): GatherResult {
+  // Mastery (skill 100): Master Angler raises the big-catch odds and fish-oil rate.
+  const mastered = skill >= SKILL_MAX;
   const fish = primaryMaterial(Profession.Fishing, tier);
   const yields: GatherYield[] = [];
   if (fish) {
     // Rare "big catch": a fish one tier up.
-    const bigTier = rng.next() < 0.08 ? Math.min(3, tier + 1) : tier;
+    const bigTier = rng.next() < (mastered ? 0.2 : 0.08) ? Math.min(3, tier + 1) : tier;
     const caught = primaryMaterial(Profession.Fishing, bigTier) ?? fish;
     yields.push({ materialId: caught.id, qty: 1 });
   }
-  if (rng.next() < 0.3) yields.push({ materialId: 'fishOil', qty: 1 });
+  if (rng.next() < (mastered ? 0.5 : 0.3)) yields.push({ materialId: 'fishOil', qty: 1 });
   return { yields, newSkill: skillUp(rng, skill, tier) };
 }
 

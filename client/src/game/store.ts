@@ -180,7 +180,18 @@ export interface GatherStatus {
 }
 
 export interface ProfessionsUi {
-  skills: Array<{ id: string; name: string; skill: number; max: number }>;
+  skills: Array<{
+    id: string;
+    name: string;
+    skill: number;
+    max: number;
+    /** Mastery title, unlocked at max skill. */
+    mastery: string;
+    /** Mastery effect description. */
+    masteryDesc: string;
+    /** Whether the mastery is active (skill == max). */
+    mastered: boolean;
+  }>;
   materials: Array<{ id: string; name: string; qty: number }>;
   consumables: Array<{ id: string; name: string; qty: number; effect: string }>;
 }

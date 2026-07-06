@@ -17,6 +17,8 @@ import {
   ALL_PROFESSIONS,
   PROFESSION_NAME,
   SKILL_MAX,
+  masteryFor,
+  isMastered,
   CHANNEL_SECONDS,
   RECIPES,
   canCraft,
@@ -432,12 +434,19 @@ export class GatherDirector {
   }
 
   private publishProfessions(): void {
-    const skills = ALL_PROFESSIONS.map((p) => ({
-      id: p,
-      name: PROFESSION_NAME[p],
-      skill: this.skills[p] ?? 1,
-      max: SKILL_MAX,
-    }));
+    const skills = ALL_PROFESSIONS.map((p) => {
+      const skill = this.skills[p] ?? 1;
+      const m = masteryFor(p);
+      return {
+        id: p,
+        name: PROFESSION_NAME[p],
+        skill,
+        max: SKILL_MAX,
+        mastery: m.name,
+        masteryDesc: m.description,
+        mastered: isMastered(skill),
+      };
+    });
     const materials = Object.entries(this.materials)
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => ({ id, name: materialById(id)?.name ?? id, qty }))
