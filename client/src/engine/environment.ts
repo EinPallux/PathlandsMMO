@@ -79,6 +79,8 @@ export class Environment {
   private shadowRadius = 48;
   /** Unit vector pointing toward the sun, captured each frame from applyTime(). */
   private readonly sunWorldDir = new THREE.Vector3(0, 1, 0);
+  /** Shared clock uniform for the water-ripple shader. */
+  private readonly waterTime = { value: 0 };
 
   constructor(scene: THREE.Scene, viewDistanceChunks: number) {
     this.scene = scene;
@@ -115,15 +117,27 @@ export class Environment {
     scene.add(this.hemi);
 
     const waterSize = viewDistanceChunks * 32 * 2.2;
-    this.water = new THREE.Mesh(
-      new THREE.PlaneGeometry(waterSize, waterSize),
-      new THREE.MeshLambertMaterial({
-        color: 0x2f6fb0,
-        transparent: true,
-        opacity: 0.72,
-        depthWrite: false,
-      }),
-    );
+    const waterMat = new THREE.MeshLambertMaterial({
+      color: 0x2f6fb0,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+    });
+    // Water micro-motion (Phase 5 VFX): a gentle world-locked swell displaces the
+    // surface in Y from two crossing sine waves. Subdivided so the waves have
+    // vertices to ride; uTime is advanced in update().
+    waterMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = this.waterTime;
+      shader.vertexShader =
+        'uniform float uTime;\n' +
+        shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
+          transformed.z += sin(wp.x * 0.13 + uTime * 1.1) * 0.13 + sin(wp.z * 0.11 + uTime * 0.8) * 0.11;`,
+        );
+    };
+    this.water = new THREE.Mesh(new THREE.PlaneGeometry(waterSize, waterSize, 48, 48), waterMat);
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.y = SEA_LEVEL + 0.35;
     this.water.frustumCulled = false;
@@ -139,6 +153,7 @@ export class Environment {
 
   update(dt: number, cameraPos: THREE.Vector3, focus?: THREE.Vector3): void {
     this.time = (this.time + this.speed * dt) % 1;
+    this.waterTime.value += dt;
     this.applyTime();
     // Re-centre the shadow frustum on the player (falling back to the camera) so
     // the fixed-size map stays tight around what's on screen.

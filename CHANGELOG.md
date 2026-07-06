@@ -4,6 +4,35 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 5 — Polish: The Complete Solo Game] — in progress
 
+### Part 7 — VFX remainder & Performance (2026-07-06)
+
+#### Added
+
+- **Blight ambience** (`CombatDirector.emitBlight`): a slow drizzle of upward-drifting verdigris
+  spore-motes that thickens the closer the player is to a Hollow mouth (proximity to `HOLLOWS`).
+  Runs through the pooled VFX system and is gated by the VFX-density setting (`off` mutes it).
+- **Water micro-motion** (`environment.ts`): the water surface is now subdivided and rides a
+  world-locked, two-wave sine swell injected via `onBeforeCompile` (a shared `uTime` uniform,
+  advanced in `update`). No new draw calls.
+- **Foliage micro-motion** (`propRenderer.ts`): instanced props sway in a light breeze — a
+  height-weighted, per-instance-phased wind offset injected into the shared prop material via
+  `onBeforeCompile`, advanced by `PropRenderer.tick(dt)`. Bases stay put, tops sway; short props
+  (rocks) barely move.
+- **Adaptive quality** (`game.ts`): once the game is running, a sustained low frame rate quietly
+  drops the effective view distance one notch (down to a floor of 4) and climbs back toward the
+  user's setting when it recovers. Slow cadence (3 s) + wide hysteresis (< 35 / > 55 FPS) so it
+  never thrashes the chunk streamer; the user's persisted setting is the ceiling and is never
+  overwritten.
+
+#### Notes
+
+- **Memory-dispose audit**: confirmed every per-`Game` GPU resource is freed in `dispose()`
+  (chunks, props, entities, combat/VFX, environment/water, mount, player model, renderer). The
+  shared prop material + wind clock are intentional app-lifetime singletons.
+- **Resolution matrix**: verified in-browser at 1080p, 1440p, and ultrawide (3440×1440) — the HUD
+  stays corner-anchored and draw calls hold ~85–120, well under the ~250 budget. Firefox/Safari
+  verification is a manual/CI step (the client is standard WebGL2 with no browser-specific APIs).
+
 ### Part 6 — UI/UX & Balance (2026-07-06)
 
 #### Added

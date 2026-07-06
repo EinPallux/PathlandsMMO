@@ -84,6 +84,9 @@ export class Game {
   private contextLost = false;
   /** Render-resolution multiplier on top of the device pixel ratio (Phase 5). */
   private resolutionScale = 1;
+  /** Effective (possibly auto-reduced) chunk view distance; ≤ the user's setting. */
+  private effectiveVD = 0;
+  private adaptTimer = 0;
   /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
   private readonly shadowFocus = new THREE.Vector3();
 
@@ -213,6 +216,7 @@ export class Game {
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
+    this.effectiveVD = viewDist;
     this.registerCommands();
     this.applyGraphics(); // shadows / VFX density / resolution scale from saved settings
     window.addEventListener('resize', this.onResize);
@@ -241,6 +245,7 @@ export class Game {
       teleport: (x, z) => this.teleportPlayer(x, z),
       setClass: (cls) => this.swapClass(cls),
       setViewDistance: (chunks) => {
+        this.effectiveVD = chunks; // user override resets the adaptive floor
         this.chunks.setRadius(chunks);
         this.env.setViewDistance(chunks);
         useStore.getState().setSnapshot({ viewDistance: chunks });
@@ -483,6 +488,7 @@ export class Game {
     this.shadowFocus.set(rs.x, rs.y, rs.z);
     this.env.update(dt, this.camera.camera.position, this.shadowFocus);
     this.chunks.update(rs.x, rs.z);
+    this.propRenderer.tick(dt); // wind sway clock
     this.propRenderer.update();
     this.entities.update(
       dt,
@@ -542,6 +548,27 @@ export class Game {
     if (!this.started && this.chunks.isReadyAt(rs.x, rs.z) && this.chunks.loadedCount >= 8) {
       this.started = true;
       useStore.getState().setReady(true);
+    }
+
+    // Adaptive quality (Phase 5 "hold budgets in worst spots"): once running, if the
+    // frame rate sags in a heavy spot, quietly drop the effective view distance a
+    // notch (down to a floor); when it recovers, climb back toward the user's chosen
+    // setting. Checked on a slow cadence with wide hysteresis so it never thrashes
+    // the chunk streamer. The user's setting is the ceiling and is never overwritten.
+    if (this.started) {
+      this.adaptTimer += dt;
+      if (this.adaptTimer >= 3) {
+        this.adaptTimer = 0;
+        const userMax = useStore.getState().viewDistance;
+        let next = this.effectiveVD;
+        if (this.fps < 35 && next > 4) next -= 1;
+        else if (this.fps > 55 && next < userMax) next += 1;
+        if (next !== this.effectiveVD) {
+          this.effectiveVD = next;
+          this.chunks.setRadius(next);
+          this.env.setViewDistance(next);
+        }
+      }
     }
 
     if (this.statsTimer >= 0.2) {

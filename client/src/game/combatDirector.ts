@@ -64,6 +64,7 @@ import {
 import { ModelObject } from '../engine/voxelModel.js';
 import { audio } from '../platform/audio.js';
 import { Vfx, SCHOOL_COLOR } from '../engine/vfx.js';
+import { HOLLOWS } from '@pathlands/shared';
 import {
   useStore,
   type CombatUi,
@@ -172,6 +173,7 @@ export class CombatDirector {
   private readonly ctx: { heightAt: (x: number, z: number) => number };
   private readonly tmp = new THREE.Vector3();
   private hudTimer = 0;
+  private blightTimer = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -916,10 +918,39 @@ export class CombatDirector {
     if (this.worldFloaters.length > 40) this.worldFloaters.shift();
   }
 
+  // The Verdigris Blight seeps up around the Hollows: a slow drizzle of green
+  // spore-motes drifting upward, denser the closer you are to a Hollow mouth.
+  // Density scales with the VFX-density setting (Vfx.burst gates on it).
+  private emitBlight(dt: number): void {
+    const BLIGHT_RADIUS = 55;
+    const p = this.player;
+    let nearest = Infinity;
+    for (const h of HOLLOWS) {
+      const d = Math.hypot(p.x - h.x, p.z - h.z);
+      if (d < nearest) nearest = d;
+    }
+    if (nearest > BLIGHT_RADIUS) return;
+    this.blightTimer += dt;
+    if (this.blightTimer < 0.09) return;
+    this.blightTimer = 0;
+    const intensity = 1 - nearest / BLIGHT_RADIUS; // 0 at the edge → 1 at the mouth
+    this.vfx.burst(p.x, p.y + 0.5, p.z, {
+      count: 2 + Math.round(intensity * 3),
+      color: [0.45, 0.82, 0.3], // sickly verdigris green
+      speed: 0.4,
+      up: 1.0,
+      life: 2.8,
+      size: 0.22,
+      gravity: 0.5, // positive → spores drift upward
+      spread: 7,
+    });
+  }
+
   // --- render + HUD ----------------------------------------------------------
 
   render(dt: number, alpha: number, camera: THREE.PerspectiveCamera, sw: number, sh: number): void {
     this.vfx.update(dt);
+    this.emitBlight(dt);
     this.syncRenderEnemies(dt, alpha);
     this.stepDying(dt);
     this.hudTimer += dt;
