@@ -190,6 +190,18 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 > grants rewards, and drives the giver dialogue, log (L), tracker, toasts, and `!`/`?`
 > nameplate indicators. Quest state persists in save v3. Bulk content, daily bounties,
 > and map markers follow in later Phase-4 parts.
+>
+> **Implementation (Phase 4 Part 14) — the ~110-quest budget.** The zone side-quest arcs
+> are filled out to **111 quests across 24 quest-givers** (`shared/data/quests/content.ts`),
+> covering every level band 1→30. The 6-chapter main story "The Waymaker's Path" (~39 quests)
+> is joined by ~72 zone side quests hung off hub givers and 10 new side-givers, mixing
+> **kill / collect / explore / courier** objectives with level-appropriate gold + gear. To
+> give collect quests variety, every remaining enemy carries a `QUEST_DROP_TAG` (19 tags in
+> all); the client emits them on kill unchanged. Side quests never gate the main story. The
+> content is guarded by tests (`quests.test.ts`): the budget (≥ 100), a per-band side-quest
+> spread (≥ 6 optional quests in each 6-level band), giver coverage (every giver offers a
+> quest), and drop-tag/enemy/waystone integrity. The ~10 profession-intro quests remain a
+> small optional follow-up; the split of quest-vs-kill XP is a Phase-5 tuning item (§15).
 
 ## 9. Professions
 

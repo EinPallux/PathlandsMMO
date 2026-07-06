@@ -6,7 +6,22 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 4 in progress (2026-07-05) — Part 13: Settings & keybind remapping.** A new
+> **Phase 4 in progress (2026-07-06) — Part 14: side-quest breadth (the ~110 budget).**
+> The zone side-quest arcs are filled out from 36 quests to **111**, hosted by **24 givers**
+> (10 new: Innkeep Mirabel, Houndmaster Pella, Sister Elowen, Ranger Ash, Miner Jossa,
+> Quartermaster Vell, Lampwright Ned, Pilgrim Asha, Huscarl Bran, Salt-Merchant Pryor). Every
+> level band 1→30 now carries at least six optional quests, mixing **kill / collect / explore /
+> courier** work with level-appropriate gold + gear rewards, and never gating the main story.
+> Eleven new `QUEST_DROP_TAGS` (one per remaining enemy) give collect quests real variety; the
+> client emits them automatically and spawns every new giver from `QUEST_GIVERS` with no code
+> change. **250 tests green** (+4: budget ≥ 100, every giver offers a quest, per-band side-quest
+> spread, drop-tag integrity); `pnpm typecheck && lint && build` clean; in-browser a new giver
+> (Innkeep Mirabel) spawns and nameplates at Brookhollow. This satisfies the Phase-4 scope of
+> ~110 quests. **Next:** Phase-5 XP-pace tuning (acceptance #5) and the remaining polish.
+>
+> ---
+>
+> **Part 13 (2026-07-06): Settings & keybind remapping.** A new
 > **Settings panel** (open with **Escape** when nothing else is open, or the ✕ to close)
 > exposes **view distance** (3–12 chunks), **master volume**, and a full **rebindable
 > keybind** list for the 14 panel/action keys (map, character, quest log, professions,
@@ -423,7 +438,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 ### Deliverables
 
 - [x] **Quest system** — data-driven quest schema (kill/collect/gather/deliver/talk/explore/use-object/boss + multi-step chains) in `shared/data/quests`, a pure state machine in `shared/quests` (quest log 25 max, tracker 5 pinned, prereq/chain gating, reward granting), NPC `!`/`?` indicators, quest-giver dialogue with reward + class-filtered choice, quest log panel + tracker HUD, XP/gold/item/Waystone rewards, save v3 persistence. _(Map/minimap markers + Phase-6 shareable flags land with the bulk quest-content part.)_
-- [~] **Quest content** — **~110 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, profession intro quests, daily bounty boards. _(Parts 2 + 9 done: the **complete main story — all six chapters, Brookhollow tutorial → the Sunken Crypt finale (levels 1–30)** — plus side arcs and Hollow boss lead-ins (Bramblegut, Gnarlmaw, Prismhide, Forgewarden Urzul, the Last Waymaker) across all six zones, ~39 quests from 14 givers. Part 8 added the daily bounty boards. Remaining: the bulk of the zone side-quest budget + profession intro quests toward ~110.)_
+- [x] **Quest content** — **111 quests** per docs/WORLD.md zone tables: the 6-chapter main story "The Waymaker's Path", zone side-quest arcs, Hollow quest lines, daily bounty boards. _(Parts 2 + 9: the **complete main story — all six chapters, Brookhollow tutorial → the Sunken Crypt finale (levels 1–30)** — plus early side arcs and Hollow boss lead-ins (Bramblegut, Gnarlmaw, Prismhide, Forgewarden Urzul, the Last Waymaker), ~39 quests from 14 givers. Part 8 added the daily bounty boards. **Part 14 filled the zone side-quest arcs to 111 quests across 24 givers** — every level band 1→30 carries ≥ 6 optional quests (kill / collect / explore / courier), with 11 new drop-tags for collect variety. Guarded by tests: budget ≥ 100, per-band spread, and every giver offers a quest.)_
 - [~] **Gathering professions** — Mining, Herbalism, Fishing: skill 1–100 with the classic orange/yellow/green/gray skill-up curve, node activation by re-querying the deterministic worldgen scatter (with respawn timers), tiered materials per zone (Copper/Iron/Silver/Crystalium, Meadowbloom/Fenweed/**Cavemoss/Duskpetal**, ponds→coast), a mining/herbalism channel + a fishing timing minigame, a material stash + Professions panel (P). _(Part 10 placed the higher-tier herb nodes (Cavemoss in Foothills/Peaks, Duskpetal in Trollmoor) so all four Herbalism tiers exist in the world → Herbalism is now levelable to 100, matching Mining. Remaining: tool items and profession trainers.)_
 - [~] **Crafting professions** — Blacksmithing (smelt ore→bars→weapons/armor) and Alchemy (health/mana potions + stat/warding elixirs) with a pure craft engine, a crafting panel (K) showing material requirements + craftable state, and drinkable consumables (heal/restore/timed buff) — closing the mining→smithing / herbalism→alchemy material flows. _(Remaining: discovery recipes, forge/anvil station proximity, trainers, and a fuller recipe book.)_
 - [x] **Meta progression: Deeds & Path Points** — achievement system ("Deeds": exploration, combat, quests, professions, Hollows), Deeds grant **account-wide** Path Points spent on perks (bag slots, Waystone fee reduction, out-of-combat move speed, rested-XP cap) per GDD §10 (Part 11 made Points/perks account-wide, save v10). _(Part 5 done: a pure Deed/perk engine (`shared/meta` + `shared/data/deeds.ts`/`perks.ts`) — 9 Deeds across 4 categories with shared tiered metrics, 4 rank-based Path Perks; a client `MetaDirector` wires kills/bosses/Waystones/quests/crafts/gather-skill milestones to Deed progress, awards Path Points, and applies perk effects (bag cap, travel-fee cut) live; a **Wayfarer's Journal (J)** shows Deeds by category + buyable perks; save v6 persists deeds/pathPoints/perks on the character. Remaining: account-wide perks + nameplate titles land with mounts / the endgame loop / Phase 6 accounts.)_

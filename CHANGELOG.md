@@ -4,7 +4,31 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 4 — Quests, Professions & the Long Game] — in progress
 
-### Part 13 — Settings & keybind remapping (2026-07-05)
+### Part 14 — side-quest breadth: the ~110-quest budget (2026-07-06)
+
+#### Added
+
+- **`shared/data/quests/content` — 75 new side quests (36 → 111 total).** The zone
+  side-quest arcs are filled out across all six zones and every level band 1→30, mixing
+  kill / collect / explore / courier objectives with level-appropriate gold + gear rewards.
+  None gate the main story.
+- **10 new quest-givers (14 → 24).** Innkeep Mirabel & Houndmaster Pella (Vale), Sister
+  Elowen & Ranger Ash (Weald), Miner Jossa & Quartermaster Vell (Foothills), Lampwright Ned
+  & Pilgrim Asha (Peaks), Huscarl Bran (Trollmoor), Salt-Merchant Pryor (Coast). The
+  client's `EntityManager` spawns them from `QUEST_GIVERS` automatically — no code change.
+- **11 new `QUEST_DROP_TAGS`** (one per remaining enemy: boarHide, wolfPelt, stagAntler,
+  heartwood, banditBrand, blackFletch, slimeCore, batWing, drakeScale, boneMeal, runeShard),
+  so collect quests have real variety. The client emits them on kill with no change.
+- **Tests** — +4 in `quests.test.ts`: the ~110 budget (≥ 100), every giver offers a quest,
+  a per-band side-quest spread (≥ 6 optional quests in each 6-level band), and drop-tag
+  integrity. **250 total.**
+
+#### Verified
+
+- `pnpm typecheck / lint / test (250) / build` clean. In-browser, a new giver (Innkeep
+  Mirabel) spawns and nameplates at Brookhollow, confirming `QUEST_GIVERS` → world wiring.
+
+### Part 13 — Settings & keybind remapping (2026-07-06)
 
 #### Added
 

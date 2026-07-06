@@ -249,3 +249,48 @@ describe('Quest content validity', () => {
     }
   });
 });
+
+describe('Quest breadth (Part 14 — the ~110 budget)', () => {
+  it('meets the ~110-quest content budget', () => {
+    expect(QUESTS.length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('every quest-giver actually offers at least one quest', () => {
+    const givers = new Set(QUESTS.map((q) => q.giver));
+    for (const g of QUEST_GIVERS) {
+      expect(givers.has(g.id), `${g.id} has no quests`).toBe(true);
+    }
+  });
+
+  it('side quests thicken every level band 1→30', () => {
+    // Non-main-story quests, bucketed by the level they gate on. Every 6-level band
+    // from 1 to 30 should carry real side content, so a follower always has optional
+    // work at their level, not just the main-story beat.
+    const side = QUESTS.filter((q) => q.chain !== 'waymakers-path');
+    const bands: [number, number][] = [
+      [1, 6],
+      [7, 12],
+      [13, 18],
+      [19, 24],
+      [25, 30],
+    ];
+    for (const [lo, hi] of bands) {
+      const n = side.filter((q) => q.minLevel >= lo && q.minLevel <= hi).length;
+      expect(n, `side quests in band ${lo}-${hi}`).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it('collect drop-tags all map to real enemies, and used tags resolve', () => {
+    // Regression guard for Part 14's added tags: each key is a real enemy and every
+    // collect objective still resolves to a tag the client can emit.
+    const tagValues = new Set(Object.values(QUEST_DROP_TAGS));
+    for (const enemyId of Object.keys(QUEST_DROP_TAGS)) {
+      expect(enemyById(enemyId), enemyId).toBeDefined();
+    }
+    for (const q of QUESTS) {
+      for (const o of q.objectives) {
+        if (o.kind === 'collect') expect(tagValues.has(o.target), `${q.id}:${o.target}`).toBe(true);
+      }
+    }
+  });
+});
