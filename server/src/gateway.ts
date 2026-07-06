@@ -281,9 +281,13 @@ export class GameServer {
     ch.y = player.phys.y;
     ch.z = player.phys.z;
     ch.yaw = player.phys.yaw;
-    // Server-authoritative progression (Stage 2c): XP + derived level.
+    // Server-authoritative kill XP (Stage 2c-1), persisted as a MONOTONIC high-water mark.
+    // The server only sees kill XP; the client is the aggregator that also holds quest /
+    // Waystone XP and cloud-saves the complete total (putCharacter). Writing the server's
+    // partial total unconditionally would clobber that complete total, so only advance the
+    // stored XP when the server genuinely leads it — never regress it.
     const prog = this.combat.progressionOf(player.id);
-    if (prog !== null) {
+    if (prog !== null && prog.totalXp > ch.xp) {
       ch.xp = prog.totalXp;
       ch.level = prog.level;
     }

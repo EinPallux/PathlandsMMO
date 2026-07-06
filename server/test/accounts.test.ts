@@ -8,6 +8,7 @@ import {
   SPAWN_X,
   SPAWN_Z,
   TICK_DURATION_MS,
+  totalXpToReachLevel,
   type CharacterSave,
 } from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
@@ -143,6 +144,60 @@ describe('accounts + persistence', () => {
     await until(() => c2.you !== null, 3000, 're-welcomed');
     expect(sim.players.get(c2.you as string)!.phys.x).toBeGreaterThan(baseX + 0.5);
     c2.close();
+  });
+
+  it('never regresses stored XP: the server persists kill XP only as a monotonic high-water mark', async () => {
+    // Regression guard (Stage 2c-1 review): the server only sees KILL XP, but the client
+    // aggregates the complete total (kills + quest + Waystone XP) and cloud-saves it. The
+    // cloud-save can land AFTER the ws hello has already seeded the server's combat entity
+    // from the older stored XP — so on disconnect the server must NOT write its partial total
+    // back over the client's richer one. It persists XP only when it genuinely leads.
+    const email = 'xpsaver@example.com';
+    const token = await register(email, 'longenough');
+    const acct = (await store.getByEmail(email))!;
+    const baseX = SPAWN_X + 6;
+    const baseZ = SPAWN_Z;
+    const groundY = createServerWorld().surfaceSpawnY(baseX, baseZ);
+
+    // Stored character at a modest level — what the hello reads to seed the combat entity.
+    const seededXp = totalXpToReachLevel(2);
+    const ch0 = createCharacter('c1', 'Rich', 'mage', { skin: 0, hair: 0 }, baseX, groundY, baseZ);
+    ch0.xp = seededXp;
+    ch0.level = 2;
+    await store.putCharacter(acct.id, ch0);
+
+    const c1 = new TestClient(wsUrl);
+    await c1.opened();
+    c1.hello('GuestName', 'mage', 1, token);
+    await until(() => c1.you !== null, 3000, 'welcomed'); // server seeds prog from seededXp
+
+    // The client's cloud-save of its COMPLETE total lands now (after the hello race) — a much
+    // richer XP total than the server's kill-only view.
+    const richXp = totalXpToReachLevel(10);
+    const chRich = await store.getCharacter(acct.id);
+    chRich!.xp = richXp;
+    chRich!.level = 10;
+    await store.putCharacter(acct.id, chRich!);
+
+    // Move so we can detect that the disconnect persist has landed (position always writes).
+    for (let i = 0; i < 20; i++) {
+      c1.move(1, 0);
+      await sleep(TICK_DURATION_MS);
+    }
+    c1.close();
+
+    let persisted: CharacterSave | null = null;
+    for (let i = 0; i < 100; i++) {
+      const ch = await store.getCharacter(acct.id);
+      if (ch !== null && ch.x > baseX + 0.5) {
+        persisted = ch;
+        break;
+      }
+      await sleep(20);
+    }
+    expect(persisted).not.toBeNull(); // the persist landed
+    expect(persisted!.xp).toBe(richXp); // …but XP was NOT regressed to the kill-only total
+    expect(persisted!.level).toBe(10);
   });
 
   it('an invalid token is rejected (no guest fallback)', async () => {

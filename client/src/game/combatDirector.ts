@@ -147,6 +147,14 @@ export class CombatDirector {
   private cls: CharacterClass;
   private level: number;
   private totalXp: number;
+  /**
+   * Last server-reported total XP (networked mode). We adopt the server's XP as *deltas* off
+   * this baseline, not by absolute comparison — the server only knows kill XP, while our
+   * `totalXp` also carries client-side quest / Waystone XP, so a max-gate would drop kills once
+   * our total ran ahead. `null` until the first combat-self frame of a session (re-baselined on
+   * any disconnect so a reconnect can't manufacture a bogus delta).
+   */
+  private lastServerXp: number | null = null;
   private gold: number;
   private inventory: ItemStackSave[];
   private equipment: Record<string, ItemDef>;
@@ -935,24 +943,47 @@ export class CombatDirector {
   /** Overwrite our own health/resource/alive-state + XP with the server's authoritative combat-self. */
   private reconcileFromServer(): void {
     const cs = this.netSink?.combatSelf();
-    if (cs === undefined || cs === null) return;
+    if (cs === undefined || cs === null) {
+      // No live combat-self (not yet connected, or dropped): re-baseline so the next session's
+      // first frame is treated as a fresh baseline, never a delta off a stale total.
+      this.lastServerXp = null;
+      return;
+    }
     const p = this.player;
     p.hp = cs.hp;
     p.maxHP = cs.maxHP;
     p.resource = cs.resource;
     p.maxResource = cs.maxResource;
     p.dead = cs.dead;
-    // Server-authoritative XP (Stage 2c): adopt it and level up through the existing path
-    // (VFX + Waymeet mail). Only ever climbs — a lower server value (a guest / identity
-    // mismatch) is ignored so it can't corrupt the local XP bar.
-    if (cs.totalXp > this.totalXp) {
-      this.totalXp = cs.totalXp;
-      this.relevelIfNeeded();
-    }
+    this.adoptServerXp(cs.totalXp);
     // A target the server dropped, or one that has despawned, clears the target frame.
     if (p.targetId !== null && this.state.entities.get(p.targetId) === undefined) {
       p.targetId = null;
     }
+  }
+
+  /**
+   * Adopt server-authoritative kill XP without dropping our client-side quest / Waystone XP.
+   *
+   * The server only awards + replicates *kill* XP; our `totalXp` is the full total (kills +
+   * quests + Waystone attunements). So we adopt the server's value as a **delta** off the last
+   * frame — the increment since the previous frame is exactly the kill XP the server just
+   * granted — and add that to our (larger) total. The first frame of a session only sets the
+   * baseline (silently taking the server's stored total if it happens to lead ours — kills a
+   * crash lost before our last autosave — but without replaying a level-up presentation for
+   * prior-session XP).
+   */
+  private adoptServerXp(serverXp: number): void {
+    if (this.lastServerXp === null) {
+      if (serverXp > this.totalXp) {
+        this.totalXp = serverXp;
+        this.level = levelProgressFromTotalXp(this.totalXp).level; // silent — no login fountain
+      }
+    } else if (serverXp > this.lastServerXp) {
+      this.totalXp += serverXp - this.lastServerXp;
+      this.relevelIfNeeded();
+    }
+    this.lastServerXp = serverXp;
   }
 
   /** Remove enemies whose home (spawn) point is beyond DESPAWN_RADIUS of the player. */

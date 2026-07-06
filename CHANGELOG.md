@@ -4,38 +4,61 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
-### Part 12 — Server-authoritative combat, Stage 2c-1: XP + level-ups (2026-07-06)
+### Part 12 — Server-authoritative combat, Stage 2c-1: kill XP + level-ups (2026-07-06)
 
-Progression moves server-side: the server awards XP on kills, derives level from total XP,
-persists both, and replicates them to the client. The server half is headless-proven; the
-client half (adopting the replicated XP + the level-up VFX) is verified on the VPS combat test.
+**Kill XP** moves server-side: the server awards XP when a player kills a monster, derives the
+level, replicates it, and persists it. Quest / Waystone XP stay client-side until those systems
+migrate, so the client remains the **XP aggregator** and the server feeds it only the kill-XP
+stream. The server half is headless-proven; the client half (XP bar + level-up VFX off server
+truth) is verified on the VPS combat test.
 
 #### Added
 
-- **`ServerCombat` progression** (`server/src/combat.ts`): a per-player `progress` map of
-  authoritative **total lifetime XP**. `addPlayer` gains a `totalXp` parameter and **derives
-  the spawn level from it** (`levelProgressFromTotalXp`) rather than trusting the caller's
-  claimed level. Each `step()` now runs `processEvents`, which drains the shared sim's combat
-  events and calls `awardXp` on every **`xp` event** (a player's killing blow). `awardXp` adds
-  the amount and, when the total crosses a level threshold, **rebuilds the combat entity at the
-  new level** via `makePlayerEntity` (fresh stats + full HP), preserving position / yaw /
-  target / auto-attack. `progressionOf(id)` exposes `{ totalXp, level }` for persistence.
+- **`ServerCombat` progression** (`server/src/combat.ts`): a per-player `progress` map of the
+  server's XP total. `addPlayer` gains a `totalXp` parameter and **derives the spawn level from
+  it** (`levelProgressFromTotalXp`) rather than trusting the caller's claimed level. Each
+  `step()` now runs `processEvents`, which drains the shared sim's combat events and calls
+  `awardXp` on every **`xp` event** (a player's killing blow). `awardXp` adds the amount and,
+  when the total crosses a level threshold, **rebuilds the combat entity at the new level** via
+  `makePlayerEntity` (fresh stats + full HP), preserving position / yaw / target / auto-attack.
+  `progressionOf(id)` exposes `{ totalXp, level }` for persistence.
 - **`ServerCombatSelf.totalXp`** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **7**):
   the combat-self frame now carries total XP; `combatSelf()` fills it and the codec validator
   requires it to be finite.
-- **Progression persistence** (`server/src/gateway.ts`): the hello passes the persisted
-  character's `xp` into `addPlayer`; `persistPosition` writes `progressionOf`'s `totalXp` +
-  derived `level` back into the stored character alongside position, so progress survives logout.
-- **Client XP adoption** (`client/src/game/combatDirector.ts`): `reconcileFromServer` adopts
-  the server's `totalXp` when it **climbs** (a lower value — a guest / identity mismatch — is
-  ignored so it can't corrupt the local XP bar) and levels up through the existing
-  `relevelIfNeeded` path (level-up VFX + Waymeet mail). Local XP/level self-award stays
-  suppressed in networked mode.
+- **Client XP adoption as a delta stream** (`client/src/game/combatDirector.ts`):
+  `reconcileFromServer` adopts the server's `totalXp` as an **increment off the previous frame**
+  (`adoptServerXp` + a `lastServerXp` baseline) and adds that kill XP to the client's own
+  complete total — which also holds client-side quest / Waystone XP. The first frame of a
+  session only sets the baseline (no level-up fountain for prior-session XP; it silently takes
+  the server's stored total if it happens to lead); subsequent increments level up through the
+  existing `relevelIfNeeded` VFX + Waymeet-mail path. The baseline resets on any combat-self gap
+  so a reconnect can't manufacture a bogus delta. Local XP/level self-award stays suppressed in
+  networked mode.
+
+#### Fixed (adversarial review of Stage 2c-1)
+
+- **Dropped kill XP after any quest turn-in**: the initial reconcile only adopted the server
+  total when it **strictly exceeded** the client's, but the server sees only kill XP while the
+  client's total also includes quest / Waystone XP — so one quest turn-in pushed the client
+  ahead permanently and every subsequent kill's XP was silently dropped from the bar. Fixed by
+  the delta-stream adoption above.
+- **Persisted progress regression** (`server/src/gateway.ts`): `persistPosition` wrote the
+  server's kill-only total into `ch.xp` / `ch.level` unconditionally, so the 30 s / disconnect
+  flush clobbered the richer complete total the client cloud-saves (the client's `putCharacter`
+  upload races the ws hello, so the server can seed from a stale-low total). The writeback is
+  now a **monotonic high-water mark** — it advances stored XP only when the server genuinely
+  leads it, never regressing it.
+- **Spurious level-up VFX on login**: a server total ahead of the client's IndexedDB total (a
+  crash between a server kill and the client's autosave) replayed the level-up fountain / sound
+  / Waymeet mail for prior-session XP on the first frame. The first-frame baseline now adopts
+  silently.
 
 #### Tests
 
 - **`server/test/combat.test.ts`** (+2): a kill **awards XP** that also appears on the
   combat-self channel; a player one XP short of level 2 **levels up on a kill**.
+- **`server/test/accounts.test.ts`** (+1): a disconnect **never regresses** stored XP below the
+  client's richer complete total (the monotonic-persistence guard).
 - **`shared/test/net.test.ts`**: the v7 codec round-trips `totalXp` and rejects a non-finite
   value; the version assertion updated to 7.
 

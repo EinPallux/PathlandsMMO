@@ -6,30 +6,38 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
-> **Phase 6 (2026-07-06) — Part 12: Server-authoritative combat, Stage 2c-1 (XP + level-ups).**
-> Progression now lives on the server: **XP is awarded, levels are derived, and both are
-> persisted server-side** — the first slice of Stage 2c. Server half is headless-proven; the
-> client half (adopting the replicated XP + firing the level-up VFX) lands for VPS test. Landed:
+> **Phase 6 (2026-07-06) — Part 12: Server-authoritative combat, Stage 2c-1 (kill XP + level-ups).**
+> **Kill XP** now lives on the server: killing a monster awards XP + levels the player up
+> server-side, replicated to the client and persisted. Quest / Waystone XP stay client-side
+> until those systems migrate — so the design carefully keeps the client the **XP aggregator**
+> and only feeds it the server's kill-XP stream. Server half is headless-proven; the client
+> half (the XP bar climbing + level-up VFX off server truth) lands for VPS test. Landed:
 >
-> - **`ServerCombat` owns progression.** A per-player `progress` map holds authoritative
->   **total lifetime XP**; `addPlayer` seeds it from the persisted character and **derives the
->   spawn level from that XP** (never trusting the hello's claimed level). Each `step()` drains
->   the shared sim's combat events and, on an **`xp` event** (a player landed a killing blow),
->   `awardXp` adds it and — when a threshold is crossed — **rebuilds the combat entity at the
->   new level** (fresh stats + full HP, preserving position / yaw / target / auto-attack).
->   Enemies key threat/target by string id, so the rebuild doesn't drop their aggro.
-> - **Replicated + persisted.** `ServerCombatSelf` now carries **`totalXp`**
->   (`NET_PROTOCOL_VERSION` → **7**); `persistPosition` writes the derived `xp` + `level` back
->   into the stored character alongside position, so progress survives logout.
-> - **Client adopts it.** `CombatDirector.reconcileFromServer` takes the server's `totalXp`
->   when it **climbs** (a lower value — a guest / identity mismatch — is ignored so it can't
->   corrupt the local bar) and levels up through the **existing `relevelIfNeeded` path** (VFX +
->   Waymeet level-up mail). Client-side XP/level self-award stays suppressed in networked mode.
-> - **Tests** (+2 sim, codec updated): a kill awards XP that appears on the combat-self channel;
->   a player one XP short of level 2 **levels up on a kill**; the v7 codec round-trips `totalXp`
->   and rejects a non-finite value.
+> - **`ServerCombat` awards kill XP.** A per-player `progress` map holds the server's XP total;
+>   `addPlayer` seeds it from the persisted character and **derives the spawn level from that
+>   XP** (never trusting the hello's claimed level). Each `step()` drains the shared sim's
+>   combat events and, on an **`xp` event** (a player landed a killing blow), `awardXp` adds it
+>   and — when a threshold is crossed — **rebuilds the combat entity at the new level** (fresh
+>   stats + full HP, preserving position / yaw / target / auto-attack). Enemies key
+>   threat/target by string id, so the rebuild doesn't drop their aggro.
+> - **Replicated as a stream, not an absolute.** `ServerCombatSelf` carries **`totalXp`**
+>   (`NET_PROTOCOL_VERSION` → **7**). The client adopts it as a **delta off the previous
+>   frame** (the increment = the kill XP just granted) and adds that to its own complete total
+>   — which also holds client-side quest / Waystone XP. (A naive "take it if it's higher" gate
+>   would drop every kill once the client's total ran ahead via a quest turn-in.) The first
+>   frame of a session only sets the baseline, so no level-up fountain replays for
+>   prior-session XP; level-ups otherwise run the existing `relevelIfNeeded` VFX + Waymeet mail.
+> - **Persisted as a monotonic high-water mark.** `persistPosition` advances the stored `xp` +
+>   `level` **only when the server's total leads** the stored one — so it never clobbers the
+>   richer complete total the client cloud-saves (kills the server didn't see would otherwise
+>   race the hello and regress progress). The client's cloud-save remains the aggregator of
+>   record until quests/Waystones move server-side.
+> - **Tests** (+3, codec updated): a kill awards XP that appears on the combat-self channel; a
+>   player one XP short of level 2 **levels up on a kill**; a disconnect **never regresses**
+>   stored XP below the client's richer total; the v7 codec round-trips `totalXp` and rejects a
+>   non-finite value.
 >
-> **364 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Server half is
+> **365 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Server half is
 > headless-proven; the browser half (XP bar climbing + level-up VFX off server truth) is what
 > the VPS test exercises._ _Next slices: **2c-2** item/gold loot + inventory replication +
 > persistence; **2c-3** a combat-events channel for authoritative damage floaters + death VFX;
