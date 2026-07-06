@@ -11,6 +11,7 @@ import {
   perkById,
   enemyById,
   EnemyRank,
+  worldEventForBoss,
   DEEDS,
   PERKS,
   type DeedState,
@@ -57,9 +58,22 @@ export class MetaDirector {
   // --- event feed ------------------------------------------------------------
 
   handleKill(enemyId: string): void {
+    const def = enemyById(enemyId);
     const notices = applyDeedProgress(this.deeds, 'kill');
-    if (enemyById(enemyId)?.rank === EnemyRank.Boss) {
+    if (def?.rank === EnemyRank.Boss) {
       notices.push(...applyDeedProgress(this.deeds, 'boss'));
+    }
+    // Named rare-elites feed the Rarebane Deed and announce the kill (GDD §11).
+    if (def?.named) {
+      notices.push(...applyDeedProgress(this.deeds, 'rare'));
+      this.toast(`Rare slain: ${def.name}!`);
+    }
+    // A world-event boss (the Grand Warden) restores its Waystone: a distinct Deed
+    // metric + the network's waking announcement (WORLD.md §4).
+    const event = worldEventForBoss(enemyId);
+    if (event) {
+      notices.push(...applyDeedProgress(this.deeds, 'worldEvent'));
+      this.toast(event.restoreText);
     }
     this.award(notices);
   }
@@ -78,6 +92,10 @@ export class MetaDirector {
 
   handleGatherSkill(skill: number): void {
     if (skill >= 25) this.award(applyDeedProgress(this.deeds, 'gatherSkill25'));
+  }
+
+  handleBounty(): void {
+    this.award(applyDeedProgress(this.deeds, 'bounty'));
   }
 
   // --- perks -----------------------------------------------------------------

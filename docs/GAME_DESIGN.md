@@ -136,8 +136,8 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 
 ## 5. Leveling & XP
 
-- Cap **30**. XP to complete level L: `XP(L) = 400 · L^1.55` (≈400 at 1, ≈74k at 29; **total ≈878k** across 1→30 — the summed curve, corrected from an earlier ≈530k estimate). XP sources (quests ~55%, kills ~35%, discovery ~10%) supply this over a target ~25–35 h; Phase 5 tunes the coefficient/exponent if the pace misses.
-- Sources: quests (~55%), kills (~35%), discovery/Deeds (~10%). Discovery XP on first entering named subzones and activating Waystones.
+- Cap **30**. XP to complete level L: `XP(L) = 250 · L^1.55` (≈250 at 1, ≈46k at 29; **total ≈549k** across 1→30). _Phase-5 tuned (was `400·L^1.55` ≈ 878k, which read grindy — see §15)._ XP sources (quests ~45%, kills ~50%, discovery ~5%) supply this over a target ~25–35 h.
+- Sources: **quests ~45%** (authored reward XP is scaled ×2 at the grant edge — `QUEST_XP_SCALE`), **kills ~50%** (`killXp = 12 + 6·L`, unbounded), **discovery/Deeds ~5%** (Waystone activation, first entering named subzones). The exact split is a soft target; the invariant is quest-led with kills always able to close the gap.
 - **Rested XP** (meta-friendly, solo-friendly): logging out in an inn or near a Waystone accrues a pool granting +100% kill XP, up to 1.5 levels. Path Points can raise the cap.
 - Level-up: full heal, fanfare VFX, stat gains toast, new-skill notification pointing to the trainer.
 
@@ -151,6 +151,20 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 - Bags: start 16 slots; +3 purchasable bag tiers (vendor/craft/Path Point) to 40.
 - **No durability/repair** (cut for simplicity — gold sinks live elsewhere). Items bind on equip only for Epic; everything else trades freely (matters in Phase 6).
 - Loot: per-enemy loot tables (`shared/data/loot/`), seeded rolls; world drops + zone-flavored drops; bosses use small curated tables with 2–3 guaranteed picks. Party loot (Phase 6): round-robin with need-roll on Rare+.
+
+> **Implementation (Phase 4 Part 15) — Hollow boss signature loot.** Each of the five
+> Hollow bosses drops one **bespoke Epic unique** — the endgame re-run chase (`BOSS_SIGNATURES`
+> in `shared/data/enemies.ts`, fed into the boss branch of `buildEnemyLootTable`): Bramblegut's
+> Wardknot, The Gloomheart, Prismscale Sigil, Forgewarden's Emberseal, and the finale's
+> Waymaker's Lantern. To stay **solo-first**, signatures are **class-neutral jewelry**
+> (Trinket/Amulet) whose stats are generated for the killer's class — so a signature is always
+> usable by whoever felled the boss — while the **name is fixed**, it **binds on equip**, it
+> carries a small **live** `bonusCritChance` rider (+1.5% → +3.5% up the boss ladder, consumed
+> by combat + shown in the tooltip), it sells for a 1.5× premium, and it drops **only** from its
+> boss at ~20% per kill. Mechanically this rides the existing generator: `GeneratedItemSpec`
+> gained an optional `signature` that `generateItem` applies, so no new item-registry or client
+> code was needed — the drop flows through the same `rollLoot` → `CombatDirector.lootFrom` → bag
+> path as any other drop.
 
 ## 7. Death & Travel
 
@@ -190,6 +204,18 @@ Enemies gain +60% HP and +15% damage per additional nearby player (8 m of engage
 > grants rewards, and drives the giver dialogue, log (L), tracker, toasts, and `!`/`?`
 > nameplate indicators. Quest state persists in save v3. Bulk content, daily bounties,
 > and map markers follow in later Phase-4 parts.
+>
+> **Implementation (Phase 4 Part 14) — the ~110-quest budget.** The zone side-quest arcs
+> are filled out to **111 quests across 24 quest-givers** (`shared/data/quests/content.ts`),
+> covering every level band 1→30. The 6-chapter main story "The Waymaker's Path" (~39 quests)
+> is joined by ~72 zone side quests hung off hub givers and 10 new side-givers, mixing
+> **kill / collect / explore / courier** objectives with level-appropriate gold + gear. To
+> give collect quests variety, every remaining enemy carries a `QUEST_DROP_TAG` (19 tags in
+> all); the client emits them on kill unchanged. Side quests never gate the main story. The
+> content is guarded by tests (`quests.test.ts`): the budget (≥ 100), a per-band side-quest
+> spread (≥ 6 optional quests in each 6-level band), giver coverage (every giver offers a
+> quest), and drop-tag/enemy/waystone integrity. The ~10 profession-intro quests remain a
+> small optional follow-up; the split of quest-vs-kill XP is a Phase-5 tuning item (§15).
 
 ## 9. Professions
 
@@ -221,8 +247,27 @@ Each character learns **all five** (no pick restrictions — indie population is
 > validates against the material stash + skill, consumes inputs, and returns the output +
 > a skill-up. The client crafts through a panel (K) — gear goes to the bag, bars/potions
 > to the stash — and consumables are drunk from the Professions panel (`applyConsumable`
-> on the combat director: heal / restore resource / a timed buff aura, save v5). Discovery
-> recipes, station proximity (forge/anvil/alembic), and trainers are follow-up polish.
+> on the combat director: heal / restore resource / a timed buff aura, save v5).
+
+> **Implementation (Phase 4 Part 18 — recipe book + discovery).** The recipe book is filled
+> out to level 100 (`shared/data/recipes.ts`): crystalium smelt; iron/silver/crystalium gear
+> across weapon + armor slots; and greater/master potions + elixirs. Top-tier recipes carry
+> `discovery: true` and are **hidden until learned** — `craft()` refuses an unknown discovery
+> recipe, and any craft in that profession at sufficient skill has a `DISCOVERY_CHANCE` to learn
+> one (classic profession discovery). The discovery roll is drawn **after** the output + skill-up,
+> so pre-existing craft results are byte-identical. Learned recipes persist (**save v12**,
+> `learnedRecipes[]`); the client announces a discovery and hides unlearned recipes in the craft
+> panel. Rolled into Phase-5 polish: station proximity (forge/anvil/alembic props) and trainers.
+
+> **Implementation (Phase 4 Part 16 — masteries).** Maxing a profession (skill 100) unlocks
+> a permanent **Mastery** — a passive bonus and part of the endgame loop (`MASTERIES` in
+> `shared/data/professions.ts`): Rich Veins (Mining: +1 ore/vein, 2× gem chance), Nature's
+> Bounty (Herbalism: +1 herb), Master Angler (Fishing: better big-catch + fish-oil odds),
+> Efficient Smelting (Blacksmithing) and Potent Brews (Alchemy: a 25% chance of a free extra
+> stackable craft output). Masteries derive from the **already-persisted skill** — `gatherNode`
+> / `rollFish` / `craft` read `skill >= SKILL_MAX` internally — so there is no new save field
+> and no engine-signature change, and because sub-cap paths draw no extra RNG the results below
+> 100 are byte-identical. The Professions panel (P) shows each mastery, locked until earned.
 
 ## 10. Meta Progression — Deeds & Path Points
 
@@ -262,6 +307,32 @@ Solo-viable loop, weekly cadence:
 5. **The Sunken Crypt** — hardest Hollow, main-story finale, best solo loot.
 6. _(Phase 6)_ **World boss** — weekly "Restored Waystone" event boss tuned for 5–10 players (scales down to 3), Epic table + guild Deeds.
 
+> **Implementation (Phase 4 Part 8) — Daily bounties.** Bounty #1 above is live:
+> `shared/data/bounties.ts` posts a **daily board** at the four hubs (Brookhollow, Waymeet,
+> Fernwick, Mossgate), each showing 3 tasks picked deterministically from that hub's pool by
+> `dailyBountyIds(seed, day, hub)` — the day index is derived from the local date once at
+> client bootstrap (the only wall-clock touch; the sim stays date-free, so the board is
+> byte-identical for a given seed+day+hub). Tasks are **slay** (an enemy family or id) or
+> **gather** (a material); rewards are **gold + XP + Deed progress** (the "Taskmaster" Deed).
+> The `BountyDirector` shows the nearest hub's board (**O**), tracks progress from the same
+> kill/gather events the quest system uses, and the log resets each new day (save v9).
+> Provisional vs. the full design: rewards are gold/XP (materials come with the mastery
+> pass), the board is key-toggled rather than gated to a physical notice-board prop, and the
+> other endgame pillars (Hollow-mastery re-runs, named rare hunts, the world-event stub) are
+> later parts.
+
+> **Implementation (Phase 4 Parts 12–17) — the rest of the endgame loop.** Pillars 2–4 and
+> the world boss (6) now ship as their Phase-4 forms: **Hollow-boss signature loot** (Part 15
+> — five bespoke Epic uniques on the Hollow bosses, `BOSS_SIGNATURES`), **named rare hunts**
+> (Part 12 — eight wandering Elite rares + the Rarebane Deed), **profession masteries** (Part 16
+> — a skill-100 passive per profession), and the **world-boss event** (Part 17). The world boss
+> is _Restore the Grand Waystone_: a Boss-rank **Grand Warden** (`bossGrandWarden`) at a fixed
+> site south of Waymeet, in a long-respawn `WORLD_SPAWNS` region, that a solo capped player can
+> re-run. Killing it feeds the `worldEvent` Deed metric (**Waystone-Restorer**), announces the
+> network's waking, and can drop the **Grand Waystone Shard** signature. `worldEvent.ts` holds
+> the event data (boss ↔ Deed ↔ site). The Phase-6 job is only to make the world boss _scale_
+> to 5–10 players — the encounter, rewards, and data model are already here.
+
 ## 12. Social & MMO Features (Phase 6)
 
 - **Chat:** say (30 m), zone, party, guild, whisper, system; slash commands; profanity filter + mute.
@@ -279,9 +350,49 @@ Title screen → (Phase 6: login/register) → character list → creation (clas
 
 HUD (frames, hotbar, XP, buffs, minimap, tracker, chat[P6]) · Character sheet · Inventory/bags · Skill book · Path (spec) picker · Quest log · World map · Wayfarer's Journal (Deeds/titles/perks/stats) · Professions & crafting · Vendor · Trainer · Bank · Mailbox · Settings (graphics/audio/keybinds/interface) · Title/character screens · (P6) Social panel, party/guild frames, trade, login. Style per ART_GUIDE §UI.
 
+> **Implementation (Phase 4 Part 7) — Bank & Mailbox.** The **Waymeet Bank** is a
+> single `BankPanel` (opened with **B**) with two tabs: a **Vault** (shared item storage,
+> `BANK_SIZE` = 50 slots; click to move stacks between bag and vault) and **Mail** (an
+> inbox of letters from world NPCs, each with an optional gold gift claimed once). Bank +
+> mail persist per-character in **save v8**; mail is seeded from `STARTER_MAIL`
+> (`shared/data/mail.ts`), and reaching **level 5** (the Waymeet band, WORLD.md) delivers
+> the Steward's welcome letter. Provisional for now: the panel is key-toggled from anywhere
+> rather than gated to the physical bank building / mailbox prop (like the crafting panel —
+> station-proximity gating is a later pass); mail gifts are gold-only (item attachments and
+> player-to-player mail arrive with Phase 6); the vault is per-character (account-shared
+> storage is a Phase-6 consideration).
+>
+> **Implementation (Phase 4 Part 13) — Settings & keybind remapping.** A `SettingsPanel`
+> (opened with **Escape** when no other transient dialog is open; ✕ to close) exposes three
+> groups: **Display** (view distance, 3–12 chunks), **Audio** (master volume — the persisted
+> setting; the audio bus itself lands in Phase 5), and **Keybinds** — a rebindable list of the
+> **14** panel/action keys (world map, character sheet, quest log, professions, crafting,
+> journal, bank & mail, bounty board, mount, free-fly, interact, cycle-target, auto-attack,
+> release-spirit). The bindable set and its defaults are pure data in
+> `shared/data/keybinds.ts`; the game reads the live map every frame, so a rebind takes effect
+> immediately. Rebinding: click a row, press a key — the keypress is captured in the DOM
+> **capture phase** and swallowed so it never reaches the game's input handler mid-rebind.
+> **Reserved** codes (WASD / Space / Shift for movement, the hotbar digits, dev `` ` ``, and
+> Escape) can never be bound and are refused with a flash; choosing a code another action
+> already holds **swaps** the two so no action is left unbound or duplicated; **Reset to
+> defaults** restores the map. View distance, master volume, and the keybind map persist to the
+> save's `settings` block (**save v11**; the migration defaults the keybind map and merges any
+> saved binds forward).
+>
+> **Implementation (Phase 5 Part 5) — graphics options + save data.** The panel gained a
+> **Graphics** group — **Shadows** (off / low / high), **VFX density** (off / low / full), and
+> **Resolution** (75 / 85 / 100 %) — plus a **Save data** group with **Download backup** and
+> **Restore from file**. All graphics options persist to the `settings` block (**save v13**;
+> the migration defaults them and validates the enums) and apply live: shadows drive the sun
+> shadow map, VFX density scales particle bursts, resolution scales the renderer's pixel ratio.
+> The Phase-4 note's two "remaining" items are now closed — the audio bus shipped in Part 2 and
+> graphics-quality options in Part 5.
+
 ## 15. Tuning Targets (Phase 5 checklist)
 
 - Time-to-kill, at-level solo: normal mob 8–15 s; elite 25–45 s; Hollow boss 90–180 s.
 - Deaths while questing at-level: occasional (~1 per play hour) — dangerous, not punishing.
 - 1→30 as quest-follower: 25–35 h. Gold at 20 without grinding: comfortably affords the mount minus ~20% (choice pressure).
 - Every class solos every Hollow at-level (Warrior/Ranger comfortably; Priest/Mage tighter but fair).
+- **XP-source split — ✅ addressed (Phase-5 Part 1).** The Phase-4 pass flagged a kill-dominated economy: the old `400·L^1.55` curve (~878k) against ~32k of quest XP (≈4%). Two levers were applied together: the **curve was lowered to `250·L^1.55` (~549k)**, restoring a 25–35 h feel, and **authored quest XP is scaled ×2** at the grant edge (`QUEST_XP_SCALE`, `shared/combat/xp.ts`). Combined with the Part-14 side-quest budget (111 quests), quest XP now sums to ~245k — **~45% of the climb**, with kills (unbounded) supplying the rest — a quest-led economy matching §5's intent (guarded by `acceptance-p4.test.ts`). _Real-playtest fine-tuning may still nudge `QUEST_XP_SCALE`/the curve, but the shape is now correct._
+- **Audit pass — ✅ addressed (Phase-5 Part 6).** A deterministic balance-audit suite (`shared/test/balance.test.ts`) now guards the remaining §15 items. **All-class TTK:** a baseline auto-attack sustain harness (grounded in the itemization gear formulas) confirms every class kills at-level normal + elite content and survives, with no class a wild outlier (~5–10 s mob / ~12–22 s elite baseline, before skills). **Itemization curve:** weapon dps, stat budget, and armor rise monotonically with item level, and higher rarity is strictly more budget. **Hollow difficulty:** boss stat-scaling is asserted (the ×4.5 rank-HP multiplier lands; a boss swing is not a one-shot vs an at-level tank), on top of the dynamic solo-clear proof in `hollows.test.ts`. **Gold economy:** the audit caught a real bug — the Grey Wolf mount cost **40 c against ~1,916 c of quest gold by level 20 (≈2%)**, trivially affordable with no choice pressure; **raised to 800 c (~40%)**, restoring the intended save-for-it tension, now guarded by the audit. _The audit measures the floor (baseline sustain), not skilled rotation play; live-playtest fine-tuning — and a respec sink once paths become respeccable — remain expected nudges._

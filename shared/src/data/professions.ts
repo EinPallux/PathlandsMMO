@@ -120,6 +120,62 @@ export function primaryMaterial(prof: Profession, tier: number): MaterialDef | u
   return MATERIALS.find((m) => m.profession === prof && m.tier === tier && !m.secondary);
 }
 
+// --- Profession masteries (GDD §9) --------------------------------------------
+// Hitting skill 100 in a profession makes you a Master: a permanent passive bonus,
+// no purchase and no new save data (it derives from the persisted skill). This is
+// the long-tail payoff for maxing a profession and part of the endgame loop.
+
+export interface MasteryDef {
+  profession: Profession;
+  /** Mastery title, shown on the Professions panel. */
+  name: string;
+  /** What the mastery does (kept in sync with the engine numbers below). */
+  description: string;
+}
+
+export const MASTERIES: Record<Profession, MasteryDef> = {
+  [Profession.Mining]: {
+    profession: Profession.Mining,
+    name: 'Rich Veins',
+    description: 'Master Miner: +1 ore from every vein, and double the chance of a gem shard.',
+  },
+  [Profession.Herbalism]: {
+    profession: Profession.Herbalism,
+    name: "Nature's Bounty",
+    description: 'Master Herbalist: +1 herb from every gather.',
+  },
+  [Profession.Fishing]: {
+    profession: Profession.Fishing,
+    name: 'Master Angler',
+    description: 'Master Angler: far better odds of a big catch, and more fish oil.',
+  },
+  [Profession.Blacksmithing]: {
+    profession: Profession.Blacksmithing,
+    name: 'Efficient Smelting',
+    description:
+      'Master Smith: a chance to yield an extra bar or item from a craft — no extra materials.',
+  },
+  [Profession.Alchemy]: {
+    profession: Profession.Alchemy,
+    name: 'Potent Brews',
+    description:
+      'Master Alchemist: a chance to brew an extra potion or elixir — no extra reagents.',
+  },
+};
+
+/** Mastery gained on maxing a profession. */
+export function masteryFor(prof: Profession): MasteryDef {
+  return MASTERIES[prof];
+}
+
+/** True once a profession skill has reached the cap (mastery is active). */
+export function isMastered(skill: number): boolean {
+  return skill >= SKILL_MAX;
+}
+
+/** The proc chance for a crafting mastery's bonus output (Smith / Alchemist). */
+export const CRAFT_MASTERY_BONUS_CHANCE = 0.25;
+
 /** Which gather node (worldgen PropId) maps to which profession + tier. */
 export interface NodeInfo {
   profession: Profession;
@@ -133,6 +189,8 @@ export const NODE_INFO: Record<string, NodeInfo> = {
   oreCrystal: { profession: Profession.Mining, tier: 3 },
   herbMeadow: { profession: Profession.Herbalism, tier: 0 },
   herbFen: { profession: Profession.Herbalism, tier: 1 },
+  herbCavemoss: { profession: Profession.Herbalism, tier: 2 },
+  herbDuskpetal: { profession: Profession.Herbalism, tier: 3 },
 };
 
 /** Gather info for a worldgen prop id, or undefined if it isn't a node. */

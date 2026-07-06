@@ -2,7 +2,476 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
-## [Phase 4 — Quests, Professions & the Long Game] — in progress
+## [Phase 5 — Polish: The Complete Solo Game] — in progress
+
+### Part 7 — VFX remainder & Performance (2026-07-06)
+
+#### Added
+
+- **Blight ambience** (`CombatDirector.emitBlight`): a slow drizzle of upward-drifting verdigris
+  spore-motes that thickens the closer the player is to a Hollow mouth (proximity to `HOLLOWS`).
+  Runs through the pooled VFX system and is gated by the VFX-density setting (`off` mutes it).
+- **Water micro-motion** (`environment.ts`): the water surface is now subdivided and rides a
+  world-locked, two-wave sine swell injected via `onBeforeCompile` (a shared `uTime` uniform,
+  advanced in `update`). No new draw calls.
+- **Foliage micro-motion** (`propRenderer.ts`): instanced props sway in a light breeze — a
+  height-weighted, per-instance-phased wind offset injected into the shared prop material via
+  `onBeforeCompile`, advanced by `PropRenderer.tick(dt)`. Bases stay put, tops sway; short props
+  (rocks) barely move.
+- **Adaptive quality** (`game.ts`): once the game is running, a sustained low frame rate quietly
+  drops the effective view distance one notch (down to a floor of 4) and climbs back toward the
+  user's setting when it recovers. Slow cadence (3 s) + wide hysteresis (< 35 / > 55 FPS) so it
+  never thrashes the chunk streamer; the user's persisted setting is the ceiling and is never
+  overwritten.
+
+#### Notes
+
+- **Memory-dispose audit**: confirmed every per-`Game` GPU resource is freed in `dispose()`
+  (chunks, props, entities, combat/VFX, environment/water, mount, player model, renderer). The
+  shared prop material + wind clock are intentional app-lifetime singletons.
+- **Resolution matrix**: verified in-browser at 1080p, 1440p, and ultrawide (3440×1440) — the HUD
+  stays corner-anchored and draw calls hold ~85–120, well under the ~250 budget. Firefox/Safari
+  verification is a manual/CI step (the client is standard WebGL2 with no browser-specific APIs).
+
+### Part 6 — UI/UX & Balance (2026-07-06)
+
+#### Added
+
+- **First-time-player tips** (`client/ui/FirstTimeTips.tsx`): a 6-step guided overlay (move →
+  fight → quests → gear → wider world) shown once per browser (localStorage) and skippable at any
+  step. Tips read the **live keybind map**, so they name the player's actual keys after any rebind.
+  Serves acceptance criterion #1 (a blind playtester reaches level 5 unaided).
+- **Onboarding art pass**: the title screen now sits over the code-authored village art (the Church
+  render) behind a legible vignette, with a larger gold wordmark; the character-select ("continue")
+  cards show **class-portrait thumbnails**.
+- **Balance audit suite** (`shared/test/balance.test.ts`, deterministic): baseline auto-attack
+  **TTK** for all four classes vs at-level normal/elite enemies (every class kills + survives, no
+  class a wild outlier); **Hollow-boss stat-scaling** (the ×4.5 rank HP multiplier lands; a boss
+  swing is not a one-shot vs an at-level tank); **itemization-curve** monotonicity (weapon dps,
+  stat budget, armor all rise with item level; higher rarity is strictly more budget); and a
+  **gold-economy** check (mount affordable from quest gold but a real, saved-for purchase).
+
+#### Changed
+
+- **Grey Wolf mount price 40 → 800 copper** (`shared/data/mounts.ts`). At 40 c it was ~2% of the
+  ~1,916 c a level-20 quester has earned — trivial pocket change; 800 c (~40%) restores the GDD §15
+  "choice pressure" (save for the mount vs. spend on gear/potions), now guarded by the economy audit.
+- **Fixed a latent CSS bug**: `url()` background layers with spaced filenames (e.g. `Medival
+Church.png`, `Medival Inn.png`) were unquoted, so the loading- and title-screen art silently
+  failed to load. Quoted the URLs — the art now renders.
+
+#### Notes
+
+- The balance harness deliberately audits the **floor** (baseline white-damage sustain), not
+  skilled rotation play — a "spam every skill" loop can't fairly drive cast/cooldown/kite/potion
+  discipline. Dynamic full-rotation combat and solo boss clears are covered by `combat.test.ts` and
+  `hollows.test.ts`.
+
+### Part 5 — Performance & Resilience (2026-07-06)
+
+#### Added
+
+- **Save resilience** (`shared/proto/save.ts` **v13**, `client/platform/saveStore.ts`):
+  `validateSave()` (structural type guard) and `tryMigrate()` (migrate-or-`null`, never throws)
+  back a **rotating 3-deep backup ring** and a **load fall-through** — on boot the loader tries
+  the primary record, then each backup newest-first, then a fresh save, so a single corrupt
+  IndexedDB record can no longer brick a character. A recovered load surfaces a notice on the
+  title screen.
+- **Save export / import**: download the whole save as a JSON backup and restore it from a file
+  (Settings → Save data). Import validates through the same defensive migrator and reloads.
+- **Error boundary** (`client/ui/ErrorBoundary.tsx`): a top-level React boundary that replaces a
+  crashed UI with a calm bug-report screen — copyable error + component stack, a one-click
+  save-backup download, and reload.
+- **Graphics settings** (persisted in save v13, applied live): **shadows** (off / low / high),
+  **VFX density** (off / low / full), **resolution scale** (75 / 85 / 100 %), alongside the
+  existing view-distance slider — a new GRAPHICS section in the Settings panel.
+- **Sun shadow map** (`client/engine/environment.ts`): a directional-light shadow with an
+  orthographic frustum that follows the player each frame (1024/2048 map for low/high). Characters,
+  enemies, mounts, and instanced props **cast**; terrain **receives** (receive-only ground avoids
+  voxel shadow acne). Gated by the shadows setting; the renderer keeps `shadowMap.enabled` on so
+  toggling quality never triggers a shader recompile.
+- **WebGL context-loss recovery** (`client/game/game.ts`): `webglcontextlost` is `preventDefault`ed
+  and pauses the loop behind a "Rendering paused" overlay; `webglcontextrestored` resizes and
+  resumes (three re-uploads geometry/materials lazily). A `contextLost` store flag drives the
+  overlay.
+
+#### Changed
+
+- `Vfx.burst` scales its particle count by a density multiplier (`Vfx.setDensity`), wired to the
+  VFX-density setting; `off` mutes cosmetic particles entirely.
+- The renderer's pixel ratio is multiplied by the resolution-scale setting (a cheap way to hold
+  frame budget in heavy scenes).
+- `migrate()` now clamps `viewDistance`/`resolutionScale` into range and validates the graphics
+  enums, defaulting unknown values.
+
+#### Tests
+
+- Extended `shared/test/save.test.ts` to **282 total**: v1→v13 migration, graphics-setting
+  defaults + range/enum validation, `validateSave` accept/reject cases, and `tryMigrate`
+  recover-or-`null` (corruption recovery).
+
+### Part 4 — VFX: a pooled particle system (2026-07-06)
+
+#### Added
+
+- **VFX particle system** (`client/engine/vfx.ts`, a `Vfx` class): one pooled `THREE.Points`
+  object — a **700-particle ring buffer**, a single draw call, a fixed memory budget — of
+  **additive soft dots** rendered by a `RawShaderMaterial`. Each particle carries its own
+  perspective-scaled point size and RGB; the fragment shader masks points to soft rounds via
+  `gl_PointCoord`; colour **fades to black over life** (additive → invisible), so no per-particle
+  alpha channel is needed. Particles are CPU-simulated each frame (gravity + drag + fade) and the
+  changed position/colour buffers are re-uploaded.
+- **Combat VFX** wired into `CombatDirector`: **hit sparks** at the struck body (gold on crit,
+  green on heal, warm on normal hits), **death puffs**, **school-tinted cast flashes** at the
+  caster (physical/nature/holy/fire/frost/arcane/shadow → distinct colours via `SCHOOL_COLOR`,
+  chosen from the cast skill's damage school), a golden **level-up fountain**, and a
+  Waystone-blue **attunement glow** on a new attune.
+- `SCHOOL_COLOR` palette mapping each GDD §4 damage school to a burst colour.
+
+#### Notes
+
+- The system is deliberately client-only render candy (no sim state, no RNG stream) — bursts are
+  cosmetic and driven by combat events the shared engine already emits.
+- Remaining VFX-pass work (deferred): blight ambience in corrupted areas + water/foliage
+  micro-motion.
+
+### Part 3 — UI/UX polish: rich tooltips (2026-07-06)
+
+#### Added
+
+- **Tooltip system** (`client/ui/Tooltip.tsx`): a cursor-following card portalled to the body
+  (escapes panel clipping), flipping to the left / clamping vertically near screen edges.
+- **Item tooltips** (`ItemTooltipCard`): rarity-coloured name, a **colourblind-safe rarity
+  label** (text, not just colour), slot, item level + required level, weapon dps, armor, primary
+  stats, bonus crit, trinket effect, bind-on-equip, and value — plus a **vs-equipped
+  comparison** block (`▲` green upgrade / `▼` red downgrade per stat, ilvl, dps, armor, crit)
+  when hovering a bag or shop item. Wired into the Character sheet, Vendor, and Bank panels.
+- **Skill tooltips** (`SkillTooltipCard`) on the hotbar: cost, cooldown, and the skill
+  description, looked up from shared skill data.
+
+#### Changed
+
+- Replaced the plain native `title=` hover text across the Character/Vendor/Bank cells and the
+  hotbar buttons with the rich tooltip.
+
+### Part 2 — audio: music + basic SFX (2026-07-06)
+
+#### Added
+
+- **WebAudio layer** (`client/platform/audio.ts`, an `audio` singleton): a master-gain bus, a
+  music bus, and an SFX bus. The master volume is wired live to the Settings slider
+  (`App.tsx` syncs `store.masterVolume` → `audio.setMasterVolume`).
+- **Music beds** — `loginscreen.mp3` loops on the title/character-select screens and `bgm.mp3`
+  loops in-game (App switches on character entry). Tracks are user-supplied mp3s in
+  `public/assets/audio/` (README added); a missing/undecodable file **plays silently** and never
+  throws into the game loop. Autoplay policy is handled by unlocking the AudioContext on the
+  first click/keypress and queuing the requested track; track changes cross-fade.
+- **Synthesized SFX** (no asset files) for skill **cast**, enemy **defeat**, **level-up** (a
+  three-note chime), and **quest complete** — short enveloped oscillator blips through the SFX
+  bus. Wired at `CombatDirector.castSlot` / enemy-kill / level-up and `QuestDirector` quest
+  completion.
+- `assetManifest.AUDIO` holds the two track paths; the SFX have none.
+
+#### Notes
+
+- Scope deliberately simplified per direction: a single in-game bed (not per-zone/situation
+  beds) and a compact procedural SFX set. No audio is downloaded or committed — the player
+  supplies their own mp3s; SFX are generated in code.
+
+### Part 1 — leveling-pace tuning (2026-07-06)
+
+#### Changed
+
+- **XP curve lowered** (`shared/combat/xp.ts`): `XP(L) = 250·L^1.55` (was `400·L^1.55`), so
+  1→30 totals ~549k (was ~878k) — restoring the ~25–35 h pace flagged by Phase-4 acceptance #5 /
+  GDD §15. Level derives from lifetime XP, so existing saves re-bucket cleanly.
+- **Quest XP scaled ×2** at the grant + display edge (`QUEST_XP_SCALE` / `scaledQuestXp`): the
+  authored reward data stays readable while the effective value is tuned in one shared place
+  (used by `CombatDirector.grantReward` and the quest-reward summary). Quest XP now sums to
+  ~245k — **~45% of the climb** (was ~4–14%), a quest-led economy matching GDD §5, with kills
+  (`12 + 6·L`, unbounded) supplying the rest.
+
+#### Tests
+
+- Updated the progression curve assertions (anchor 250, ~549k to cap, level boundaries) and
+  added an `acceptance-p4` quest-share assertion (quest XP is 35–55% of the 1→30 curve). **274
+  total.** Docs: GDD §5 (curve + split) and §15 (the XP-split item marked addressed).
+
+## [Phase 4 — Quests, Professions & the Long Game] — ✅ complete (2026-07-06)
+
+Phase 4 is done: a full single-player content game — 111 quests (24 givers), all five
+professions (gathering + crafting, skill 1→100, masteries, discovery), meta progression,
+mounts, and the complete endgame loop (bounties, rares, boss uniques, masteries, world
+boss). Acceptance #1–#4 pass; #5 (leveling pace), profession trainers/tools, and crafting
+station-proximity are folded into Phase 5.
+
+### Part 18 — crafting depth: fuller recipe book + recipe discovery (2026-07-06)
+
+#### Added
+
+- **A fuller recipe book (`shared/data/recipes`)** — ~13 new recipes to level 100: crystalium
+  smelt; iron/silver/crystalium gear across weapon + armor slots; and greater/master health &
+  mana potions plus greater might/warding elixirs and a capstone Elixir of Mastery (6 new
+  consumables).
+- **Recipe discovery (GDD §9)** — top-tier recipes carry `discovery: true` and are hidden until
+  learned. `craft()` refuses an unknown discovery recipe, and on any craft in that profession at
+  sufficient skill has a `DISCOVERY_CHANCE` to learn one (returned as `discovered`). The
+  discovery roll happens **after** output/skill-up are computed, so all pre-existing craft
+  results are byte-identical. `DISCOVERY_RECIPES` lists the learnable set.
+- **Save v12** — `learnedRecipes: string[]` on the character; migration defaults it empty while
+  preserving any saved ids. The client threads the learned set through the GatherDirector (craft
+  passes it, discoveries are announced + persisted), and the craft panel hides unlearned
+  discovery recipes.
+
+#### Tests
+
+- +7: discovery gate (unknown refused, learned crafts), the learn roll over many crafts, never
+  above the crafter's skill, no sub-cap regression, reachability of every discovery recipe; plus
+  a v11→v12 `learnedRecipes` migration + the round-trip fixture. **273 total.**
+
+### Part 17 — the Grand Waystone world event (2026-07-06)
+
+#### Added
+
+- **Repeatable solo world-boss event, "Restore the Grand Waystone"** — closes the Endgame-loop
+  deliverable. A Boss-rank **Grand Warden** (`bossGrandWarden`, `shared/data/enemies`): a warded,
+  add-summoning stone construct at level 30, modelled on the crypt sentinel, with a bespoke Epic
+  signature (**Grand Waystone Shard**, +4% crit).
+- **`shared/data/worldEvent.ts`** — `WorldEventDef` + `GRAND_WAYSTONE_EVENT` + `worldEventForBoss`,
+  tying the event's boss ↔ Deed ↔ site coords ↔ restoration text into one data source (exported
+  from the data barrel).
+- A **`grandWaystoneWarden` spawn region** in `WORLD_SPAWNS` (south of Waymeet on the crypt road,
+  `count: 1`, ~7.5-min respawn) — the encounter reuses the ordinary spawn → loot → kill pipeline.
+- A **Waystone-Restorer Deed** (`d_waystone_restorer`, new `worldEvent` metric, 4 Path Points).
+- **`metaDirector.handleKill`**: on the world-event boss, feeds the `worldEvent` metric and the
+  restoration announcement (mirrors the named-rare path).
+
+#### Tests
+
+- +6 in `worldEvent.test.ts`: the event's boss (Boss-rank), Deed (`worldEvent` metric), spawn
+  region (at the event coords, count 1), and signature all resolve and stay in sync;
+  `worldEventForBoss` resolves only the warden; exactly one Deed uses the metric. Updated the
+  content test's boss count (5 Hollow bosses + the world boss = 6). **266 total.**
+
+### Part 16 — profession masteries (2026-07-06)
+
+#### Added
+
+- **Skill-100 profession masteries** (`shared/data/professions` `MASTERIES` + `masteryFor` /
+  `isMastered`): a permanent passive per profession, unlocked at the skill cap — Rich Veins
+  (Mining: +1 ore per vein, 2× gem-shard chance), Nature's Bounty (Herbalism: +1 herb),
+  Master Angler (Fishing: better big-catch + fish-oil odds), Efficient Smelting (Blacksmithing)
+  and Potent Brews (Alchemy: 25% chance of a free extra stackable craft output).
+- The bonuses are applied in the existing engine: `gatherNode` / `rollFish` (`shared/professions/skill`)
+  and `craft` (`shared/professions/craft`) derive `skill >= SKILL_MAX` from their skill argument.
+  No new save data and no signature change; because sub-cap paths draw no additional RNG, gather/
+  fish/craft results below 100 are byte-identical to before.
+- The Professions panel (**P**) shows each profession's mastery — dim "Mastery at 100: …" while
+  locked, gold "★ Mastery: …" once earned — via a mastery/mastered rider on the professions slice.
+
+#### Tests
+
+- +6 in `masteries.test.ts`: every profession has a mastery and `isMastered` gates on the cap;
+  mining/herbalism grant +1 over the same sub-cap roll; fishing lifts the fish-oil rate; crafting
+  procs a bonus stackable output at the cap and never below it; equipment crafts never gain qty.
+  **260 total.**
+
+### Part 15 — Hollow boss signature loot (2026-07-06)
+
+#### Added
+
+- **Bespoke unique drops for all five Hollow bosses** (`shared/data/enemies` `BOSS_SIGNATURES`):
+  Bramblegut's Wardknot, The Gloomheart, Prismscale Sigil, Forgewarden's Emberseal, and The
+  Waymaker's Lantern. Each is a class-neutral Epic (Trinket/Amulet), binds on equip, carries a
+  live flat `bonusCritChance` rider (+1.5% → +3.5% up the boss ladder), and drops ONLY from its
+  boss at ~20% per kill — the endgame re-run chase.
+- **`GeneratedItemSpec.signature`** (`shared/data/items`): a bespoke-unique rider handled by
+  `generateItem` — the item keeps its class-flavored generated stats (always usable by the
+  killer) but takes a fixed name, a `sig:` id, bind-on-equip, the crit rider, and a 1.5× vendor
+  value. `buildEnemyLootTable`'s boss branch appends the signature drop.
+
+#### Notes
+
+- No client change: signature drops flow through the existing `rollLoot` → `CombatDirector.lootFrom`
+  → bag path (which already passes the killer's class), and `bonusCritChance` is already consumed
+  by combat and shown in the character tooltip.
+
+#### Tests
+
+- +4 in `bossLoot.test.ts`: every Hollow boss has a distinct signature (and only bosses do); the
+  drop is a named, Epic, bind-on-equip unique with the crit rider and is equippable by the killer;
+  it fires near its configured rate; and normal/elite tables never produce it. **254 total.**
+
+### Part 14 — side-quest breadth: the ~110-quest budget (2026-07-06)
+
+#### Added
+
+- **`shared/data/quests/content` — 75 new side quests (36 → 111 total).** The zone
+  side-quest arcs are filled out across all six zones and every level band 1→30, mixing
+  kill / collect / explore / courier objectives with level-appropriate gold + gear rewards.
+  None gate the main story.
+- **10 new quest-givers (14 → 24).** Innkeep Mirabel & Houndmaster Pella (Vale), Sister
+  Elowen & Ranger Ash (Weald), Miner Jossa & Quartermaster Vell (Foothills), Lampwright Ned
+  & Pilgrim Asha (Peaks), Huscarl Bran (Trollmoor), Salt-Merchant Pryor (Coast). The
+  client's `EntityManager` spawns them from `QUEST_GIVERS` automatically — no code change.
+- **11 new `QUEST_DROP_TAGS`** (one per remaining enemy: boarHide, wolfPelt, stagAntler,
+  heartwood, banditBrand, blackFletch, slimeCore, batWing, drakeScale, boneMeal, runeShard),
+  so collect quests have real variety. The client emits them on kill with no change.
+- **Tests** — +4 in `quests.test.ts`: the ~110 budget (≥ 100), every giver offers a quest,
+  a per-band side-quest spread (≥ 6 optional quests in each 6-level band), and drop-tag
+  integrity. **250 total.**
+
+#### Verified
+
+- `pnpm typecheck / lint / test (250) / build` clean. In-browser, a new giver (Innkeep
+  Mirabel) spawns and nameplates at Brookhollow, confirming `QUEST_GIVERS` → world wiring.
+
+### Part 13 — Settings & keybind remapping (2026-07-06)
+
+#### Added
+
+- **`shared/data/keybinds`** — the rebindable keybind schema: `KEYBIND_ACTIONS` (the 14
+  remappable panel/action keys), `DEFAULT_KEYBINDS`, human `KEYBIND_LABEL`s, `defaultKeybinds()`,
+  a `RESERVED_CODES` list (movement / hotbar / menu keys that may never be bound), and a
+  `keyLabel()` display helper. Pure data — the client reads and edits the persisted map.
+- **`client/ui/SettingsPanel`** — a new panel (open with **Escape** when nothing else is open,
+  ✕ to close): view-distance slider (3–12 chunks), master-volume slider, and a full keybind
+  list. Click a row and press a key to rebind; the keypress is caught in the **capture phase**
+  and swallowed so it never reaches the game's input handler. Reserved keys are refused with a
+  flash; picking a key another action holds **swaps** the two; a **Reset to defaults** button
+  restores the map. Sliders and binds persist to the save's `settings` block.
+- **Save v11** — `settings.keybinds` added to the schema; `createNewSave` seeds the defaults;
+  `migrate()` defaults the keybind map for pre-v11 saves, merging any saved binds forward.
+
+#### Changed
+
+- **`client/game/game.ts`** — panel/action toggles now read the **live keybind map** each
+  frame (`store.keybinds`) instead of hardcoded key codes. **Escape** closes any open transient
+  dialog (dialogue / travel / vendor / quest dialog) or, when none is open, toggles the Settings
+  panel.
+- **Onboarding → App → store** — the saved `settings` (view distance, volume, keybinds) are
+  threaded through character entry and seeded into the store before the game boots.
+
+#### Tests
+
+- +1 (save v10→v11 keybind-default migration + `settings.keybinds` round-trip); **246 total**.
+
+### Part 12 — named rare-elite hunts (2026-07-05)
+
+- **`shared/data/enemies`** — a `named` flag on `EnemyDef` and **8 named rare-elites** (Old
+  Thornhide, Grislefang, Duskwing, Boulderjaw, Gnash-Cowl, Shardback Alpha, Gruulmarg the
+  War-Chief, Wreckmaw): Elite rank, reusing a family model, spanning the zones from the Vale
+  to the Coast. Elite rank already grants tougher stats + better loot.
+- **`shared/data/spawns`** — one single-spawn, ~15-minute-respawn region per rare at a wander
+  point in its zone.
+- **`shared/data/deeds`** — a **Rarebane** Deed (`rare` metric, slay 5) in the Combat category.
+- **`client/game/metaDirector`** — `handleKill` feeds the `rare` metric and announces the kill
+  ("Rare slain: …!") when the fallen enemy is `named`.
+- **Tests** — +1 (named rares are Elite, buildable, world-spawned, and tracked by a Deed);
+  245 total.
+
+### Part 11 — closing the acceptance gaps (2026-07-05)
+
+- **Account-wide Path Points + perks (save v10).** Moved `pathPoints`/`perks` off the
+  character and onto the account (`AccountSaveV3`), so perks bought on one character apply to
+  all local characters (GDD §10, criterion #4). `migrate()` folds any pre-v10 per-character
+  meta into the account — the highest Path-Point pool and the max-rank union of perks — so no
+  progress is lost. Threaded the account through Onboarding → App → Game → MetaDirector;
+  character + account persist together in one read-modify-write (`upsertCharacterAndAccount`).
+  Deeds stay per-character. Added save v9→v10 fold + round-trip tests.
+- **Quest markers on the world map + minimap (criterion #3).** The `QuestDirector` publishes a
+  marker slice: giver positions (settlement centre + offset) tagged `!` (new) / `?` (turn-in) /
+  in-progress, and `○` rings at active explore-objective areas. `DebugMap` (world atlas, M) and
+  `Minimap` draw them, with a quest entry in the map legend.
+- **Tests** — +1 (save v9→v10 account fold); 244 total.
+
+### Part 10 — acceptance pass: review + fixes (2026-07-05)
+
+#### Fixed
+
+- **Critical — main story was blocked at chapter 1.** Quest `use` objectives and
+  `waystoneUnlock` rewards used **bare** Waystone ids (`brookhollow`, `elderGlade`, …) while
+  the client emits and stores the canonical `ws-<id>` on attune. Attuning the Brookhollow
+  Waystone therefore never satisfied _Light the Way_, blocking the whole `waymakers-path`
+  chain; quest-granted stones were also never usable for travel/respawn. All eight quest
+  Waystone ids are now `ws-`-namespaced, with a regression test asserting every quest
+  Waystone id resolves to a real `WAYSTONES` entry.
+- **Herbalism could not reach 100.** The worldgen scatter only placed tier-0/1 herbs
+  (Meadowbloom/Fenweed). Added the tier-2/3 herb nodes — **Cavemoss** (Foothills/Peaks) and
+  **Duskpetal** (Trollmoor) — with prop models + `NODE_INFO` entries, so all four Herbalism
+  tiers exist in the world (criterion #2).
+- **Mount buy-hint went stale at level 20.** The `MountController` republish key ignored the
+  hint's blocking-reason, so crossing level 20 while still short on gold kept showing
+  "Requires level 20" instead of "Costs 40 gold". The key now includes the hint.
+- **Level-5 Waymeet letter was unreachable for high-level saves.** It only fired on the
+  in-session 4→5 crossing; the `CombatDirector` now back-fills it at construction for any
+  character already past level 5 (deduped by id).
+
+#### Added
+
+- **`shared/test/acceptance-p4.test.ts`** — encodes the pure-`shared` acceptance checks:
+  quests blanket the whole 1→30 band with no dead zone (no grinding wall), rewards scale with
+  level, the main story is a complete chain to a level-30 boss finale, and the meta / mount /
+  crafting systems satisfy their criteria. 243 tests total.
+- **GDD §15** — recorded the quest-vs-kill **XP-source split** discrepancy (the curve makes
+  kills dominant vs §5's ~55% quest target) as a Phase-5 tuning item.
+
+### Part 9 — the complete main story (chapters 4–6) (2026-07-05)
+
+- **`shared/data/quests/content`** — extended "The Waymaker's Path" from chapter 3 to the
+  finale: **chapter 4** (Glimmerpeaks — _Crystal Marrow_ → _Songs in the Crystal_),
+  **chapter 5** (Trollmoor — _The Trolls Remember_ → _The Buried Forge_), and **chapter 6**
+  (Sunlit Coast → _The Drowned Road_ → _The Last Waymaker_ finale, levels 28–30). Added
+  higher-zone side arcs (shardback cull, Frostgate vigil, bog drakes, the standing stones,
+  wreck scavengers, crypt sentinels) and Hollow boss lead-ins (Mother Gnarlmaw, Prismhide,
+  Forgewarden Urzul, and the Last Waymaker) — ~15 new quests, bringing the world to ~39
+  quests and giving a gap-free 1→30 main-story path.
+- **Quest-givers** — 6 new named givers at Glimmercamp (Prospector Vayle, Shrinekeeper
+  Isold), Cairnwick (Castellan Brenna, Loremaster Keld), and Waymeet (Harbormaster Cole,
+  Archivist Selwyn-Mar), taking the roster to 14.
+- **Drop tags** — new collect tags for the higher enemies (crystal scales ← Crystalback
+  Lizard, troll tusks ← Ironhide Troll, brine-pearls ← Drowned Dead), emitted by the
+  existing data-driven kill→collect path.
+- **Tests** — +1 (chapters 1–6 present, level-30 boss finale, non-decreasing minLevel along
+  the chain); the existing chain-integrity / reachability / obtainability checks now cover
+  the full story. 236 total.
+
+### Part 8 — endgame loop v1: daily bounties (2026-07-05)
+
+- **`shared/data/bounties`** — a data-driven bounty pool (16 across four hub towns:
+  Brookhollow / Waymeet / Fernwick / Mossgate), each a kill (an enemy family or id) or
+  gather (a material) task with gold + XP. `dailyBountyIds(seed, day, hub)` posts a
+  deterministic daily slice, and `bountyById` / `hubPool` helpers. A **Taskmaster** Deed
+  ("complete 10 bounties", `bounty` metric) added to `shared/data/deeds`.
+- **Save v9** — characters gained a bounty log (`day` + accepted `active` + today's
+  `completed`); `migrate()` walks v8 forward with an empty log, and the client resets it
+  when the stored day is stale.
+- **`client/game/bountyDirector`** — posts the board for the hub nearest the player,
+  tracks kill events (`onKill`, matching by enemy family or id) and gather events
+  (`onGather`, wired from a new `GatherDirector.onMaterialGained` hook), and on turn-in pays
+  the reward through `CombatDirector.grantReward` (gold + XP) and advances the Taskmaster
+  Deed via `MetaDirector.handleBounty`. The day index is taken once at bootstrap.
+- **`client/ui`** — a **BountyBoard** panel (`O`) listing the hub's postings with slay/gather
+  targets, live progress, rewards, and an Accept / Turn in / Done button per bounty.
+- **Tests** — +7 (bounty content validity + daily-rotation determinism, save v8→v9
+  migration); 235 total.
+
+### Part 7 — supporting systems: Bank & Mailbox (2026-07-05)
+
+- **`shared/data/mail`** — the mailbox stub: a `MailLetter` schema, the `STARTER_MAIL`
+  inbox (a Brookhollow welcome + a Waymeet-Steward intro), the level-5 `WAYMEET_WELCOME`
+  stipend letter, and `starterInbox()` / `mailById` helpers. `BANK_SIZE` (50) added to
+  `shared/data/items`.
+- **Save v8** — characters gained a `bank` (vault item stacks) and a `mail` inbox;
+  `migrate()` walks v7 forward, seeding the starter inbox for pre-mail saves.
+- **`client/game/combatDirector`** — bank `depositItem` / `withdrawItem` (moving stacks
+  between bag and vault with capacity checks) and mail `claimMail` (grants the gold gift
+  once) / `deliverMail` (append a letter, deduped). Reaching level 5 delivers the Waymeet
+  welcome letter. Publishes bank + mail store slices.
+- **`client/ui`** — a **BankPanel** (`B`) with **Vault** and **Mail** tabs: the vault shows
+  the stored stacks + the bag side-by-side (click to move), and the mail tab lists letters
+  with sender/subject/body and a claim button; the tab shows an unread-gift badge.
+- **Tests** — +5 (mail content/inbox validity + a save v7→v8 migration check); 228 total.
 
 ### Part 6 — mounts (2026-07-05)
 

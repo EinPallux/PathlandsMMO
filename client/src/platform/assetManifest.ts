@@ -48,3 +48,12 @@ export const MOUNT_ART = {
 
 /** A pleasant splash image for loading screens. */
 export const LOADING_ART = BUILDING_ART.inn;
+
+/**
+ * Music tracks (user-supplied mp3s in public/assets/audio; optional — missing files
+ * play silently). SFX are synthesized in code, so there are no SFX asset paths.
+ */
+export const AUDIO = {
+  login: `${base}/audio/loginscreen.mp3`,
+  bgm: `${base}/audio/bgm.mp3`,
+} as const;

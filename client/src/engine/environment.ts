@@ -2,7 +2,7 @@
 // Day/night is a client-visual cycle (allowed to use render dt — not simulation time).
 
 import * as THREE from 'three';
-import { SEA_LEVEL } from '@pathlands/shared';
+import { SEA_LEVEL, type ShadowQuality } from '@pathlands/shared';
 
 const SKY_VERT = /* glsl */ `
   varying vec3 vDir;
@@ -73,6 +73,15 @@ export class Environment {
   private rain: THREE.Points | null = null;
   private rainMat: THREE.PointsMaterial | null = null;
 
+  // Sun-shadow state (Phase 5). The directional light casts an orthographic shadow
+  // frustum that follows the player each frame; quality picks the map size + radius.
+  private shadowQuality: ShadowQuality = 'off';
+  private shadowRadius = 48;
+  /** Unit vector pointing toward the sun, captured each frame from applyTime(). */
+  private readonly sunWorldDir = new THREE.Vector3(0, 1, 0);
+  /** Shared clock uniform for the water-ripple shader. */
+  private readonly waterTime = { value: 0 };
+
   constructor(scene: THREE.Scene, viewDistanceChunks: number) {
     this.scene = scene;
 
@@ -94,6 +103,13 @@ export class Environment {
     scene.add(this.skyMesh);
 
     this.sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    // Shadow tuning: bias pair kills acne/peter-panning on the voxel actors; the
+    // frustum is sized in setShadowQuality and re-centred on the player each frame.
+    this.sun.shadow.bias = -0.0006;
+    this.sun.shadow.normalBias = 0.6;
+    this.sun.shadow.camera.near = 8;
+    this.sun.shadow.camera.far = 480;
+    this.sun.castShadow = false; // gated on until a quality is chosen
     scene.add(this.sun);
     scene.add(this.sun.target);
 
@@ -101,15 +117,27 @@ export class Environment {
     scene.add(this.hemi);
 
     const waterSize = viewDistanceChunks * 32 * 2.2;
-    this.water = new THREE.Mesh(
-      new THREE.PlaneGeometry(waterSize, waterSize),
-      new THREE.MeshLambertMaterial({
-        color: 0x2f6fb0,
-        transparent: true,
-        opacity: 0.72,
-        depthWrite: false,
-      }),
-    );
+    const waterMat = new THREE.MeshLambertMaterial({
+      color: 0x2f6fb0,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+    });
+    // Water micro-motion (Phase 5 VFX): a gentle world-locked swell displaces the
+    // surface in Y from two crossing sine waves. Subdivided so the waves have
+    // vertices to ride; uTime is advanced in update().
+    waterMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = this.waterTime;
+      shader.vertexShader =
+        'uniform float uTime;\n' +
+        shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
+          transformed.z += sin(wp.x * 0.13 + uTime * 1.1) * 0.13 + sin(wp.z * 0.11 + uTime * 0.8) * 0.11;`,
+        );
+    };
+    this.water = new THREE.Mesh(new THREE.PlaneGeometry(waterSize, waterSize, 48, 48), waterMat);
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.y = SEA_LEVEL + 0.35;
     this.water.frustumCulled = false;
@@ -123,9 +151,18 @@ export class Environment {
     this.applyTime();
   }
 
-  update(dt: number, cameraPos: THREE.Vector3): void {
+  update(dt: number, cameraPos: THREE.Vector3, focus?: THREE.Vector3): void {
     this.time = (this.time + this.speed * dt) % 1;
+    this.waterTime.value += dt;
     this.applyTime();
+    // Re-centre the shadow frustum on the player (falling back to the camera) so
+    // the fixed-size map stays tight around what's on screen.
+    if (this.shadowQuality !== 'off') {
+      const f = focus ?? cameraPos;
+      this.sun.position.copy(f).addScaledVector(this.sunWorldDir, 200);
+      this.sun.target.position.copy(f);
+      this.sun.target.updateMatrixWorld();
+    }
     // Sky and water follow the camera so they always fill the view.
     this.skyMesh.position.copy(cameraPos);
     this.water.position.x = cameraPos.x;
@@ -137,6 +174,31 @@ export class Environment {
     const far = chunks * 32;
     this.fog.near = far * 0.55;
     this.baseFogFar = far * 0.98;
+  }
+
+  /**
+   * Set sun-shadow quality (Phase 5 graphics setting). `off` disables casting;
+   * `low`/`high` pick a 1024/2048 shadow map and a tighter/wider follow frustum.
+   * Changing the map size disposes the old target so three re-allocates at the new
+   * resolution on the next shadow pass.
+   */
+  setShadowQuality(q: ShadowQuality): void {
+    this.shadowQuality = q;
+    this.sun.castShadow = q !== 'off';
+    if (q === 'off') return;
+    const mapSize = q === 'high' ? 2048 : 1024;
+    this.shadowRadius = q === 'high' ? 64 : 44;
+    const cam = this.sun.shadow.camera;
+    cam.left = -this.shadowRadius;
+    cam.right = this.shadowRadius;
+    cam.top = this.shadowRadius;
+    cam.bottom = -this.shadowRadius;
+    cam.updateProjectionMatrix();
+    if (this.sun.shadow.mapSize.width !== mapSize) {
+      this.sun.shadow.mapSize.set(mapSize, mapSize);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null; // force a fresh allocation at the new size
+    }
   }
 
   setWeather(w: WeatherKind): void {
@@ -224,6 +286,10 @@ export class Environment {
       this.sun.intensity = 0.15 * cloudDim;
       this.sun.position.set(-dir.x * 300, Math.max(30, -dir.y * 300), -dir.z * 300);
     }
+    // Capture the toward-light unit vector (from the absolute position while the
+    // target sits at the origin) so the shadow-follow in update() can re-place the
+    // light around the player without changing its direction.
+    this.sunWorldDir.copy(this.sun.position).normalize();
 
     // Desaturate the sky-ambient toward white so it lights surfaces neutrally
     // (a strongly-blue ambient tints red roof tiles purple).

@@ -13,7 +13,10 @@ import {
   CHARACTER_CLASSES,
   CharacterClass,
   type CharacterSave,
+  type AccountSave,
   type VoxelSampler,
+  type ShadowQuality,
+  type VfxDensity,
 } from '@pathlands/shared';
 import { ChunkManager } from '../engine/chunkManager.js';
 import { PropRenderer } from '../engine/propRenderer.js';
@@ -29,6 +32,7 @@ import { QuestDirector } from './questDirector.js';
 import { GatherDirector } from './gatherDirector.js';
 import { MetaDirector } from './metaDirector.js';
 import { MountController } from './mountController.js';
+import { BountyDirector } from './bountyDirector.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
@@ -39,6 +43,9 @@ const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
 const UNDERGROUND_MARGIN = 3;
+
+// VFX-density graphics setting → burst-count multiplier (Phase 5).
+const VFX_DENSITY_MULT: Record<VfxDensity, number> = { off: 0, low: 0.5, full: 1 };
 
 export class Game {
   private readonly canvas: HTMLCanvasElement;
@@ -61,7 +68,9 @@ export class Game {
   private readonly gather: GatherDirector;
   private readonly meta: MetaDirector;
   private readonly mount: MountController;
+  private readonly bounties: BountyDirector;
   private readonly character: CharacterSave | null;
+  private readonly account: AccountSave;
   private lastGx = 0;
   private lastGz = 0;
 
@@ -72,8 +81,21 @@ export class Game {
   private statsTimer = 0;
   private running = true;
   private started = false;
+  private contextLost = false;
+  /** Render-resolution multiplier on top of the device pixel ratio (Phase 5). */
+  private resolutionScale = 1;
+  /** Effective (possibly auto-reduced) chunk view distance; ≤ the user's setting. */
+  private effectiveVD = 0;
+  private adaptTimer = 0;
+  /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
+  private readonly shadowFocus = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement, character: CharacterSave | null = null) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    character: CharacterSave | null = null,
+    account: AccountSave = { pathPoints: 0, perks: {} },
+  ) {
+    this.account = { pathPoints: account.pathPoints, perks: { ...account.perks } };
     this.canvas = canvas;
     this.character = character;
     this.renderer = new THREE.WebGLRenderer({
@@ -84,6 +106,11 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Shadow support stays enabled so materials compile with it once; the sun's
+    // castShadow flag (set by the graphics setting) is what turns shadows on/off,
+    // avoiding a runtime shader recompile when the player changes the setting.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.sampler = {
       isSolid: (x, y, z) => this.world.isSolidAt(x, y, z),
@@ -132,6 +159,8 @@ export class Game {
             inventory: character.inventory,
             equipment: character.equipment,
             discoveredWaystones: character.discoveredWaystones,
+            bank: character.bank,
+            mail: character.mail,
           }
         : undefined,
     );
@@ -145,12 +174,15 @@ export class Game {
       character?.professions,
       character?.materials,
       character?.consumables,
+      character?.learnedRecipes,
     );
+    // Deeds are per-character; the Path Points they award and the perks bought are
+    // account-wide (GDD §10), so they come from the shared account block.
     this.meta = new MetaDirector(
       this.combat,
       character?.deeds,
-      character?.pathPoints,
-      character?.perks,
+      this.account.pathPoints,
+      this.account.perks,
     );
     this.mount = new MountController(
       this.scene,
@@ -158,23 +190,39 @@ export class Game {
       character?.mounts,
       character?.activeMount,
     );
+    // Day index for the daily bounty rotation — the one allowed wall-clock touch,
+    // taken here at the client bootstrap edge (ARCH §3; sim stays date-free).
+    const dayIndex = Math.floor(Date.now() / 86_400_000);
+    this.bounties = new BountyDirector(
+      this.combat,
+      this.meta,
+      WORLD_SEED,
+      dayIndex,
+      character?.bounties,
+    );
 
-    // Fan world events out to the quest + meta systems (Deeds track the same events).
+    // Fan world events out to the quest + meta + bounty systems (they share events).
     this.combat.onEnemyKilled = (id) => {
       this.quests.onKill(id);
       this.meta.handleKill(id);
+      this.bounties.onKill(id);
     };
     this.combat.onWaystoneUsed = (id) => this.quests.handleWaystoneUse(id);
     this.combat.onWaystoneAttuned = () => this.meta.handleWaystone();
     this.quests.onQuestTurnedIn = () => this.meta.handleQuest();
     this.gather.onCraft = () => this.meta.handleCraft();
     this.gather.onGatherSkill = (s) => this.meta.handleGatherSkill(s);
+    this.gather.onMaterialGained = (id, qty) => this.bounties.onGather(id, qty);
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
+    this.effectiveVD = viewDist;
     this.registerCommands();
+    this.applyGraphics(); // shadows / VFX density / resolution scale from saved settings
     window.addEventListener('resize', this.onResize);
     this.canvas.addEventListener('mousedown', this.onCanvasClick);
+    this.canvas.addEventListener('webglcontextlost', this.onContextLost as EventListener);
+    this.canvas.addEventListener('webglcontextrestored', this.onContextRestored as EventListener);
 
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.loop);
@@ -197,10 +245,14 @@ export class Game {
       teleport: (x, z) => this.teleportPlayer(x, z),
       setClass: (cls) => this.swapClass(cls),
       setViewDistance: (chunks) => {
+        this.effectiveVD = chunks; // user override resets the adaptive floor
         this.chunks.setRadius(chunks);
         this.env.setViewDistance(chunks);
         useStore.getState().setSnapshot({ viewDistance: chunks });
       },
+      setShadows: (q) => this.applyShadows(q),
+      setVfxDensity: (d) => this.applyVfxDensity(d),
+      setResolutionScale: (scale) => this.applyResolutionScale(scale),
       toggleFreeFly: () => this.toggleFreeFly(),
       setDayNightSpeed: (speed) => {
         this.env.speed = speed;
@@ -231,6 +283,11 @@ export class Game {
       buyMount: () => this.mount.buyMount(),
       toggleMount: () => this.mount.toggle(),
       selectMount: (id) => this.mount.selectMount(id),
+      depositItem: (index) => this.combat.depositItem(index),
+      withdrawItem: (index) => this.combat.withdrawItem(index),
+      claimMail: (id) => this.combat.claimMail(id),
+      acceptBounty: (id) => this.bounties.accept(id),
+      turnInBounty: (id) => this.bounties.turnIn(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
     };
@@ -246,6 +303,33 @@ export class Game {
     this.scene.add(this.playerModel.group);
     this.combat.setClass(cls);
     useStore.getState().setSelectedClass(cls);
+  }
+
+  // --- graphics settings (Phase 5) -------------------------------------------
+
+  private applyShadows(q: ShadowQuality): void {
+    this.env.setShadowQuality(q);
+    useStore.getState().setGraphics({ shadows: q });
+  }
+
+  private applyVfxDensity(d: VfxDensity): void {
+    this.combat.setVfxDensity(VFX_DENSITY_MULT[d]);
+    useStore.getState().setGraphics({ vfxDensity: d });
+  }
+
+  private applyResolutionScale(scale: number): void {
+    this.resolutionScale = Math.min(1, Math.max(0.5, scale));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * this.resolutionScale);
+    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    useStore.getState().setGraphics({ resolutionScale: this.resolutionScale });
+  }
+
+  /** Apply the current store graphics settings to the renderer/engine (boot). */
+  private applyGraphics(): void {
+    const st = useStore.getState();
+    this.applyShadows(st.shadows);
+    this.applyVfxDensity(st.vfxDensity);
+    this.applyResolutionScale(st.resolutionScale);
   }
 
   private toggleFreeFly(): void {
@@ -270,32 +354,37 @@ export class Game {
     const wheel = this.input.consumeWheel();
     if (wheel !== 0 && this.camera.mode === 'thirdPerson') this.camera.zoom(wheel);
 
-    if (this.input.wasTapped('KeyF')) this.toggleFreeFly();
-    if (this.input.wasTapped('KeyM')) useStore.getState().toggleMap();
-    if (this.input.wasTapped('Backquote')) useStore.getState().toggleDev();
-    if (this.input.wasTapped('KeyI') || this.input.wasTapped('KeyC')) {
-      useStore.getState().toggleChar();
+    // Panel/action keys are rebindable (Settings, save v11); read the live map.
+    const store = useStore.getState();
+    const kb = store.keybinds;
+    const tapped = (action: string): boolean => this.input.wasTapped(kb[action] ?? '');
+    if (tapped('toggleFreeFly')) this.toggleFreeFly();
+    if (tapped('toggleMap')) store.toggleMap();
+    if (this.input.wasTapped('Backquote')) store.toggleDev();
+    if (tapped('toggleChar') || this.input.wasTapped('KeyI')) store.toggleChar();
+    if (tapped('toggleQuestLog')) store.toggleQuestLog();
+    if (tapped('toggleProfessions')) store.toggleProfessions();
+    if (tapped('toggleCrafting')) store.toggleCrafting();
+    if (tapped('toggleJournal')) store.toggleJournal();
+    if (tapped('toggleBank')) store.toggleBank();
+    if (tapped('toggleBounties')) {
+      const p = this.controller.physics;
+      this.bounties.toggle(p.x, p.z);
     }
-    if (this.input.wasTapped('KeyL')) useStore.getState().toggleQuestLog();
-    if (this.input.wasTapped('KeyP')) useStore.getState().toggleProfessions();
-    if (this.input.wasTapped('KeyK')) useStore.getState().toggleCrafting();
-    if (this.input.wasTapped('KeyJ')) useStore.getState().toggleJournal();
-    if (this.input.wasTapped('KeyG')) this.mount.toggle();
+    if (tapped('toggleMount')) this.mount.toggle();
 
-    // Combat: Tab cycles target, digits cast hotbar slots, R toggles auto-attack,
-    // Enter releases spirit on death.
-    if (this.input.wasTapped('Tab')) this.combat.cycleTarget();
-    if (this.input.wasTapped('KeyR')) this.combat.toggleAutoAttack();
-    if (this.input.wasTapped('Enter')) this.combat.releaseSpirit();
+    // Combat: cycle target, cast the hotbar digits, toggle auto-attack, release spirit.
+    if (tapped('cycleTarget')) this.combat.cycleTarget();
+    if (tapped('toggleAutoAttack')) this.combat.toggleAutoAttack();
+    if (tapped('releaseSpirit')) this.combat.releaseSpirit();
     for (let i = 0; i < 10; i++) {
       const code = i === 9 ? 'Digit0' : `Digit${i + 1}`;
       if (this.input.wasTapped(code)) this.combat.castSlot(i);
     }
 
-    // Interact with E: advance dialogue → attune/use a Waystone → trade with a
+    // Interact (E by default): advance dialogue → attune/use a Waystone → trade with a
     // merchant → talk to an NPC.
-    if (this.input.wasTapped('KeyE')) {
-      const store = useStore.getState();
+    if (tapped('interact')) {
       const px = this.controller.physics.x;
       const pz = this.controller.physics.z;
       if (store.dialogue) {
@@ -319,10 +408,20 @@ export class Game {
       }
     }
     if (this.input.wasTapped('Escape')) {
-      useStore.getState().closeDialogue();
-      useStore.getState().closeTravel();
-      this.combat.closeVendor();
-      this.quests.closeDialog();
+      // Escape closes whatever transient dialog is open; if nothing is, it toggles Settings.
+      const anyOpen =
+        store.dialogue !== null ||
+        store.showTravel ||
+        store.vendor !== null ||
+        store.questDialog !== null;
+      if (anyOpen) {
+        store.closeDialogue();
+        store.closeTravel();
+        this.combat.closeVendor();
+        this.quests.closeDialog();
+      } else {
+        store.toggleSettings();
+      }
     }
 
     if (this.camera.mode === 'freeFly') {
@@ -386,8 +485,10 @@ export class Game {
     this.mount.render(rs, dt, thirdPerson);
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
-    this.env.update(dt, this.camera.camera.position);
+    this.shadowFocus.set(rs.x, rs.y, rs.z);
+    this.env.update(dt, this.camera.camera.position, this.shadowFocus);
     this.chunks.update(rs.x, rs.z);
+    this.propRenderer.tick(dt); // wind sway clock
     this.propRenderer.update();
     this.entities.update(
       dt,
@@ -449,6 +550,27 @@ export class Game {
       useStore.getState().setReady(true);
     }
 
+    // Adaptive quality (Phase 5 "hold budgets in worst spots"): once running, if the
+    // frame rate sags in a heavy spot, quietly drop the effective view distance a
+    // notch (down to a floor); when it recovers, climb back toward the user's chosen
+    // setting. Checked on a slow cadence with wide hysteresis so it never thrashes
+    // the chunk streamer. The user's setting is the ceiling and is never overwritten.
+    if (this.started) {
+      this.adaptTimer += dt;
+      if (this.adaptTimer >= 3) {
+        this.adaptTimer = 0;
+        const userMax = useStore.getState().viewDistance;
+        let next = this.effectiveVD;
+        if (this.fps < 35 && next > 4) next -= 1;
+        else if (this.fps > 55 && next < userMax) next += 1;
+        if (next !== this.effectiveVD) {
+          this.effectiveVD = next;
+          this.chunks.setRadius(next);
+          this.env.setViewDistance(next);
+        }
+      }
+    }
+
     if (this.statsTimer >= 0.2) {
       this.statsTimer = 0;
       const info = this.renderer.info.render;
@@ -478,6 +600,29 @@ export class Game {
     this.camera.setAspect(w / h);
   };
 
+  // WebGL context-loss recovery (Phase 5): the GPU process can drop the context
+  // (driver reset, tab backgrounding, OOM). preventDefault() lets the browser
+  // restore it; we pause the loop and show an overlay until it comes back, then
+  // resume — three re-uploads geometry/materials lazily on the next render.
+  private onContextLost = (e: Event): void => {
+    e.preventDefault();
+    this.contextLost = true;
+    this.running = false;
+    cancelAnimationFrame(this.rafId);
+    useStore.getState().setSnapshot({ contextLost: true });
+  };
+
+  private onContextRestored = (): void => {
+    this.contextLost = false;
+    useStore.getState().setSnapshot({ contextLost: false });
+    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    if (!this.running) {
+      this.running = true;
+      this.lastTime = performance.now();
+      this.rafId = requestAnimationFrame(this.loop);
+    }
+  };
+
   /** Merge live progression + position back into the character for autosave. */
   snapshotCharacter(): CharacterSave | null {
     if (!this.character) return null;
@@ -495,11 +640,13 @@ export class Game {
       professions: this.gather.state.professions,
       materials: this.gather.state.materials,
       consumables: this.gather.state.consumables,
+      learnedRecipes: this.gather.state.learnedRecipes,
       deeds: this.meta.state.deeds,
-      pathPoints: this.meta.state.pathPoints,
-      perks: this.meta.state.perks,
       mounts: this.mount.state.mounts,
       activeMount: this.mount.state.activeMount,
+      bank: this.combat.characterBank,
+      mail: this.combat.characterMail,
+      bounties: this.bounties.state,
       x: ph.x,
       y: ph.y,
       z: ph.z,
@@ -507,11 +654,21 @@ export class Game {
     };
   }
 
+  /** Account-wide Path Points + perks for autosave (shared across characters). */
+  snapshotAccount(): AccountSave {
+    return { pathPoints: this.meta.state.pathPoints, perks: { ...this.meta.state.perks } };
+  }
+
   dispose(): void {
     this.running = false;
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
     this.canvas.removeEventListener('mousedown', this.onCanvasClick);
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost as EventListener);
+    this.canvas.removeEventListener(
+      'webglcontextrestored',
+      this.onContextRestored as EventListener,
+    );
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();

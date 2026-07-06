@@ -21,6 +21,7 @@ import {
   enemyById,
   EQUIP_SLOTS,
   settlementById,
+  waystoneById,
   type QuestLogState,
 } from '../src/index.js';
 
@@ -80,10 +81,12 @@ describe('Quest state machine (GDD §8)', () => {
     // Now Light the Way is available; a Waystone `use` completes it.
     expect(isAvailable(questById('q_light_the_way')!, log, 1)).toBe(true);
     acceptQuest(log, 'q_light_the_way', 1);
-    applyQuestEvent(log, { kind: 'use', objectId: 'brookhollow' });
+    // The client emits the Waystone's canonical id (ws-<id>) on attune; the
+    // objective target must be that exact id or the main story blocks here.
+    applyQuestEvent(log, { kind: 'use', objectId: 'ws-brookhollow' });
     const reward = turnInQuest(log, 'q_light_the_way');
     expect(reward).not.toBeNull();
-    expect(reward!.waystoneUnlock).toBe('brookhollow');
+    expect(reward!.waystoneUnlock).toBe('ws-brookhollow');
     expect(log.turnedIn).toContain('q_light_the_way');
   });
 
@@ -171,6 +174,20 @@ describe('Quest content validity', () => {
     }
   });
 
+  it('every Waystone id used by a quest resolves to a real Waystone', () => {
+    // Regression guard: the client emits/stores the canonical `ws-<id>` on attune,
+    // so both `use` objective targets and `waystoneUnlock` rewards must be that same
+    // id — a bare id silently blocks the quest / makes the unlocked stone unusable.
+    for (const q of QUESTS) {
+      if (q.reward.waystoneUnlock) {
+        expect(waystoneById(q.reward.waystoneUnlock), `${q.id} unlock`).toBeDefined();
+      }
+      for (const o of q.objectives) {
+        if (o.kind === 'use') expect(waystoneById(o.target), `${q.id} use`).toBeDefined();
+      }
+    }
+  });
+
   it('every collect objective is obtainable from a drop tag', () => {
     const tags = new Set(Object.values(QUEST_DROP_TAGS));
     for (const enemyId of Object.keys(QUEST_DROP_TAGS)) {
@@ -215,5 +232,65 @@ describe('Quest content validity', () => {
       }
     }
     expect(story.every((q) => log.turnedIn.includes(q.id))).toBe(true);
+  });
+
+  it('the main story spans all six chapters and ends at a level-30 finale', () => {
+    const story = QUESTS.filter((q) => q.chain === 'waymakers-path');
+    const chapters = new Set(story.map((q) => q.chapter));
+    for (const ch of [1, 2, 3, 4, 5, 6]) expect(chapters.has(ch), `chapter ${ch}`).toBe(true);
+    const finale = story.find((q) => q.id === 'q_the_last_waymaker');
+    expect(finale?.chapter).toBe(6);
+    expect(finale?.minLevel).toBe(30);
+    expect(finale?.objectives.some((o) => o.kind === 'boss')).toBe(true);
+    // minLevel never decreases as the chapters advance (a gap-free 1→30 path).
+    const byChapter = [...story].sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0));
+    for (let i = 1; i < byChapter.length; i++) {
+      expect(byChapter[i]!.minLevel).toBeGreaterThanOrEqual(byChapter[i - 1]!.minLevel);
+    }
+  });
+});
+
+describe('Quest breadth (Part 14 — the ~110 budget)', () => {
+  it('meets the ~110-quest content budget', () => {
+    expect(QUESTS.length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('every quest-giver actually offers at least one quest', () => {
+    const givers = new Set(QUESTS.map((q) => q.giver));
+    for (const g of QUEST_GIVERS) {
+      expect(givers.has(g.id), `${g.id} has no quests`).toBe(true);
+    }
+  });
+
+  it('side quests thicken every level band 1→30', () => {
+    // Non-main-story quests, bucketed by the level they gate on. Every 6-level band
+    // from 1 to 30 should carry real side content, so a follower always has optional
+    // work at their level, not just the main-story beat.
+    const side = QUESTS.filter((q) => q.chain !== 'waymakers-path');
+    const bands: [number, number][] = [
+      [1, 6],
+      [7, 12],
+      [13, 18],
+      [19, 24],
+      [25, 30],
+    ];
+    for (const [lo, hi] of bands) {
+      const n = side.filter((q) => q.minLevel >= lo && q.minLevel <= hi).length;
+      expect(n, `side quests in band ${lo}-${hi}`).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it('collect drop-tags all map to real enemies, and used tags resolve', () => {
+    // Regression guard for Part 14's added tags: each key is a real enemy and every
+    // collect objective still resolves to a tag the client can emit.
+    const tagValues = new Set(Object.values(QUEST_DROP_TAGS));
+    for (const enemyId of Object.keys(QUEST_DROP_TAGS)) {
+      expect(enemyById(enemyId), enemyId).toBeDefined();
+    }
+    for (const q of QUESTS) {
+      for (const o of q.objectives) {
+        if (o.kind === 'collect') expect(tagValues.has(o.target), `${q.id}:${o.target}`).toBe(true);
+      }
+    }
   });
 });

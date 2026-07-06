@@ -39,6 +39,9 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
 /** The two interchangeable ring slots (for auto-placing a ring). */
 export const RING_SLOTS: readonly EquipSlot[] = [EquipSlot.Ring1, EquipSlot.Ring2];
 
+/** Waymeet vault capacity — the shared bank storage (GDD §Supporting systems). */
+export const BANK_SIZE = 50;
+
 export enum Rarity {
   Common = 'common',
   Uncommon = 'uncommon',
@@ -303,6 +306,20 @@ export interface GeneratedItemSpec {
   reqLevel: number;
   /** Flavor the drop for a class (armor class, weapon kind, favored stats). */
   forClass?: CharacterClass;
+  /**
+   * Marks this as a bespoke unique (a Hollow-boss signature drop, GDD §6). The
+   * generated stats are still class-flavored so the item is always usable, but the
+   * name is fixed, it binds on equip, carries an optional flat crit bonus, and is
+   * worth more to a vendor. This is what makes a boss worth re-running.
+   */
+  signature?: {
+    /** Fixed display name (e.g. "The Gloomheart"). */
+    name: string;
+    /** Stable id key so the same unique always resolves to the same id. */
+    key: string;
+    /** A flat bonus-crit-chance rider (fraction, e.g. 0.02 = +2%). */
+    bonusCritChance?: number;
+  };
 }
 
 const ARMOR_SLOTS = new Set<EquipSlot>([
@@ -318,15 +335,17 @@ const ARMOR_SLOTS = new Set<EquipSlot>([
  * Instance id folds in the rng state so distinct rolls never collide.
  */
 export function generateItem(rng: Rng, spec: GeneratedItemSpec): ItemDef {
-  const { slot, rarity, reqLevel, forClass } = spec;
+  const { slot, rarity, reqLevel, forClass, signature } = spec;
   const ilvl = ilvlFor(reqLevel, rarity);
   const budget = statBudget(ilvl, rarity);
   const favored = forClass ? FAVORED_STATS[forClass] : [...STAT_KEYS];
   const stats = rollItemStats(rng, budget, favored);
 
   const item: ItemDef = {
-    id: `gen:${slot}:${ilvl}:${rarity}:${rng.getState().toString(36)}`,
-    name: `${RARITY_ADJ[rarity]} ${SLOT_NOUN[slot]}`,
+    id: signature
+      ? `sig:${signature.key}:${rng.getState().toString(36)}`
+      : `gen:${slot}:${ilvl}:${rarity}:${rng.getState().toString(36)}`,
+    name: signature ? signature.name : `${RARITY_ADJ[rarity]} ${SLOT_NOUN[slot]}`,
     slot,
     rarity,
     ilvl,
@@ -353,6 +372,13 @@ export function generateItem(rng: Rng, spec: GeneratedItemSpec): ItemDef {
     const speed = WEAPON_SPEED[kind];
     const dps = weaponDps(ilvl);
     item.weapon = { kind, speed, baseRoll: Math.round(dps * speed), dps };
+  }
+
+  if (signature) {
+    // A named unique: always bind, carry the crit rider, and sell for a premium.
+    item.bindOnEquip = true;
+    if (signature.bonusCritChance) item.bonusCritChance = signature.bonusCritChance;
+    item.value = Math.round(item.value * 1.5);
   }
 
   return item;

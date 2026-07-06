@@ -1,10 +1,27 @@
 // Leveling & experience (GDD §5). Pure, deterministic integer math.
-//   XP to complete level L: XP(L) = 400 · L^1.55  (≈400 at 1, ≈76k at 29).
+//   XP to complete level L: XP(L) = 250 · L^1.55  (≈250 at 1, ≈46k at 29; ~549k to cap).
 // Cap is 30; a level-30 character cannot gain further levels.
+//
+// Phase-5 pace tuning (was 400·L^1.55 ≈ 878k): the old curve made a 1→30 run lean grindy
+// (Phase-4 acceptance #5 / GDD §15). Lowering the base to 250 (~549k) and scaling quest XP
+// ×2 (QUEST_XP_SCALE) moves quests to ~44% of the climb — closer to the GDD §5 intent
+// (quests-led) and a ~25–35 h pace. Kill XP (killXp) is unchanged and fills the rest.
 
 export const LEVEL_CAP = 30;
-const XP_BASE = 400;
+const XP_BASE = 250;
 const XP_EXPONENT = 1.55;
+
+/**
+ * Multiplier applied to authored quest reward XP at the grant + display edge (GDD §5/§15
+ * tuning). The reward data in `shared/data/quests` stays readable; the effective value is
+ * scaled here so it stays one source of truth for client, UI, and the Phase-6 server.
+ */
+export const QUEST_XP_SCALE = 2;
+
+/** A quest reward's effective XP after the §5 tuning scale (rounded). */
+export function scaledQuestXp(baseXp: number): number {
+  return Math.round(baseXp * QUEST_XP_SCALE);
+}
 
 /**
  * XP required to advance FROM `level` to `level + 1`. Returns Infinity at the

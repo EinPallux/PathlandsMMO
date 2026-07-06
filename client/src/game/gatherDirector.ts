@@ -17,6 +17,8 @@ import {
   ALL_PROFESSIONS,
   PROFESSION_NAME,
   SKILL_MAX,
+  masteryFor,
+  isMastered,
   CHANNEL_SECONDS,
   RECIPES,
   canCraft,
@@ -81,6 +83,11 @@ export class GatherDirector {
   /** Meta hooks (set by the game): a craft finished / a gathering skill increased. */
   onCraft?: () => void;
   onGatherSkill?: (skill: number) => void;
+  /** A material was gathered (id + qty) — feeds gather bounties. */
+  onMaterialGained?: (materialId: string, qty: number) => void;
+
+  /** Learned discovery-recipe ids (advanced recipes hidden until discovered). */
+  private learned: Set<string>;
 
   constructor(
     world: World,
@@ -88,6 +95,7 @@ export class GatherDirector {
     skills?: Record<string, number>,
     materials?: Record<string, number>,
     consumables?: Record<string, number>,
+    learnedRecipes?: string[],
   ) {
     this.world = world;
     this.combat = combat;
@@ -96,6 +104,7 @@ export class GatherDirector {
       : { mining: 1, herbalism: 1, fishing: 1, blacksmithing: 1, alchemy: 1 };
     this.materials = materials ? { ...materials } : {};
     this.consumables = consumables ? { ...consumables } : {};
+    this.learned = new Set(learnedRecipes ?? []);
     this.publishProfessions();
     this.publishCrafting();
   }
@@ -105,11 +114,13 @@ export class GatherDirector {
     professions: Record<string, number>;
     materials: Record<string, number>;
     consumables: Record<string, number>;
+    learnedRecipes: string[];
   } {
     return {
       professions: { ...this.skills },
       materials: { ...this.materials },
       consumables: { ...this.consumables },
+      learnedRecipes: [...this.learned],
     };
   }
 
@@ -121,13 +132,19 @@ export class GatherDirector {
     if (!recipe) return;
     const skill = this.skills[recipe.profession] ?? 1;
     const rng = makeRng(this.world.seed, 'craft', id, String(this.actionSeq++));
-    const res = craft(rng, recipe, this.materials, skill);
+    const res = craft(rng, recipe, this.materials, skill, this.learned);
     if (!res) {
       this.toast('You lack the materials or skill.');
       return;
     }
     this.skills[recipe.profession] = res.newSkill;
     this.applyOutput(res.output);
+    // Recipe discovery (GDD §9): learn the recipe, announce it, and surface it in the
+    // craft list next publish.
+    if (res.discovered) {
+      this.learned.add(res.discovered);
+      this.toast(`Discovered a recipe: ${recipeById(res.discovered)?.name ?? res.discovered}!`);
+    }
     this.onCraft?.();
     this.publishProfessions();
     this.publishCrafting();
@@ -273,6 +290,7 @@ export class GatherDirector {
       this.materials[y.materialId] = (this.materials[y.materialId] ?? 0) + y.qty;
       const m = materialById(y.materialId);
       names.push(`${y.qty}× ${m?.name ?? y.materialId}`);
+      this.onMaterialGained?.(y.materialId, y.qty);
     }
     this.skills[prof] = newSkill;
     let msg = names.join(', ');
@@ -429,12 +447,19 @@ export class GatherDirector {
   }
 
   private publishProfessions(): void {
-    const skills = ALL_PROFESSIONS.map((p) => ({
-      id: p,
-      name: PROFESSION_NAME[p],
-      skill: this.skills[p] ?? 1,
-      max: SKILL_MAX,
-    }));
+    const skills = ALL_PROFESSIONS.map((p) => {
+      const skill = this.skills[p] ?? 1;
+      const m = masteryFor(p);
+      return {
+        id: p,
+        name: PROFESSION_NAME[p],
+        skill,
+        max: SKILL_MAX,
+        mastery: m.name,
+        masteryDesc: m.description,
+        mastered: isMastered(skill),
+      };
+    });
     const materials = Object.entries(this.materials)
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => ({ id, name: materialById(id)?.name ?? id, qty }))
@@ -450,7 +475,8 @@ export class GatherDirector {
   }
 
   private publishCrafting(): void {
-    const recipes = RECIPES.map((r) => {
+    // Discovery recipes stay hidden until learned; everything else is skill-gated only.
+    const recipes = RECIPES.filter((r) => !r.discovery || this.learned.has(r.id)).map((r) => {
       const skill = this.skills[r.profession] ?? 1;
       return {
         id: r.id,

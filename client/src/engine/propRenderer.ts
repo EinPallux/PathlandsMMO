@@ -7,7 +7,28 @@ import * as THREE from 'three';
 import { getProp, type PropId, type PropInstance } from '@pathlands/shared';
 import { meshVolume } from './greedyMesh.js';
 
+// Wind sway (Phase 5 VFX): props bend in a light breeze, weighted by local vertex
+// height (bases stay put, tops sway) and phased per instance so a grove ripples
+// instead of moving as one. Short props (rocks) barely move; trees/flora read the
+// wind. One shared uTime uniform, advanced by PropRenderer.tick().
+const WIND_TIME = { value: 0 };
 const PROP_MATERIAL = new THREE.MeshLambertMaterial({ vertexColors: true });
+PROP_MATERIAL.onBeforeCompile = (shader) => {
+  shader.uniforms.uTime = WIND_TIME;
+  shader.vertexShader =
+    'uniform float uTime;\n' +
+    shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+        vec3 iPos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+        float ph = iPos.x * 0.35 + iPos.z * 0.35;
+        float h = max(position.y, 0.0);
+        transformed.x += sin(uTime * 1.7 + ph) * 0.045 * h;
+        transformed.z += cos(uTime * 1.3 + ph) * 0.035 * h;
+      #endif`,
+    );
+};
 
 interface PropEntry {
   mesh: THREE.InstancedMesh;
@@ -84,6 +105,8 @@ export class PropRenderer {
       const mesh = new THREE.InstancedMesh(geometry, PROP_MATERIAL, capacity);
       mesh.count = 0;
       mesh.frustumCulled = false;
+      mesh.castShadow = true; // trees/rocks/props cast sun shadows (Phase 5)
+      mesh.receiveShadow = true;
       e = { mesh, geometry, capacity, chunks: new Map(), dirty: false };
       this.entries.set(id, e);
       this.scene.add(mesh);
@@ -118,6 +141,11 @@ export class PropRenderer {
     }
   }
 
+  /** Advance the shared wind clock (drives the foliage sway shader). */
+  tick(dt: number): void {
+    WIND_TIME.value += dt;
+  }
+
   /** Rebuild instance buffers for any prop whose loaded chunks changed. */
   update(): void {
     for (const e of this.entries.values()) {
@@ -133,6 +161,8 @@ export class PropRenderer {
         e.mesh.dispose();
         e.mesh = new THREE.InstancedMesh(e.geometry, PROP_MATERIAL, cap);
         e.mesh.frustumCulled = false;
+        e.mesh.castShadow = true;
+        e.mesh.receiveShadow = true;
         e.capacity = cap;
         this.scene.add(e.mesh);
       }

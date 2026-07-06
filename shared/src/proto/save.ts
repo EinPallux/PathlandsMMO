@@ -12,17 +12,46 @@
 // v4 → v5 (Phase 4): characters gained a consumables stash (crafted potions/elixirs).
 // v5 → v6 (Phase 4): characters gained Deed progress; the account gained Path perks.
 // v6 → v7 (Phase 4): characters gained owned mounts + the active mount skin.
+// v7 → v8 (Phase 4): characters gained the Waymeet bank vault + a mail inbox.
+// v8 → v9 (Phase 4): characters gained the daily-bounty log (day + active + done).
+// v9 → v10 (Phase 4): Path Points + perks moved from the character to the ACCOUNT
+// (shared across all local characters); per-character meta is folded in on upgrade.
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
+import type { MailLetterSave } from '../data/mail.js';
+import { starterInbox } from '../data/mail.js';
+import { defaultKeybinds, DEFAULT_KEYBINDS } from '../data/keybinds.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
 
-export const SAVE_VERSION = 7;
+// v10 → v11 (Phase 4): settings gained the rebindable keybind map.
+// v11 → v12 (Phase 4): characters remember learned discovery recipes.
+// v12 → v13 (Phase 5): settings gained graphics options (shadow quality, VFX
+// density, resolution scale) for the Performance pass. All are additive with
+// defaults, so any prior save upgrades cleanly.
+export const SAVE_VERSION = 13;
+
+/** Sun-shadow quality; `off` disables the shadow map entirely (Phase 5). */
+export type ShadowQuality = 'off' | 'low' | 'high';
+/** Particle-effect density multiplier bucket (Phase 5). */
+export type VfxDensity = 'off' | 'low' | 'full';
 
 export interface SettingsV1 {
   viewDistance: number;
   masterVolume: number;
+  /** Rebindable action → KeyboardEvent.code (GDD §14; defaults in data/keybinds). */
+  keybinds: Record<string, string>;
+}
+
+/** v13: graphics options for the Performance & compatibility pass. */
+export interface SettingsV2 extends SettingsV1 {
+  /** Sun-shadow map quality (`off` skips shadows; `low`/`high` = 1024/2048 map). */
+  shadows: ShadowQuality;
+  /** VFX particle density; scales burst counts (`off` mutes cosmetic particles). */
+  vfxDensity: VfxDensity;
+  /** Render-resolution scale (0.5–1); multiplies the device pixel ratio. */
+  resolutionScale: number;
 }
 
 export interface ItemStackSave {
@@ -85,24 +114,76 @@ export interface CharacterSaveV7 extends CharacterSaveV6 {
   activeMount: string | null;
 }
 
+export interface CharacterSaveV8 extends CharacterSaveV7 {
+  /** Waymeet vault contents (shared storage, up to BANK_SIZE). */
+  bank: ItemStackSave[];
+  /** Mail inbox: letters from world NPCs with optional (claimable) gold gifts. */
+  mail: MailLetterSave[];
+}
+
+/** Daily-bounty log: the day it was set, accepted bounties, and today's completions. */
+export interface BountyLogSave {
+  /** Day index the log belongs to; a newer day resets active + completed. */
+  day: number;
+  active: Array<{ id: string; count: number }>;
+  /** Bounty ids turned in today (drives the board's "done" state). */
+  completed: string[];
+}
+
+export interface CharacterSaveV9 extends CharacterSaveV8 {
+  /** Daily bounties (GDD §11): accepted tasks + today's completions. */
+  bounties: BountyLogSave;
+}
+
+/**
+ * v10 moved Path Points + perks off the character and onto the account, so they
+ * apply across all local characters (GDD §10). Deeds stay per-character (each
+ * earns its own), but the Points they award — and the perks bought with them —
+ * are shared.
+ */
+export type CharacterSaveV10 = Omit<CharacterSaveV9, 'pathPoints' | 'perks'>;
+
+/** v11→v12: characters remember the discovery recipes they have learned (GDD §9). */
+export interface CharacterSaveV11 extends CharacterSaveV10 {
+  /** Learned discovery-recipe ids (advanced recipes hidden until discovered). */
+  learnedRecipes: string[];
+}
+
 export interface AccountSaveV2 {
   /** Account-wide Path Points (GDD §10; the Phase-6 home for the per-character pool). */
   pathPoints: number;
 }
 
-export interface SaveGameV7 {
-  version: 7;
+export interface AccountSaveV3 extends AccountSaveV2 {
+  /** Account-wide Path perks: rank by perk id (shared across all characters). */
+  perks: Record<string, number>;
+}
+
+export interface SaveGameV12 {
+  version: 12;
   worldSeed: number;
-  account: AccountSaveV2;
-  characters: CharacterSaveV7[];
+  account: AccountSaveV3;
+  characters: CharacterSaveV11[];
   settings: SettingsV1;
   /** Sim tick at last save (no wall-clock in the schema itself). */
   updatedAtTick: number;
 }
 
+export interface SaveGameV13 {
+  version: 13;
+  worldSeed: number;
+  account: AccountSaveV3;
+  characters: CharacterSaveV11[];
+  settings: SettingsV2;
+  /** Sim tick at last save (no wall-clock in the schema itself). */
+  updatedAtTick: number;
+}
+
 /** The current save shape (alias bumps with SAVE_VERSION). */
-export type SaveGame = SaveGameV7;
-export type CharacterSave = CharacterSaveV7;
+export type SaveGame = SaveGameV13;
+export type CharacterSave = CharacterSaveV11;
+export type AccountSave = AccountSaveV3;
+export type Settings = SettingsV2;
 
 const DEFAULT_SKILLS = (): Record<string, number> => ({
   mining: 1,
@@ -112,18 +193,25 @@ const DEFAULT_SKILLS = (): Record<string, number> => ({
   alchemy: 1,
 });
 
-export const DEFAULT_SETTINGS: SettingsV1 = {
+export const DEFAULT_SETTINGS: SettingsV2 = {
   viewDistance: 8,
   masterVolume: 0.8,
+  keybinds: defaultKeybinds(),
+  shadows: 'low',
+  vfxDensity: 'full',
+  resolutionScale: 1,
 };
+
+const SHADOW_QUALITIES: readonly ShadowQuality[] = ['off', 'low', 'high'];
+const VFX_DENSITIES: readonly VfxDensity[] = ['off', 'low', 'full'];
 
 export function createNewSave(): SaveGame {
   return {
     version: SAVE_VERSION,
     worldSeed: WORLD_SEED,
-    account: { pathPoints: 0 },
+    account: { pathPoints: 0, perks: {} },
     characters: [],
-    settings: { ...DEFAULT_SETTINGS },
+    settings: { ...DEFAULT_SETTINGS, keybinds: defaultKeybinds() },
     updatedAtTick: 0,
   };
 }
@@ -144,6 +232,15 @@ function strArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
+function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
+  const n = num(v, fallback);
+  return Math.min(max, Math.max(min, n));
+}
+
 function itemStacks(v: unknown): ItemStackSave[] {
   if (!Array.isArray(v)) return [];
   return v
@@ -156,6 +253,17 @@ function equipment(v: unknown): Record<string, ItemDef> {
   if (!isRecord(v)) return out;
   for (const [slot, item] of Object.entries(v)) {
     if (isRecord(item)) out[slot] = item as unknown as ItemDef;
+  }
+  return out;
+}
+
+function keybinds(v: unknown): Record<string, string> {
+  const out = defaultKeybinds();
+  if (isRecord(v)) {
+    for (const action of Object.keys(DEFAULT_KEYBINDS)) {
+      const code = v[action];
+      if (typeof code === 'string' && code.length > 0) out[action] = code;
+    }
   }
   return out;
 }
@@ -198,6 +306,30 @@ function materialMap(v: unknown): Record<string, number> {
   return out;
 }
 
+function mailInbox(v: unknown): MailLetterSave[] {
+  if (!Array.isArray(v)) return starterInbox();
+  return v
+    .filter((m): m is Record<string, unknown> => isRecord(m) && typeof m.id === 'string')
+    .map((m) => ({
+      id: str(m.id, ''),
+      sender: str(m.sender, 'Unknown'),
+      subject: str(m.subject, ''),
+      body: str(m.body, ''),
+      ...(typeof m.gold === 'number' && m.gold > 0 ? { gold: Math.floor(m.gold) } : {}),
+      claimed: m.claimed === true,
+    }));
+}
+
+function bountyLog(v: unknown): BountyLogSave {
+  if (!isRecord(v)) return { day: 0, active: [], completed: [] };
+  const active = Array.isArray(v.active)
+    ? v.active
+        .filter((a): a is Record<string, unknown> => isRecord(a) && typeof a.id === 'string')
+        .map((a) => ({ id: str(a.id, ''), count: Math.max(0, Math.floor(num(a.count, 0))) }))
+    : [];
+  return { day: Math.floor(num(v.day, 0)), active, completed: strArray(v.completed) };
+}
+
 function deedState(v: unknown): DeedState {
   if (!isRecord(v)) return { progress: {}, completed: [] };
   const progress: Record<string, number> = {};
@@ -210,9 +342,11 @@ function deedState(v: unknown): DeedState {
   return { progress, completed: strArray(v.completed) };
 }
 
-function migrateCharacter(v: unknown): CharacterSaveV7 | null {
+function migrateCharacter(v: unknown): CharacterSaveV11 | null {
   if (!isRecord(v)) return null;
   const app = isRecord(v.appearance) ? v.appearance : {};
+  // Note: pathPoints/perks are intentionally NOT read here — since v10 they live on
+  // the account (folded in by migrate() below), not the character.
   return {
     id: str(v.id, ''),
     name: str(v.name, 'Wayfarer'),
@@ -233,11 +367,31 @@ function migrateCharacter(v: unknown): CharacterSaveV7 | null {
     materials: materialMap(v.materials),
     consumables: materialMap(v.consumables),
     deeds: deedState(v.deeds),
-    pathPoints: Math.max(0, Math.floor(num(v.pathPoints, 0))),
-    perks: materialMap(v.perks),
     mounts: strArray(v.mounts),
     activeMount: typeof v.activeMount === 'string' ? v.activeMount : null,
+    bank: itemStacks(v.bank),
+    mail: mailInbox(v.mail),
+    bounties: bountyLog(v.bounties),
+    learnedRecipes: strArray(v.learnedRecipes),
   };
+}
+
+/**
+ * The account Path-Point/perk pool, folding any pre-v10 per-character meta into
+ * it: the highest Path-Point pool and the union (max rank) of perks bought on any
+ * character become the shared account state, so no progress is lost on upgrade.
+ */
+function accountMeta(account: Record<string, unknown>, rawChars: unknown[]): AccountSaveV3 {
+  let pathPoints = Math.max(0, Math.floor(num(account.pathPoints, 0)));
+  const perks = materialMap(account.perks);
+  for (const rc of rawChars) {
+    if (!isRecord(rc)) continue;
+    pathPoints = Math.max(pathPoints, Math.floor(num(rc.pathPoints, 0)));
+    for (const [id, rank] of Object.entries(materialMap(rc.perks))) {
+      perks[id] = Math.max(perks[id] ?? 0, rank);
+    }
+  }
+  return { pathPoints, perks };
 }
 
 /**
@@ -257,11 +411,15 @@ export function migrate(raw: unknown): SaveGame {
   return {
     version: SAVE_VERSION,
     worldSeed: num(raw.worldSeed, WORLD_SEED),
-    account: { pathPoints: Math.max(0, Math.floor(num(account.pathPoints, 0))) },
-    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV7 => c !== null),
+    account: accountMeta(account, chars),
+    characters: chars.map(migrateCharacter).filter((c): c is CharacterSaveV11 => c !== null),
     settings: {
-      viewDistance: num(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
-      masterVolume: num(settings.masterVolume, DEFAULT_SETTINGS.masterVolume),
+      viewDistance: clampNum(settings.viewDistance, 4, 16, DEFAULT_SETTINGS.viewDistance),
+      masterVolume: clampNum(settings.masterVolume, 0, 1, DEFAULT_SETTINGS.masterVolume),
+      keybinds: keybinds(settings.keybinds),
+      shadows: oneOf(settings.shadows, SHADOW_QUALITIES, DEFAULT_SETTINGS.shadows),
+      vfxDensity: oneOf(settings.vfxDensity, VFX_DENSITIES, DEFAULT_SETTINGS.vfxDensity),
+      resolutionScale: clampNum(settings.resolutionScale, 0.5, 1, DEFAULT_SETTINGS.resolutionScale),
     },
     updatedAtTick: num(raw.updatedAtTick, 0),
   };
@@ -270,6 +428,38 @@ export function migrate(raw: unknown): SaveGame {
 /** Round-trip safety: serialise then re-migrate to guarantee a canonical save. */
 export function normalizeSave(save: SaveGame): SaveGame {
   return migrate(JSON.parse(JSON.stringify(save)));
+}
+
+/**
+ * Structural sanity check on a *migrated* save. Cheap, not exhaustive — it
+ * catches the shapes a corrupt/foreign blob would produce after migrate() (so a
+ * backup can be tried) without duplicating every field validator. Use as a
+ * `SaveGame` type guard after `migrate()`/`tryMigrate()`.
+ */
+export function validateSave(save: unknown): save is SaveGame {
+  if (!isRecord(save)) return false;
+  if (save.version !== SAVE_VERSION) return false;
+  if (typeof save.worldSeed !== 'number' || !Number.isFinite(save.worldSeed)) return false;
+  if (!Array.isArray(save.characters)) return false;
+  if (!isRecord(save.account) || typeof save.account.pathPoints !== 'number') return false;
+  const s = save.settings;
+  if (!isRecord(s) || typeof s.viewDistance !== 'number' || !isRecord(s.keybinds)) return false;
+  // Every character must at least carry an id and a class (the migrator guarantees this).
+  return save.characters.every((c) => isRecord(c) && typeof c.id === 'string');
+}
+
+/**
+ * Migrate defensively: return a valid `SaveGame`, or `null` if `raw` cannot be
+ * recovered (not an object, migrate threw, or the result fails validation).
+ * Never throws — the caller (save store) falls through to a backup on `null`.
+ */
+export function tryMigrate(raw: unknown): SaveGame | null {
+  try {
+    const migrated = migrate(raw);
+    return validateSave(migrated) ? migrated : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A fresh level-1 character at the Brookhollow spawn. */
@@ -281,7 +471,7 @@ export function createCharacter(
   x: number,
   y: number,
   z: number,
-): CharacterSaveV7 {
+): CharacterSaveV11 {
   return {
     id,
     name,
@@ -302,9 +492,11 @@ export function createCharacter(
     materials: {},
     consumables: {},
     deeds: { progress: {}, completed: [] },
-    pathPoints: 0,
-    perks: {},
     mounts: [],
     activeMount: null,
+    bank: [],
+    mail: starterInbox(),
+    bounties: { day: 0, active: [], completed: [] },
+    learnedRecipes: [],
   };
 }

@@ -12,6 +12,7 @@ export function DebugMap(): JSX.Element {
   const posZ = useStore((s) => s.posZ);
   const discovery = useStore((s) => s.discovery);
   const discoveryN = useStore((s) => s.discoveryN);
+  const questMarkers = useStore((s) => s.questMarkers);
   const toggleMap = useStore((s) => s.toggleMap);
 
   useEffect(() => {
@@ -92,6 +93,29 @@ export function DebugMap(): JSX.Element {
       }
     }
 
+    // Quest markers: "!" new / "?" turn-in over givers, a ring at objective areas.
+    for (const m of questMarkers) {
+      const mx = (m.x / WORLD_SIZE_X) * DISPLAY;
+      const my = (m.z / WORLD_SIZE_Z) * DISPLAY;
+      if (m.kind === 'objective') {
+        ctx.strokeStyle = '#f4d774';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(mx, my, 7, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (m.kind === 'available' || m.kind === 'turnin') {
+        const glyph = m.kind === 'available' ? '!' : '?';
+        ctx.font = 'bold 15px system-ui';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#000';
+        ctx.strokeText(glyph, mx, my - 6);
+        ctx.fillStyle = '#f4d774';
+        ctx.fillText(glyph, mx, my - 6);
+        ctx.textAlign = 'left';
+      }
+    }
+
     // Player marker.
     const px = (posX / WORLD_SIZE_X) * DISPLAY;
     const py = (posZ / WORLD_SIZE_Z) * DISPLAY;
@@ -102,7 +126,7 @@ export function DebugMap(): JSX.Element {
     ctx.arc(px, py, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-  }, [posX, posZ, discovery, discoveryN]);
+  }, [posX, posZ, discovery, discoveryN, questMarkers]);
 
   return (
     <div
@@ -151,6 +175,7 @@ export function DebugMap(): JSX.Element {
           <span style={{ color: '#e2c463' }}>● towns</span>
           <span style={{ color: '#8fe6f0' }}>◆ Waystones</span>
           <span style={{ color: '#c66' }}>● Hollows</span>
+          <span style={{ color: '#f4d774' }}>! ? ○ quests</span>
           <span style={{ color: colors.accent }}>● you</span>
           <span>dark = undiscovered</span>
         </div>

@@ -355,6 +355,104 @@ export const WORLD_SPAWNS: readonly SpawnRegion[] = [
     count: 1,
     respawnTicks: 1800,
   },
+
+  // --- Named rare-elite hunt targets (WORLD.md §4): one wandering elite per key
+  // zone, single spawn, long respawn (~15 min). Killing them advances "Rarebane".
+  {
+    id: 'rareThornhide',
+    enemyId: 'rareOldThornhide',
+    level: 6,
+    cx: 1470,
+    cz: 1616,
+    radius: 14,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareGrislefang',
+    enemyId: 'rareGrislefang',
+    level: 11,
+    cx: 2360,
+    cz: 1440,
+    radius: 16,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareDuskwing',
+    enemyId: 'rareDuskwing',
+    level: 13,
+    cx: 760,
+    cz: 1352,
+    radius: 14,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareBoulderjaw',
+    enemyId: 'rareBoulderjaw',
+    level: 16,
+    cx: 700,
+    cz: 1300,
+    radius: 14,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareGnashCowl',
+    enemyId: 'rareGnashCowl',
+    level: 17,
+    cx: 676,
+    cz: 1444,
+    radius: 14,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareShardback',
+    enemyId: 'rareShardbackAlpha',
+    level: 23,
+    cx: 824,
+    cz: 784,
+    radius: 16,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareGruulmarg',
+    enemyId: 'rareGruulmarg',
+    level: 29,
+    cx: 1704,
+    cz: 600,
+    radius: 18,
+    count: 1,
+    respawnTicks: 18000,
+  },
+  {
+    id: 'rareWreckmaw',
+    enemyId: 'rareWreckmaw',
+    level: 30,
+    cx: 1540,
+    cz: 2600,
+    radius: 16,
+    count: 1,
+    respawnTicks: 18000,
+  },
+
+  // --- World event (WORLD.md §4): the Grand Waystone site, south of Waymeet on the
+  // road to the Sunken Crypt. Its Grand Warden (Boss rank) respawns on a long timer;
+  // defeating it "restores" the Waystone (a Deed + the network's waking). Coords are
+  // kept in sync with GRAND_WAYSTONE_EVENT in worldEvent.ts (guarded by a test).
+  {
+    id: 'grandWaystoneWarden',
+    enemyId: 'bossGrandWarden',
+    level: 30,
+    cx: 1712,
+    cz: 2050,
+    radius: 8,
+    count: 1,
+    respawnTicks: 9000,
+  },
 ];
 
 /** A Hollow's end-boss encounter (for docs, the atlas, and acceptance tests). */

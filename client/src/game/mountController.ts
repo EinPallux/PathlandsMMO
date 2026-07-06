@@ -217,36 +217,43 @@ export class MountController {
 
   // --- store publishing ------------------------------------------------------
 
-  private maybeRepublish(): void {
-    // The buy button depends on live gold/level, so republish when its answer
-    // could have changed — but only then, to avoid a per-frame store write.
+  /** The live buy-button state (canBuy + hint). Both depend on gold + level. */
+  private buyState(): { cost: number; canBuy: boolean; buyHint: string } {
     const cost = BASE_MOUNT.source.kind === 'purchase' ? BASE_MOUNT.source.cost : 0;
-    const canBuy =
-      !this.owned.has(BASE_MOUNT.id) &&
-      this.combat.characterLevel >= MOUNT_MIN_LEVEL &&
-      this.combat.characterGold >= cost;
-    const key = `${this.mounted}|${this.activeId}|${this.owned.size}|${canBuy}`;
-    if (key !== this.lastPublishKey) this.publish();
+    const level = this.combat.characterLevel;
+    const gold = this.combat.characterGold;
+    const hasBase = this.owned.has(BASE_MOUNT.id);
+    const canBuy = !hasBase && level >= MOUNT_MIN_LEVEL && gold >= cost;
+    const buyHint = hasBase
+      ? ''
+      : level < MOUNT_MIN_LEVEL
+        ? `Requires level ${MOUNT_MIN_LEVEL}`
+        : gold < cost
+          ? `Costs ${cost} gold`
+          : `${cost} gold`;
+    return { cost, canBuy, buyHint };
+  }
+
+  private stateKey(buy: { canBuy: boolean; buyHint: string }): string {
+    // The hint (not just canBuy) is in the key so it refreshes when the *reason*
+    // a buy is blocked changes — e.g. crossing level 20 while still short on gold.
+    return `${this.mounted}|${this.activeId}|${this.owned.size}|${buy.canBuy}|${buy.buyHint}`;
+  }
+
+  private maybeRepublish(): void {
+    // The buy button depends on live gold/level, so republish when its answer (or
+    // its reason) could have changed — but only then, to avoid a per-frame write.
+    if (this.stateKey(this.buyState()) !== this.lastPublishKey) this.publish();
   }
 
   private publish(): void {
-    const cost = BASE_MOUNT.source.kind === 'purchase' ? BASE_MOUNT.source.cost : 0;
-    const level = this.combat.characterLevel;
+    const { cost, canBuy, buyHint } = this.buyState();
     const owned = MOUNTS.filter((m) => this.owned.has(m.id)).map((m) => ({
       id: m.id,
       name: m.name,
       description: m.description,
       active: m.id === this.activeId,
     }));
-    const hasBase = this.owned.has(BASE_MOUNT.id);
-    const canBuy = !hasBase && level >= MOUNT_MIN_LEVEL && this.combat.characterGold >= cost;
-    const buyHint = hasBase
-      ? ''
-      : level < MOUNT_MIN_LEVEL
-        ? `Requires level ${MOUNT_MIN_LEVEL}`
-        : this.combat.characterGold < cost
-          ? `Costs ${cost} gold`
-          : `${cost} gold`;
     const ui: MountUi = {
       ownsAny: this.owned.size > 0,
       mounted: this.mounted,
@@ -258,7 +265,7 @@ export class MountController {
       baseName: BASE_MOUNT.name,
       owned,
     };
-    this.lastPublishKey = `${this.mounted}|${this.activeId}|${this.owned.size}|${canBuy}`;
+    this.lastPublishKey = this.stateKey({ canBuy, buyHint });
     useStore.getState().setMount(ui);
   }
 

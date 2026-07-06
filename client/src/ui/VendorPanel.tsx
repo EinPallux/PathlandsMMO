@@ -6,17 +6,10 @@ import { type ReactNode } from 'react';
 import { useStore } from '../game/store.js';
 import { RARITY_COLOR, type ItemDef } from '@pathlands/shared';
 import { colors, panel } from './theme.js';
+import { useHoverTip, TooltipPortal, ItemTooltipCard } from './Tooltip.js';
 
 const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
 const rarityHex = (item: ItemDef): string => hex(RARITY_COLOR[item.rarity] ?? 0x888888);
-
-function itemLine(item: ItemDef): string {
-  const parts = [`Item Level ${item.ilvl} · req ${item.reqLevel}`];
-  if (item.weapon && item.weapon.dps > 0) parts.push(`${item.weapon.dps.toFixed(1)} dps`);
-  if (item.armor) parts.push(`${item.armor} armor`);
-  for (const [k, v] of Object.entries(item.stats)) if (v) parts.push(`+${v} ${k}`);
-  return parts.join(' · ');
-}
 
 function Row({
   item,
@@ -24,41 +17,51 @@ function Row({
   action,
   afford,
   label,
+  equipped,
 }: {
   item: ItemDef;
   price: number;
   action: () => void;
   afford: boolean;
   label: string;
+  equipped?: ItemDef;
 }): JSX.Element {
+  const { pos, handlers } = useHoverTip();
   return (
-    <button
-      onClick={action}
-      disabled={!afford}
-      title={itemLine(item)}
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 8,
-        width: '100%',
-        marginTop: 4,
-        background: '#241a11',
-        border: `1px solid ${colors.panelBorder}`,
-        borderRadius: 6,
-        padding: '5px 8px',
-        cursor: afford ? 'pointer' : 'not-allowed',
-        fontSize: 12,
-        textAlign: 'left',
-      }}
-    >
-      <span style={{ color: rarityHex(item), overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {item.name}
-      </span>
-      <span style={{ color: afford ? colors.gold : '#8a6a48', whiteSpace: 'nowrap' }}>
-        {label} {price}c
-      </span>
-    </button>
+    <>
+      <button
+        {...handlers}
+        onClick={action}
+        disabled={!afford}
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          marginTop: 4,
+          background: '#241a11',
+          border: `1px solid ${colors.panelBorder}`,
+          borderRadius: 6,
+          padding: '5px 8px',
+          cursor: afford ? 'pointer' : 'not-allowed',
+          fontSize: 12,
+          textAlign: 'left',
+        }}
+      >
+        <span style={{ color: rarityHex(item), overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {item.name}
+        </span>
+        <span style={{ color: afford ? colors.gold : '#8a6a48', whiteSpace: 'nowrap' }}>
+          {label} {price}c
+        </span>
+      </button>
+      {pos && (
+        <TooltipPortal pos={pos}>
+          <ItemTooltipCard item={item} equipped={equipped} />
+        </TooltipPortal>
+      )}
+    </>
   );
 }
 
@@ -132,6 +135,7 @@ export function VendorPanel(): JSX.Element | null {
               afford={gold >= s.price}
               label="Buy"
               action={() => cmd?.buyItem(i)}
+              equipped={inv?.equipment[s.item.slot]}
             />
           ))}
         </Column>

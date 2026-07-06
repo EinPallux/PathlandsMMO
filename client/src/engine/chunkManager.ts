@@ -178,6 +178,11 @@ export class ChunkManager {
     geo.setIndex(new THREE.BufferAttribute(g.indices, 1));
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, mat);
+    // Terrain receives sun shadows (cast by props/actors) but doesn't self-cast —
+    // flat voxel faces at grazing angles are the worst case for shadow acne, and
+    // receive-only keeps the ground clean regardless of quality (Phase 5). The
+    // emissive (MeshBasic) pass ignores shadows, so this only matters for opaque.
+    if (mat === this.material) mesh.receiveShadow = true;
     mesh.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();

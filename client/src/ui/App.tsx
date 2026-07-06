@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CharacterSave } from '@pathlands/shared';
+import type { AccountSave, CharacterSave, SaveGame } from '@pathlands/shared';
 import { Game } from '../game/game.js';
 import { useStore } from '../game/store.js';
-import { upsertCharacter } from '../platform/saveStore.js';
+import { upsertCharacterAndAccount } from '../platform/saveStore.js';
+import { audio } from '../platform/audio.js';
+
+type Settings = SaveGame['settings'];
 import { LoadingScreen } from './LoadingScreen.js';
 import { Hud } from './Hud.js';
 import { DevOverlay } from './DevOverlay.js';
@@ -22,24 +25,56 @@ import { GatherPrompt } from './GatherPrompt.js';
 import { ProfessionsPanel } from './ProfessionsPanel.js';
 import { CraftingPanel } from './CraftingPanel.js';
 import { Journal } from './Journal.js';
+import { BankPanel } from './BankPanel.js';
+import { BountyBoard } from './BountyBoard.js';
+import { SettingsPanel } from './SettingsPanel.js';
+import { FirstTimeTips } from './FirstTimeTips.js';
 import { Onboarding } from './Onboarding.js';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
-  const [character, setCharacter] = useState<CharacterSave | null>(null);
+  const [entry, setEntry] = useState<{
+    character: CharacterSave;
+    account: AccountSave;
+    settings: Settings;
+  } | null>(null);
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
+  const contextLost = useStore((s) => s.contextLost);
+  const masterVolume = useStore((s) => s.masterVolume);
+
+  // Keep the audio master bus in sync with the Settings slider (and its seed on boot).
+  useEffect(() => {
+    audio.setMasterVolume(masterVolume);
+  }, [masterVolume]);
+
+  // Login/character-select bed until a character is entered, then the in-game bed.
+  // (Autoplay policy: playback starts on the first click/keypress — see audio.ts.)
+  useEffect(() => {
+    audio.playMusic(entry ? 'game' : 'login');
+  }, [entry]);
 
   useEffect(() => {
-    if (!character || !canvasRef.current || gameRef.current) return;
-    const game = new Game(canvasRef.current, character);
+    if (!entry || !canvasRef.current || gameRef.current) return;
+    // Seed the store from the saved settings before the game reads them.
+    const st = useStore.getState();
+    st.setSnapshot({ viewDistance: entry.settings.viewDistance });
+    st.setKeybinds(entry.settings.keybinds);
+    st.setMasterVolume(entry.settings.masterVolume);
+    st.setGraphics({
+      shadows: entry.settings.shadows,
+      vfxDensity: entry.settings.vfxDensity,
+      resolutionScale: entry.settings.resolutionScale,
+    });
+    const game = new Game(canvasRef.current, entry.character, entry.account);
     gameRef.current = game;
 
     const save = (): void => {
       const snap = game.snapshotCharacter();
-      if (snap) void upsertCharacter(snap);
+      // Character + account persist together (Path Points/perks are account-wide).
+      if (snap) void upsertCharacterAndAccount(snap, game.snapshotAccount());
     };
     const autosave = window.setInterval(save, 30_000);
     window.addEventListener('beforeunload', save);
@@ -51,10 +86,14 @@ export function App(): JSX.Element {
       game.dispose();
       gameRef.current = null;
     };
-  }, [character]);
+  }, [entry]);
 
-  if (!character) {
-    return <Onboarding onEnter={setCharacter} />;
+  if (!entry) {
+    return (
+      <Onboarding
+        onEnter={(character, account, settings) => setEntry({ character, account, settings })}
+      />
+    );
   }
 
   return (
@@ -76,11 +115,39 @@ export function App(): JSX.Element {
         {ready && <ProfessionsPanel />}
         {ready && <CraftingPanel />}
         {ready && <Journal />}
+        {ready && <BankPanel />}
+        {ready && <BountyBoard />}
+        {ready && <SettingsPanel />}
+        {ready && <FirstTimeTips />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}
       </div>
       {!ready && <LoadingScreen />}
+      {contextLost && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            background: 'rgba(8, 6, 4, 0.82)',
+            color: '#f2ead9',
+            fontFamily: 'system-ui, sans-serif',
+            textAlign: 'center',
+            pointerEvents: 'auto',
+          }}
+        >
+          <div style={{ fontSize: 20, fontWeight: 700, color: '#c9a23f' }}>Rendering paused</div>
+          <div style={{ fontSize: 13, color: '#b8a888', maxWidth: 360, lineHeight: 1.5 }}>
+            The graphics context was lost (a GPU or driver hiccup). The game will resume
+            automatically once it&apos;s restored — your progress is safe.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

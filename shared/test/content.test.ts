@@ -13,8 +13,11 @@ import {
   enemiesForBand,
   enemyStatsFor,
   buildEnemyLootTable,
+  buildEnemyModel,
   rollLoot,
   EnemyRank,
+  WORLD_SPAWNS,
+  DEEDS,
   LEVEL_CAP,
   makeRng,
   WORLD_SEED,
@@ -76,7 +79,7 @@ describe('Class skills (GDD §3)', () => {
 });
 
 describe('Enemies (GDD §4, WORLD.md)', () => {
-  it('includes the 10 asset enemies and the five Hollow bosses', () => {
+  it('includes the 10 asset enemies, the five Hollow bosses, and the world boss', () => {
     const ids = new Set(ENEMIES.map((e) => e.id));
     for (const asset of [
       'briarGoblin',
@@ -92,7 +95,35 @@ describe('Enemies (GDD §4, WORLD.md)', () => {
     ]) {
       expect(ids.has(asset), asset).toBe(true);
     }
-    expect(ENEMIES.filter((e) => e.rank === EnemyRank.Boss).length).toBe(5);
+    // The five Hollow bosses plus the Grand Waystone world-event boss.
+    for (const boss of [
+      'bossBriarking',
+      'bossGloommother',
+      'bossCrystalWyrm',
+      'bossIronvein',
+      'bossLastWaymaker',
+      'bossGrandWarden',
+    ]) {
+      expect(ids.has(boss), boss).toBe(true);
+    }
+    expect(ENEMIES.filter((e) => e.rank === EnemyRank.Boss).length).toBe(6);
+  });
+
+  it('has named rare-elites, each Elite-ranked, buildable, and world-spawned', () => {
+    const rares = ENEMIES.filter((e) => e.named);
+    expect(rares.length).toBeGreaterThanOrEqual(6);
+    const spawnedIds = new Set(WORLD_SPAWNS.map((r) => r.enemyId));
+    for (const r of rares) {
+      expect(r.rank, `${r.id} rank`).toBe(EnemyRank.Elite);
+      expect(r.blurb.length, `${r.id} blurb`).toBeGreaterThan(0);
+      // Named rares reuse an existing enemy model, which must build.
+      expect(buildEnemyModel(r.modelId), r.modelId).not.toBeNull();
+      // Each is placed as a hunt target somewhere in the world.
+      expect(spawnedIds.has(r.id), `${r.id} spawn`).toBe(true);
+    }
+    // The Rarebane Deed tracks the hunt.
+    const rarebane = DEEDS.find((d) => d.metric === 'rare');
+    expect(rarebane, 'Rarebane deed').toBeDefined();
   });
 
   it('scales stats by rank (boss ≫ normal at the same level)', () => {

@@ -28,7 +28,10 @@ export const MOUNTS: readonly MountDef[] = [
     description: 'A loyal Heartmead wolf, saddle-broken for the long roads. +60% ground speed.',
     modelId: 'mount.wolf',
     speedBonus: 0.6,
-    source: { kind: 'purchase', cost: 40, reqLevel: MOUNT_MIN_LEVEL },
+    // Priced as a real gold sink (GDD §15 "choice pressure"): ~40% of the quest
+    // gold a level-20 quester has earned, so it's affordable but a saved-for
+    // purchase competing with gear/potions — not the trivial pocket-change it was.
+    source: { kind: 'purchase', cost: 800, reqLevel: MOUNT_MIN_LEVEL },
   },
   {
     id: 'direWolf',

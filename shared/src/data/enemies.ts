@@ -62,6 +62,8 @@ export interface EnemyDef {
   abilities: string[];
   /** Encounter script for Boss-rank enemies (HP-threshold beats). */
   boss?: BossScript;
+  /** A wandering named rare-elite hunt target (GDD §11 / WORLD.md §4). */
+  named?: boolean;
   /** Short bestiary blurb (used on journal pages). */
   blurb: string;
 }
@@ -87,6 +89,7 @@ function e(
     leashRadius: opts.leashRadius ?? 28,
     abilities: opts.abilities ?? [],
     ...(opts.boss ? { boss: opts.boss } : {}),
+    ...(opts.named ? { named: true } : {}),
     blurb: opts.blurb ?? '',
   };
 }
@@ -324,6 +327,102 @@ export const ENEMIES: readonly EnemyDef[] = [
     },
     blurb: 'The final Waymaker, bound to its flooded tomb — the three-phase story finale.',
   }),
+
+  // --- World event boss (WORLD.md §4): the repeatable "Restore the Grand Waystone"
+  // encounter. A Boss-rank stone warden bound to the dormant Grand Waystone; solo-tuned
+  // at the cap, it wards itself and calls stone-guard adds. In Phase 6 this becomes the
+  // scaling world-boss event; for now it is a fixed-site, long-respawn solo world boss.
+  e('bossGrandWarden', 'The Grand Warden', EnemyFamily.Elemental, [30, 30], {
+    modelId: 'enemy.cryptSentinel',
+    rank: EnemyRank.Boss,
+    school: 'arcane',
+    moveSpeed: 3.6,
+    aggroRadius: 22,
+    leashRadius: 48,
+    abilities: ['crystalSpit'],
+    boss: {
+      phases: [
+        {
+          atHpPct: 0.66,
+          shield: 0.14,
+          say: 'The Grand Warden raises a Waystone ward — the air hums with old power!',
+        },
+        {
+          atHpPct: 0.33,
+          summon: { enemyId: 'cryptSentinel', count: 1 },
+          enrage: 0.22,
+          say: 'The Warden blazes — the stone-guard wakes to defend the Waystone!',
+        },
+      ],
+    },
+    blurb: 'The bound warden of the dormant Grand Waystone; defeat it to wake the network anew.',
+  }),
+
+  // --- Named rare-elite hunt targets (GDD §11, WORLD.md §4) ---------------------
+  // Wandering, Elite-rank, one per key zone; reuse a family model, drop better loot,
+  // and feed the "Rarebane" Deed. Spawn points + long respawns live in spawns.ts.
+  e('rareOldThornhide', 'Old Thornhide', EnemyFamily.Beast, [6, 6], {
+    modelId: 'enemy.thornbackBoar',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 4.6,
+    aggroRadius: 14,
+    blurb: 'The scarred old boar-king of the Heartmead meadows; hunters tell tales of his tusks.',
+  }),
+  e('rareGrislefang', 'Grislefang', EnemyFamily.Beast, [11, 11], {
+    modelId: 'enemy.mossfangWolf',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 5.4,
+    aggroRadius: 16,
+    blurb: 'A great grey wolf that leads the Mossfang packs through the deep Weald.',
+  }),
+  e('rareBoulderjaw', 'Boulderjaw', EnemyFamily.Aberration, [16, 16], {
+    modelId: 'enemy.stonejawGrub',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 14,
+    blurb: 'A grub grown vast on Foothills ore, its plated jaws crack solid rock.',
+  }),
+  e('rareGnashCowl', 'Gnash-Cowl', EnemyFamily.Humanoid, [17, 17], {
+    modelId: 'enemy.caveGnoll',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 15,
+    abilities: ['cleaveSwipe'],
+    blurb: 'The gnoll war-leader of the Stonejaw dens, cowled in survey-map hide.',
+  }),
+  e('rareShardbackAlpha', 'Shardback Alpha', EnemyFamily.Beast, [23, 23], {
+    modelId: 'enemy.crystalbackLizard',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 16,
+    blurb: 'The eldest crystalback of the Glimmerpeaks; its shell rings like a struck bell.',
+  }),
+  e('rareGruulmarg', 'Gruulmarg the War-Chief', EnemyFamily.Humanoid, [29, 29], {
+    modelId: 'enemy.ironhideTroll',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 4.4,
+    aggroRadius: 18,
+    leashRadius: 34,
+    blurb: 'The troll war-chief of the Trollmoor cairns, remembered in the Sentinels’ glyphs.',
+  }),
+  e('rareWreckmaw', 'Wreckmaw', EnemyFamily.Beast, [30, 30], {
+    modelId: 'enemy.bogDrake',
+    rank: EnemyRank.Elite,
+    named: true,
+    aggroRadius: 16,
+    blurb: 'A drake that haunts the Sunlit Coast shipwrecks, gorged on the drowned.',
+  }),
+  e('rareDuskwing', 'Duskwing', EnemyFamily.Beast, [13, 13], {
+    modelId: 'enemy.caveBat',
+    rank: EnemyRank.Elite,
+    named: true,
+    moveSpeed: 5.6,
+    aggroRadius: 15,
+    blurb: 'A monstrous cave-bat whose shriek empties the Foothills cliffs at dusk.',
+  }),
 ];
 
 const ENEMY_BY_ID = new Map<string, EnemyDef>(ENEMIES.map((x) => [x.id, x]));
@@ -354,9 +453,86 @@ export function enemyStatsFor(def: EnemyDef, level: number, nearbyPlayers = 1): 
 }
 
 /**
+ * A Hollow boss's bespoke unique drop — the endgame re-run chase (GDD §6). Each of
+ * the five Hollow bosses has one signature Epic (class-neutral jewelry so any class
+ * can use it; the stats are still flavored for the killer). It binds on equip and
+ * carries a small flat crit rider, and it drops ONLY from that boss.
+ */
+export interface BossSignature {
+  /** Fixed display name. */
+  name: string;
+  /** Stable id key (folded into the item instance id). */
+  key: string;
+  /** Slot — Trinket/Amulet, so it never class-locks. */
+  slot: EquipSlot;
+  /** Flat bonus-crit rider (fraction). */
+  bonusCritChance: number;
+  /** Drop chance per boss kill. */
+  chance: number;
+  /** Bestiary flavor line. */
+  blurb: string;
+}
+
+export const BOSS_SIGNATURES: Record<string, BossSignature> = {
+  bossBriarking: {
+    name: "Bramblegut's Wardknot",
+    key: 'bramblegutWardknot',
+    slot: EquipSlot.Amulet,
+    bonusCritChance: 0.015,
+    chance: 0.2,
+    blurb: 'A knot of thorn and warlord-hair, cut from Bramblegut himself.',
+  },
+  bossGloommother: {
+    name: 'The Gloomheart',
+    key: 'gloomheart',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.02,
+    chance: 0.2,
+    blurb: 'The still-warm heart-node of Mother Gnarlmaw, pulsing with spent blight.',
+  },
+  bossCrystalWyrm: {
+    name: 'Prismscale Sigil',
+    key: 'prismscaleSigil',
+    slot: EquipSlot.Amulet,
+    bonusCritChance: 0.025,
+    chance: 0.2,
+    blurb: "A single scale from Prismhide's crown, that throws back the light it is shown.",
+  },
+  bossIronvein: {
+    name: "Forgewarden's Emberseal",
+    key: 'forgewardenEmberseal',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.03,
+    chance: 0.2,
+    blurb: "The seal off Urzul's forge, never cooled, that keeps an ember for its bearer.",
+  },
+  bossLastWaymaker: {
+    name: "The Waymaker's Lantern",
+    key: 'waymakersLantern',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.035,
+    chance: 0.22,
+    blurb: 'The lantern the last Waymaker carried into the dark, still lit against all reason.',
+  },
+  bossGrandWarden: {
+    name: 'Grand Waystone Shard',
+    key: 'grandWaystoneShard',
+    slot: EquipSlot.Trinket,
+    bonusCritChance: 0.04,
+    chance: 0.25,
+    blurb: 'A shard of the Grand Waystone itself, warm with the whole network’s waking song.',
+  },
+};
+
+/** The signature unique a Hollow boss drops, if any. */
+export function bossSignature(id: string): BossSignature | undefined {
+  return BOSS_SIGNATURES[id];
+}
+
+/**
  * Build a level-scaled loot table for an enemy. Normal mobs drop a little gold and
  * an occasional item; elites drop better; bosses have a curated table with
- * guaranteed picks and an Epic chance (GDD §6).
+ * guaranteed picks, an Epic chance, and a bespoke signature unique (GDD §6).
  */
 export function buildEnemyLootTable(def: EnemyDef, level: number): LootTable {
   const anyArmorSlot = [
@@ -369,6 +545,7 @@ export function buildEnemyLootTable(def: EnemyDef, level: number): LootTable {
   const pickSlot = anyArmorSlot[level % anyArmorSlot.length]!;
 
   if (def.rank === EnemyRank.Boss) {
+    const sig = BOSS_SIGNATURES[def.id];
     return {
       id: `loot.${def.id}`,
       gold: [level * 20, level * 40],
@@ -378,6 +555,20 @@ export function buildEnemyLootTable(def: EnemyDef, level: number): LootTable {
           chance: 0.15,
           generate: { slot: EquipSlot.MainHand, rarity: Rarity.Epic, reqLevel: level },
         },
+        // The bespoke signature unique — the reason to re-run the Hollow.
+        ...(sig
+          ? [
+              {
+                chance: sig.chance,
+                generate: {
+                  slot: sig.slot,
+                  rarity: Rarity.Epic,
+                  reqLevel: level,
+                  signature: { name: sig.name, key: sig.key, bonusCritChance: sig.bonusCritChance },
+                },
+              },
+            ]
+          : []),
       ],
       pickOne: {
         picks: 2,

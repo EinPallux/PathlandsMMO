@@ -22,6 +22,7 @@ import {
   levelProgressFromTotalXp,
   totalXpToReachLevel,
   xpToCompleteLevel,
+  scaledQuestXp,
   baseStatsAtLevel,
   addStats,
   canEquip,
@@ -43,6 +44,9 @@ import {
   SETTLEMENTS,
   isAlive,
   inCombat,
+  BANK_SIZE,
+  WAYMEET_WELCOME,
+  type MailLetterSave,
   type CombatState,
   type SpawnerState,
   type SpawnRegion,
@@ -58,6 +62,9 @@ import {
   type ConsumableEffect,
 } from '@pathlands/shared';
 import { ModelObject } from '../engine/voxelModel.js';
+import { audio } from '../platform/audio.js';
+import { Vfx, SCHOOL_COLOR } from '../engine/vfx.js';
+import { HOLLOWS } from '@pathlands/shared';
 import {
   useStore,
   type CombatUi,
@@ -66,6 +73,8 @@ import {
   type InventoryUi,
   type Nameplate,
   type WaystoneUi,
+  type BankUi,
+  type MailUi,
 } from './store.js';
 
 const PLAYER_ID = 'player';
@@ -90,6 +99,8 @@ export interface Progression {
   inventory: ItemStackSave[];
   equipment: Record<string, ItemDef>;
   discoveredWaystones: string[];
+  bank?: ItemStackSave[];
+  mail?: MailLetterSave[];
 }
 
 interface RenderEnemy {
@@ -119,6 +130,7 @@ interface WorldFloater {
 
 export class CombatDirector {
   private readonly scene: THREE.Scene;
+  private readonly vfx: Vfx;
   private readonly world: World;
   private readonly respawnAt: (x: number, z: number) => void;
   private readonly spawnX: number;
@@ -134,6 +146,9 @@ export class CombatDirector {
   private inventory: ItemStackSave[];
   private equipment: Record<string, ItemDef>;
   private discovered: Set<string>;
+  /** Waymeet vault contents + the mail inbox (GDD §Supporting systems). */
+  private bank: ItemStackSave[];
+  private mail: MailLetterSave[];
 
   /** The merchant the player is currently trading with (null = no vendor open). */
   private activeVendor: { name: string; stock: VendorStockItem[] } | null = null;
@@ -158,6 +173,7 @@ export class CombatDirector {
   private readonly ctx: { heightAt: (x: number, z: number) => number };
   private readonly tmp = new THREE.Vector3();
   private hudTimer = 0;
+  private blightTimer = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -169,6 +185,7 @@ export class CombatDirector {
     progression?: Progression,
   ) {
     this.scene = scene;
+    this.vfx = new Vfx(scene);
     this.world = world;
     this.cls = cls;
     this.level = Math.max(1, progression?.level ?? START_LEVEL);
@@ -177,6 +194,8 @@ export class CombatDirector {
     this.inventory = progression?.inventory ? [...progression.inventory] : [];
     this.equipment = progression?.equipment ? { ...progression.equipment } : {};
     this.discovered = new Set(progression?.discoveredWaystones ?? []);
+    this.bank = progression?.bank ? [...progression.bank] : [];
+    this.mail = progression?.mail ? progression.mail.map((m) => ({ ...m })) : [];
     this.spawnX = spawnX;
     this.spawnZ = spawnZ;
     this.respawnAt = respawnAt;
@@ -189,6 +208,11 @@ export class CombatDirector {
     this.regions = [...WORLD_SPAWNS];
 
     this.state.entities.set(PLAYER_ID, this.makePlayer(spawnX, spawnZ));
+    // A character who is already past the Waymeet band (migrated/high-level save)
+    // never crosses level 5 in-session, so back-fill the Steward's letter here.
+    // deliverMail dedups by id, so this is a no-op if it was already received.
+    if (this.level >= 5) this.deliverMail({ ...WAYMEET_WELCOME, claimed: false });
+    this.publishBankMail();
   }
 
   /** Sum equipped items into a stat block + armor/crit (fed to deriveCombatStats). */
@@ -249,6 +273,12 @@ export class CombatDirector {
   }
   get characterWaystones(): string[] {
     return [...this.discovered];
+  }
+  get characterBank(): ItemStackSave[] {
+    return this.bank.map((s) => ({ item: s.item, qty: s.qty }));
+  }
+  get characterMail(): MailLetterSave[] {
+    return this.mail.map((m) => ({ ...m }));
   }
 
   /** True while the player is flagged in combat (drives mount dismount rules). */
@@ -421,6 +451,76 @@ export class CombatDirector {
     useStore.getState().setVendor(null);
   }
 
+  // --- bank + mail (GDD §Supporting systems) ---------------------------------
+
+  /** Move a bag stack into the Waymeet vault (if the vault has room). */
+  depositItem(bagIndex: number): void {
+    const stack = this.inventory[bagIndex];
+    if (!stack) return;
+    if (this.bank.length >= BANK_SIZE) {
+      this.pushFloater(this.player, 'Vault full', 'miss');
+      return;
+    }
+    this.inventory.splice(bagIndex, 1);
+    this.bank.push(stack);
+    this.publishBankMail();
+    this.rebuildPlayer(); // republishes the bag
+  }
+
+  /** Move a vault stack back into the bag (if the bag has room). */
+  withdrawItem(bankIndex: number): void {
+    const stack = this.bank[bankIndex];
+    if (!stack) return;
+    if (this.inventory.length >= this.bagCap()) {
+      this.pushFloater(this.player, 'Bag full', 'miss');
+      return;
+    }
+    this.bank.splice(bankIndex, 1);
+    this.inventory.push(stack);
+    this.publishBankMail();
+    this.rebuildPlayer();
+  }
+
+  /** Claim a letter's gold gift (once); the letter stays in the inbox as read. */
+  claimMail(id: string): void {
+    const letter = this.mail.find((m) => m.id === id);
+    if (!letter || letter.claimed) return;
+    letter.claimed = true;
+    if (letter.gold && letter.gold > 0) {
+      this.gold += letter.gold;
+      this.pushFloater(this.player, `+${letter.gold} gold`, 'xp');
+    }
+    this.publishBankMail();
+  }
+
+  /** Deliver a new letter into the inbox (world NPCs; player mail is Phase 6). */
+  deliverMail(letter: MailLetterSave): void {
+    if (this.mail.some((m) => m.id === letter.id)) return; // never duplicate
+    this.mail.push({ ...letter });
+    this.publishBankMail();
+  }
+
+  /** Push the vault + inbox to the store (they change rarely, so only on demand). */
+  private publishBankMail(): void {
+    const bank: BankUi = {
+      size: BANK_SIZE,
+      items: this.bank.map((s) => ({ item: s.item, qty: s.qty })),
+    };
+    const mail: MailUi = {
+      letters: this.mail.map((m) => ({
+        id: m.id,
+        sender: m.sender,
+        subject: m.subject,
+        body: m.body,
+        gold: m.gold ?? 0,
+        claimed: m.claimed,
+      })),
+      unread: this.mail.filter((m) => !m.claimed && (m.gold ?? 0) > 0).length,
+    };
+    useStore.getState().setBank(bank);
+    useStore.getState().setMail(mail);
+  }
+
   /** Push the current vendor stock + buyback list to the store. */
   private publishVendor(): void {
     if (!this.activeVendor) {
@@ -439,6 +539,11 @@ export class CombatDirector {
     return skillsKnownAt(this.cls, this.level).slice(0, 10);
   }
 
+  /** Set the VFX particle-density multiplier (graphics setting). */
+  setVfxDensity(mult: number): void {
+    this.vfx.setDensity(mult);
+  }
+
   // --- input intents ---------------------------------------------------------
 
   castSlot(slot: number): void {
@@ -446,6 +551,20 @@ export class CombatDirector {
     const skill = skills[slot];
     if (!skill) return;
     applyIntent(this.state, PLAYER_ID, { type: 'CastSkill', skillId: skill.id });
+    audio.sfx('cast');
+    // Cast flash at the caster, tinted by the skill's damage school.
+    const school = skill.effects.find((e) => 'school' in e)?.school ?? 'physical';
+    const p = this.player;
+    this.vfx.burst(p.x, p.y + 1.1, p.z, {
+      count: 12,
+      color: SCHOOL_COLOR[school] ?? SCHOOL_COLOR.physical!,
+      speed: 2,
+      up: 1.4,
+      life: 0.45,
+      size: 0.2,
+      gravity: -1.5,
+      spread: 0.3,
+    });
   }
 
   toggleAutoAttack(): void {
@@ -513,6 +632,17 @@ export class CombatDirector {
       this.pushFloater(this.player, `Waystone attuned! +${bonus} XP`, 'xp');
       this.relevelIfNeeded();
       this.onWaystoneAttuned?.(ws.id); // Deed progress (new attunes only)
+      // Attunement: a column of Waystone-blue light rises from the stone.
+      this.vfx.burst(this.player.x, this.player.y + 0.5, this.player.z, {
+        count: 40,
+        color: [0.45, 0.75, 1.0],
+        speed: 1.4,
+        up: 4.5,
+        life: 1.3,
+        size: 0.3,
+        gravity: -3,
+        spread: 0.5,
+      });
     }
     this.onWaystoneUsed?.(ws.id); // quest `use` objectives fire even if re-visited
     useStore.getState().openTravel();
@@ -547,7 +677,8 @@ export class CombatDirector {
 
   /** Grant a completed quest's reward: XP, gold, fixed + chosen items, Waystone. */
   grantReward(reward: QuestReward, choiceIndex: number): void {
-    this.gainXp(reward.xp);
+    // Quest XP is scaled by the §5 pace tuning (QUEST_XP_SCALE) so quests lead the climb.
+    this.gainXp(scaledQuestXp(reward.xp));
     if (reward.gold) {
       this.gold += reward.gold;
       this.pushFloater(this.player, `+${reward.gold}c`, 'xp');
@@ -616,13 +747,29 @@ export class CombatDirector {
   private relevelIfNeeded(): void {
     const prog = levelProgressFromTotalXp(this.totalXp);
     if (prog.level <= this.level) return;
+    const crossedFive = this.level < 5 && prog.level >= 5;
     this.level = prog.level;
+    audio.sfx('levelup');
+    // Level-up: a golden fountain rising off the player.
+    const lp = this.player;
+    this.vfx.burst(lp.x, lp.y + 0.4, lp.z, {
+      count: 46,
+      color: [1.0, 0.85, 0.35],
+      speed: 2.5,
+      up: 5,
+      life: 1.1,
+      size: 0.26,
+      gravity: -5,
+      spread: 0.3,
+    });
     const cur = this.player;
     const leveled = this.makePlayer(cur.x, cur.z);
     leveled.targetId = cur.targetId;
     leveled.autoAttack = cur.autoAttack;
     this.state.entities.set(PLAYER_ID, leveled);
     this.pushFloater(leveled, `Level ${this.level}!`, 'xp');
+    // Reaching level 5 opens Waymeet (WORLD.md) — the Steward writes a welcome.
+    if (crossedFive) this.deliverMail({ ...WAYMEET_WELCOME, claimed: false });
   }
 
   private dist(a: CombatEntity, b: CombatEntity): number {
@@ -691,9 +838,41 @@ export class CombatDirector {
       const kind = ev.type === 'heal' ? 'heal' : ev.crit ? 'crit' : 'damage';
       const text = ev.amount <= 0 && ev.type === 'damage' ? 'absorb' : String(ev.amount);
       this.pushFloater(target, text, kind);
+      // Hit sparks: a small burst at the struck body (green for heals, gold on crit).
+      if (ev.type === 'heal') {
+        this.vfx.burst(target.x, target.y + 1.0, target.z, {
+          count: 8,
+          color: [0.4, 1.0, 0.5],
+          speed: 1.6,
+          up: 1.2,
+          life: 0.5,
+          size: 0.16,
+          gravity: -1,
+        });
+      } else if (ev.amount > 0) {
+        this.vfx.burst(target.x, target.y + 1.0, target.z, {
+          count: ev.crit ? 14 : 8,
+          color: ev.crit ? [1.0, 0.85, 0.3] : [1.0, 0.5, 0.35],
+          speed: ev.crit ? 4 : 3,
+          life: 0.4,
+          size: ev.crit ? 0.2 : 0.14,
+        });
+      }
     } else if (ev.type === 'xp') {
       this.gainXp(ev.amount);
     } else if (ev.type === 'death') {
+      const victim = this.state.entities.get(ev.entityId);
+      if (victim) {
+        this.vfx.burst(victim.x, victim.y + 0.9, victim.z, {
+          count: 20,
+          color: [0.55, 0.55, 0.6],
+          speed: 2.6,
+          up: 1,
+          life: 0.7,
+          size: 0.22,
+          gravity: -3,
+        });
+      }
       this.lootFrom(ev.entityId, ev.killerId);
     } else if (ev.type === 'bossPhase') {
       const boss = this.state.entities.get(ev.entityId);
@@ -709,6 +888,7 @@ export class CombatDirector {
     const def = enemyById(victim.enemyId);
     if (!def) return;
     this.onEnemyKilled?.(victim.enemyId); // quest kill/collect/boss objectives
+    audio.sfx('death');
     const table = buildEnemyLootTable(def, victim.level);
     const result = rollLoot(table, this.state.rng, { forClass: this.cls });
     if (result.gold > 0) {
@@ -738,9 +918,39 @@ export class CombatDirector {
     if (this.worldFloaters.length > 40) this.worldFloaters.shift();
   }
 
+  // The Verdigris Blight seeps up around the Hollows: a slow drizzle of green
+  // spore-motes drifting upward, denser the closer you are to a Hollow mouth.
+  // Density scales with the VFX-density setting (Vfx.burst gates on it).
+  private emitBlight(dt: number): void {
+    const BLIGHT_RADIUS = 55;
+    const p = this.player;
+    let nearest = Infinity;
+    for (const h of HOLLOWS) {
+      const d = Math.hypot(p.x - h.x, p.z - h.z);
+      if (d < nearest) nearest = d;
+    }
+    if (nearest > BLIGHT_RADIUS) return;
+    this.blightTimer += dt;
+    if (this.blightTimer < 0.09) return;
+    this.blightTimer = 0;
+    const intensity = 1 - nearest / BLIGHT_RADIUS; // 0 at the edge → 1 at the mouth
+    this.vfx.burst(p.x, p.y + 0.5, p.z, {
+      count: 2 + Math.round(intensity * 3),
+      color: [0.45, 0.82, 0.3], // sickly verdigris green
+      speed: 0.4,
+      up: 1.0,
+      life: 2.8,
+      size: 0.22,
+      gravity: 0.5, // positive → spores drift upward
+      spread: 7,
+    });
+  }
+
   // --- render + HUD ----------------------------------------------------------
 
   render(dt: number, alpha: number, camera: THREE.PerspectiveCamera, sw: number, sh: number): void {
+    this.vfx.update(dt);
+    this.emitBlight(dt);
     this.syncRenderEnemies(dt, alpha);
     this.stepDying(dt);
     this.hudTimer += dt;
@@ -967,6 +1177,7 @@ export class CombatDirector {
     }
     this.renders.clear();
     this.dying = [];
+    this.vfx.dispose();
   }
 }
 

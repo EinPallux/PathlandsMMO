@@ -97,6 +97,10 @@ export function CraftingPanel(): JSX.Element | null {
             ))}
         </div>
       ))}
+      <div style={{ color: colors.inkDim, fontSize: 10, marginTop: 10, lineHeight: 1.4 }}>
+        Keep crafting to discover rare recipes — a master smith or alchemist sometimes learns one
+        mid-craft.
+      </div>
     </div>
   );
 }

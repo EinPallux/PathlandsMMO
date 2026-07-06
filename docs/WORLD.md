@@ -36,6 +36,14 @@ One landmass, **~3072×3072 voxels** (1 voxel = 1 m), height 0–192. No zone li
 
 ## 3. Zones
 
+> **Implementation status (Phase 4 Part 14).** The main story **"The Waymaker's Path" is
+> authored end to end — all six chapters, levels 1–30** (`shared/data/quests/content.ts`),
+> from the Brookhollow tutorial to the Sunken Crypt finale, with Hollow boss lead-ins in
+> every zone. **The per-zone side-quest budgets below are now filled: 111 quests across 24
+> givers**, every level band 1→30 carrying at least six optional quests (kill / collect /
+> explore / courier). Named-rare hunt targets (§4) are placed. Only the ~10 profession-intro
+> quests remain as an optional follow-up.
+
 ### 3.1 Heartmead Vale — starter zone (levels 1–6)
 
 Rolling flower meadows, brooks, orchards, wheat fields. Safe, golden, tutorializing.
@@ -98,6 +106,24 @@ The hub: **Waymeet**, a walled market city where the Old Roads cross, built from
 ## 4. Named Rares (endgame hunt targets, ~15)
 
 At least two per zone, wandering, 2–6 h respawn, unique-drop tables: Old Thornhide (boar, Vale) · the Pale Stag (Weald) · Deadeye Moll (Foothills) · Shardback Alpha (Peaks) · Gruulmarg (Trollmoor) · Wreckmaw (Coast) · …one per remaining slot authored during Phase 3/4 content work, recorded here as added.
+
+> **Implementation (Phase 4 Part 12).** Eight named rare-elites are live
+> (`shared/data/enemies.ts`, `named: true`, Elite rank, reusing a family model; spawn
+> points + ~15 min respawns in `shared/data/spawns.ts`): **Old Thornhide** (Vale boar) ·
+> **Grislefang** (Weald wolf) · **Duskwing** (Foothills cave-bat) · **Boulderjaw** (Foothills
+> grub) · **Gnash-Cowl** (Foothills gnoll) · **Shardback Alpha** (Peaks crystalback) ·
+> **Gruulmarg the War-Chief** (Trollmoor troll) · **Wreckmaw** (Coast bog-drake). They drop
+> Elite-tier loot and feed the **Rarebane** Deed (slay 5). The Pale Stag / Deadeye Moll from
+> the list above already exist as quest targets. Remaining toward ~15: a few more slots +
+> bespoke unique-drop tables (Phase-5 loot polish).
+
+> **Implementation (Phase 4 Part 17) — world event.** The **Grand Waystone** world-boss event
+> is live south of Waymeet on the crypt road (`worldEvent.ts` `GRAND_WAYSTONE_EVENT`, site
+> 1712,2050): a Boss-rank **Grand Warden** (`bossGrandWarden`) guards the dormant Grand Waystone
+> in a `count: 1`, ~7.5-min-respawn `WORLD_SPAWNS` region. It wards itself and calls a stone-guard
+> add, drops the **Grand Waystone Shard** signature Epic, and on death advances the **Waystone-
+> Restorer** Deed (new `worldEvent` metric) with the network-waking announcement. Solo-tuned at
+> the cap; the Phase-6 world boss just adds player scaling on top of this same encounter.
 
 ## 5. Content Budget Reconciliation (vs. GDD)
 

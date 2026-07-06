@@ -267,6 +267,8 @@ export type PropId =
   | 'oreCrystal'
   | 'herbMeadow'
   | 'herbFen'
+  | 'herbCavemoss'
+  | 'herbDuskpetal'
   | 'fishingSpot';
 
 let cache: Map<PropId, VoxelModel> | null = null;
@@ -296,6 +298,8 @@ function buildAll(): Map<PropId, VoxelModel> {
   m.set('oreCrystal', oreVein('oreCrystal', pal.crystalRock));
   m.set('herbMeadow', herbNode('herbMeadow', 0x7fc9e8));
   m.set('herbFen', herbNode('herbFen', 0xb07fe8));
+  m.set('herbCavemoss', herbNode('herbCavemoss', 0x6a9a4a));
+  m.set('herbDuskpetal', herbNode('herbDuskpetal', 0x8a4ac9));
   m.set('fishingSpot', fishingSpot());
   return m;
 }
@@ -329,5 +333,7 @@ export const PROP_IDS: readonly PropId[] = [
   'oreCrystal',
   'herbMeadow',
   'herbFen',
+  'herbCavemoss',
+  'herbDuskpetal',
   'fishingSpot',
 ];

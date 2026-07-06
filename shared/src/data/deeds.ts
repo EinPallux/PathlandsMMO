@@ -80,6 +80,24 @@ export const DEEDS: readonly DeedDef[] = [
     threshold: 3,
     pathPoints: 4,
   },
+  {
+    id: 'd_rarebane',
+    name: 'Rarebane',
+    description: 'Slay 5 named rare-elites.',
+    category: DeedCategory.Combat,
+    metric: 'rare',
+    threshold: 5,
+    pathPoints: 3,
+  },
+  {
+    id: 'd_waystone_restorer',
+    name: 'Waystone-Restorer',
+    description: 'Restore the Grand Waystone by defeating its Warden.',
+    category: DeedCategory.Combat,
+    metric: 'worldEvent',
+    threshold: 1,
+    pathPoints: 4,
+  },
   // --- Quests ---
   {
     id: 'd_helping_hand',
@@ -98,6 +116,15 @@ export const DEEDS: readonly DeedDef[] = [
     metric: 'quest',
     threshold: 15,
     pathPoints: 3,
+  },
+  {
+    id: 'd_taskmaster',
+    name: 'Taskmaster',
+    description: 'Complete 10 daily bounties.',
+    category: DeedCategory.Quests,
+    metric: 'bounty',
+    threshold: 10,
+    pathPoints: 2,
   },
   // --- Professions ---
   {

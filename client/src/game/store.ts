@@ -3,7 +3,14 @@
 // call back into the game via the registered command handlers.
 
 import { create } from 'zustand';
-import { CharacterClass, type ItemDef, type ItemStackSave } from '@pathlands/shared';
+import {
+  CharacterClass,
+  defaultKeybinds,
+  type ItemDef,
+  type ItemStackSave,
+  type ShadowQuality,
+  type VfxDensity,
+} from '@pathlands/shared';
 
 export interface Nameplate {
   id: string;
@@ -136,6 +143,15 @@ export interface QuestEntryUi {
   objectives: QuestObjectiveUi[];
 }
 
+/** A quest marker to draw on the world map + minimap (world coords). */
+export interface QuestMarker {
+  x: number;
+  z: number;
+  /** Giver has a new quest (!), a turn-in (?), an in-progress quest, or an objective area. */
+  kind: 'available' | 'turnin' | 'progress' | 'objective';
+  label?: string;
+}
+
 export interface QuestDialogUi {
   giver: string;
   giverId: string;
@@ -166,7 +182,18 @@ export interface GatherStatus {
 }
 
 export interface ProfessionsUi {
-  skills: Array<{ id: string; name: string; skill: number; max: number }>;
+  skills: Array<{
+    id: string;
+    name: string;
+    skill: number;
+    max: number;
+    /** Mastery title, unlocked at max skill. */
+    mastery: string;
+    /** Mastery effect description. */
+    masteryDesc: string;
+    /** Whether the mastery is active (skill == max). */
+    mastered: boolean;
+  }>;
   materials: Array<{ id: string; name: string; qty: number }>;
   consumables: Array<{ id: string; name: string; qty: number; effect: string }>;
 }
@@ -209,6 +236,40 @@ export interface JournalUi {
   }>;
 }
 
+export interface BankUi {
+  size: number;
+  items: ItemStackSave[];
+}
+
+export interface BountyUi {
+  hub: string;
+  day: number;
+  board: Array<{
+    id: string;
+    title: string;
+    kind: 'kill' | 'gather';
+    progress: number;
+    count: number;
+    gold: number;
+    xp: number;
+    state: 'available' | 'active' | 'ready' | 'done';
+  }>;
+  activeCount: number;
+}
+
+export interface MailUi {
+  letters: Array<{
+    id: string;
+    sender: string;
+    subject: string;
+    body: string;
+    gold: number;
+    claimed: boolean;
+  }>;
+  /** Letters with an unclaimed gold gift (drives the mail badge). */
+  unread: number;
+}
+
 export interface MountUi {
   ownsAny: boolean;
   mounted: boolean;
@@ -229,6 +290,10 @@ export interface GameCommands {
   teleport(x: number, z: number): void;
   setClass(cls: CharacterClass): void;
   setViewDistance(chunks: number): void;
+  /** Graphics (Phase 5): sun-shadow quality, VFX particle density, resolution scale. */
+  setShadows(q: ShadowQuality): void;
+  setVfxDensity(d: VfxDensity): void;
+  setResolutionScale(scale: number): void;
   toggleFreeFly(): void;
   setDayNightSpeed(speed: number): void;
   setWeather(w: WeatherKind): void;
@@ -255,6 +320,13 @@ export interface GameCommands {
   buyMount(): void;
   toggleMount(): void;
   selectMount(id: string): void;
+  /** Bank + mail: deposit a bag item, withdraw a vault item, claim a letter's gift. */
+  depositItem(index: number): void;
+  withdrawItem(index: number): void;
+  claimMail(id: string): void;
+  /** Bounties: accept a posted bounty, turn a completed one in. */
+  acceptBounty(id: string): void;
+  turnInBounty(id: string): void;
   /** Quests: accept, turn in (with a reward-choice index), abandon, pin, close dialog. */
   acceptQuest(id: string): void;
   turnInQuest(id: string, choiceIndex: number): void;
@@ -269,6 +341,8 @@ export interface GameCommands {
 export interface UiState {
   ready: boolean;
   loadProgress: number; // 0..1
+  /** WebGL context lost → rendering paused, awaiting GPU restore (Phase 5). */
+  contextLost: boolean;
 
   fps: number;
   drawCalls: number;
@@ -294,6 +368,9 @@ export interface UiState {
   showMap: boolean;
   showDev: boolean;
   viewDistance: number;
+  shadows: ShadowQuality;
+  vfxDensity: VfxDensity;
+  resolutionScale: number;
   weather: WeatherKind;
   selectedClass: CharacterClass;
 
@@ -316,6 +393,7 @@ export interface UiState {
   questTracker: QuestEntryUi[];
   questDialog: QuestDialogUi | null;
   questToasts: QuestToast[];
+  questMarkers: QuestMarker[];
   showQuestLog: boolean;
 
   nearbyNode: { label: string; kind: string } | null;
@@ -327,6 +405,15 @@ export interface UiState {
   journal: JournalUi | null;
   showJournal: boolean;
   mount: MountUi | null;
+  bank: BankUi | null;
+  mail: MailUi | null;
+  showBank: boolean;
+  bounties: BountyUi | null;
+  showBounties: boolean;
+  /** Rebindable action → KeyboardEvent.code (read live by the game each frame). */
+  keybinds: Record<string, string>;
+  masterVolume: number;
+  showSettings: boolean;
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
@@ -346,6 +433,7 @@ export interface UiState {
   setQuestTracker: (q: QuestEntryUi[]) => void;
   setQuestDialog: (q: QuestDialogUi | null) => void;
   setQuestToasts: (t: QuestToast[]) => void;
+  setQuestMarkers: (m: QuestMarker[]) => void;
   toggleQuestLog: () => void;
   setNearbyNode: (n: { label: string; kind: string } | null) => void;
   setGatherStatus: (g: GatherStatus | null) => void;
@@ -356,6 +444,19 @@ export interface UiState {
   setJournal: (j: JournalUi) => void;
   toggleJournal: () => void;
   setMount: (m: MountUi) => void;
+  setBank: (b: BankUi) => void;
+  setMail: (m: MailUi) => void;
+  toggleBank: () => void;
+  setBounties: (b: BountyUi) => void;
+  toggleBounties: () => void;
+  setKeybinds: (k: Record<string, string>) => void;
+  setMasterVolume: (v: number) => void;
+  setGraphics: (g: {
+    shadows?: ShadowQuality;
+    vfxDensity?: VfxDensity;
+    resolutionScale?: number;
+  }) => void;
+  toggleSettings: () => void;
   openTravel: () => void;
   closeTravel: () => void;
   openDialogue: (name: string, lines: string[]) => void;
@@ -364,6 +465,7 @@ export interface UiState {
 }
 
 export const useStore = create<UiState>((set) => ({
+  contextLost: false,
   ready: false,
   loadProgress: 0,
 
@@ -389,6 +491,9 @@ export const useStore = create<UiState>((set) => ({
   showMap: false,
   showDev: true,
   viewDistance: 7,
+  shadows: 'low',
+  vfxDensity: 'full',
+  resolutionScale: 1,
   weather: 'clear',
   selectedClass: CharacterClass.Warrior,
 
@@ -410,6 +515,7 @@ export const useStore = create<UiState>((set) => ({
   questTracker: [],
   questDialog: null,
   questToasts: [],
+  questMarkers: [],
   showQuestLog: false,
 
   nearbyNode: null,
@@ -421,6 +527,14 @@ export const useStore = create<UiState>((set) => ({
   journal: null,
   showJournal: false,
   mount: null,
+  bank: null,
+  mail: null,
+  showBank: false,
+  bounties: null,
+  showBounties: false,
+  keybinds: defaultKeybinds(),
+  masterVolume: 0.8,
+  showSettings: false,
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
@@ -440,6 +554,7 @@ export const useStore = create<UiState>((set) => ({
   setQuestTracker: (questTracker) => set({ questTracker }),
   setQuestDialog: (questDialog) => set({ questDialog }),
   setQuestToasts: (questToasts) => set({ questToasts }),
+  setQuestMarkers: (questMarkers) => set({ questMarkers }),
   toggleQuestLog: () => set((st) => ({ showQuestLog: !st.showQuestLog })),
   setNearbyNode: (nearbyNode) => set({ nearbyNode }),
   setGatherStatus: (gatherStatus) => set({ gatherStatus }),
@@ -450,6 +565,15 @@ export const useStore = create<UiState>((set) => ({
   setJournal: (journal) => set({ journal }),
   toggleJournal: () => set((st) => ({ showJournal: !st.showJournal })),
   setMount: (mount) => set({ mount }),
+  setBank: (bank) => set({ bank }),
+  setMail: (mail) => set({ mail }),
+  toggleBank: () => set((st) => ({ showBank: !st.showBank })),
+  setBounties: (bounties) => set({ bounties }),
+  toggleBounties: () => set((st) => ({ showBounties: !st.showBounties })),
+  setKeybinds: (keybinds) => set({ keybinds }),
+  setMasterVolume: (masterVolume) => set({ masterVolume }),
+  setGraphics: (g) => set(g),
+  toggleSettings: () => set((st) => ({ showSettings: !st.showSettings })),
   openTravel: () => set({ showTravel: true }),
   closeTravel: () => set({ showTravel: false }),
   openDialogue: (name, lines) => set({ dialogue: { name, lines, index: 0 } }),
