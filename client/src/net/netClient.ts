@@ -1,0 +1,455 @@
+// The browser side of the Phase-6 netcode. Mirror of the server gateway: it sends the
+// local player's intents, reconciles its own prediction against the server's authority,
+// and renders the OTHER players the server reports — interpolated in the recent past so
+// their motion is smooth despite a 10 Hz wire (ARCH §7). It is entirely OPT-IN: the game
+// constructs a NetClient only when a server URL is configured, so the single-player
+// build stays server-free.
+//
+// Three responsibilities live here:
+//   1. Reconciliation — keep a history of unacknowledged inputs; when the server reports
+//      our authoritative state + the last input it applied, the game resets prediction
+//      to that state and replays the unacked inputs (see game.ts reconcileSelf).
+//   2. Remote interpolation — buffer snapshots on the SERVER's timeline (each carries a
+//      server tick) so jittery arrival can't warp a remote's apparent speed; render
+//      ~150 ms behind an estimated server clock.
+//   3. Connection UX — measure RTT with pings and expose a connection phase + latency.
+
+import {
+  decodeServer,
+  encodeClient,
+  lerp,
+  lerpAngle,
+  NET_PROTOCOL_VERSION,
+  CharacterClass,
+  CHARACTER_CLASSES,
+  TICK_DURATION_MS,
+  type Intent,
+  type MoveIntent,
+  type MoveState,
+  type NetPlayer,
+  type ServerSelf,
+} from '@pathlands/shared';
+
+/** What the renderer needs to draw one remote player this frame. */
+export interface RemoteRenderState {
+  id: string;
+  name: string;
+  cls: CharacterClass;
+  level: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  move: MoveState;
+}
+
+export type NetPhase = 'connecting' | 'connected' | 'reconnecting';
+
+/** Connection status surfaced to the UI (indicator, reconnect notice, latency). */
+export interface NetStatus {
+  phase: NetPhase;
+  connected: boolean;
+  /** Number of other players currently visible. */
+  peers: number;
+  /** Our own session id, once welcomed. */
+  you: string | null;
+  /** EWMA-smoothed round-trip latency in ms; null until the first pong / after a drop. */
+  latencyMs: number | null;
+}
+
+export interface NetClientOptions {
+  url: string;
+  identity: { name: string; cls: string; level: number };
+  /** How far in the past to render remotes (ms). ≥ ~1.5× the wire interval (ARCH §7). */
+  renderDelayMs?: number;
+  /** Notified whenever connection status changes. */
+  onStatus?: (status: NetStatus) => void;
+}
+
+interface Sample {
+  /** Position on the SERVER timeline (ms) — jitter-free spacing between snapshots. */
+  tMs: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  move: MoveState;
+}
+
+interface Track {
+  name: string;
+  cls: CharacterClass;
+  level: number;
+  samples: Sample[];
+}
+
+const DEFAULT_RENDER_DELAY_MS = 150;
+const SAMPLE_HISTORY_MS = 1000;
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 8000;
+/** Cap on buffered unacked inputs (~12.8 s at 20 Hz) — a stalled ack means disconnect. */
+const MAX_UNACKED_INPUTS = 256;
+/** Smoothing for the local→server clock estimate (low ⇒ steadier, slower to adapt). */
+const CLOCK_ALPHA = 0.1;
+const PING_INTERVAL_MS = 1000;
+const PING_TIMEOUT_MS = 5000;
+const RTT_ALPHA = 0.2;
+/** If no pong arrives within this window the link is presumed dead → force a reconnect. */
+const LIVENESS_TIMEOUT_MS = 3 * PING_INTERVAL_MS;
+
+function toClass(raw: string): CharacterClass {
+  return (CHARACTER_CLASSES as readonly string[]).includes(raw)
+    ? (raw as CharacterClass)
+    : CharacterClass.Warrior;
+}
+
+export class NetClient {
+  you: string | null = null;
+  seed: number | null = null;
+  connected = false;
+
+  private ws: WebSocket | null = null;
+  private readonly tracks = new Map<string, Track>();
+  private seq = 0;
+  private localTick = 0;
+  private readonly renderDelayMs: number;
+  private closedByUser = false;
+  private reconnectMs = RECONNECT_BASE_MS;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // --- reconciliation ---
+  private readonly history: { seq: number; intent: MoveIntent }[] = [];
+  private pendingSelf: ServerSelf | null = null;
+
+  // --- remote interpolation clock (local→server offset estimate) ---
+  private clockOffsetMs = 0;
+  private clockInit = false;
+
+  // --- connection UX ---
+  private phase: NetPhase = 'connecting';
+  private latencyMs: number | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private pingId = 0;
+  private readonly inflightPings = new Map<number, number>();
+  /** Local time of the last proof of server liveness (pong/welcome); null while down. */
+  private lastPongMs: number | null = null;
+
+  constructor(private readonly opts: NetClientOptions) {
+    this.renderDelayMs = opts.renderDelayMs ?? DEFAULT_RENDER_DELAY_MS;
+  }
+
+  connect(): void {
+    this.closedByUser = false;
+    if (this.phase !== 'reconnecting') this.phase = 'connecting';
+    this.emitStatus();
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(this.opts.url);
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+    this.ws = ws;
+    ws.addEventListener('open', () => {
+      this.reconnectMs = RECONNECT_BASE_MS;
+      this.send({
+        t: 'hello',
+        protocol: NET_PROTOCOL_VERSION,
+        name: this.opts.identity.name,
+        cls: this.opts.identity.cls,
+        level: this.opts.identity.level,
+      });
+      this.startPinging();
+    });
+    ws.addEventListener('message', (ev) => this.onMessage(String(ev.data)));
+    ws.addEventListener('close', () => this.onClose());
+    ws.addEventListener('error', () => ws.close());
+  }
+
+  private onMessage(raw: string): void {
+    const msg = decodeServer(raw);
+    if (msg === null) return;
+    switch (msg.t) {
+      case 'welcome':
+        this.you = msg.you;
+        this.seed = msg.seed;
+        this.connected = true;
+        this.phase = 'connected';
+        this.lastPongMs = this.nowMs(); // the welcome itself proves the link is alive
+        // Fresh session: the server's ack sequence starts over, so reset ours too.
+        this.seq = 0;
+        this.history.length = 0;
+        this.pendingSelf = null;
+        this.clockInit = false;
+        this.updateClock(msg.tick);
+        this.emitStatus();
+        break;
+      case 'snapshot': {
+        this.tracks.clear();
+        this.updateClock(msg.tick);
+        for (const p of msg.players) this.ingest(p, msg.tick);
+        this.emitStatus();
+        break;
+      }
+      case 'delta': {
+        this.updateClock(msg.tick);
+        for (const p of msg.players) this.ingest(p, msg.tick);
+        for (const id of msg.gone) this.tracks.delete(id);
+        this.emitStatus();
+        break;
+      }
+      case 'self':
+        this.pendingSelf = msg; // last-wins — only the newest authoritative state matters
+        break;
+      case 'pong': {
+        this.lastPongMs = this.nowMs(); // any pong proves the server is alive
+        const sent = this.inflightPings.get(msg.id);
+        if (sent !== undefined) {
+          this.inflightPings.delete(msg.id);
+          const rtt = this.nowMs() - sent;
+          this.latencyMs =
+            this.latencyMs === null ? rtt : this.latencyMs * (1 - RTT_ALPHA) + rtt * RTT_ALPHA;
+          this.emitStatus();
+        }
+        break;
+      }
+      case 'error':
+        // The server rejected us and will close the socket. A protocol mismatch won't
+        // resolve on retry, so stop the reconnect loop for that case.
+        if (msg.code === 'protocol') this.closedByUser = true;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Nudge the local→server clock offset toward this frame's server time (EWMA). */
+  private updateClock(serverTick: number): void {
+    const off = this.nowMs() - serverTick * TICK_DURATION_MS;
+    this.clockOffsetMs = this.clockInit
+      ? this.clockOffsetMs * (1 - CLOCK_ALPHA) + off * CLOCK_ALPHA
+      : off;
+    this.clockInit = true;
+  }
+
+  /** Estimated current server time in ms (same clock the sample timeline uses). */
+  private serverNowMs(): number {
+    return this.nowMs() - this.clockOffsetMs;
+  }
+
+  private ingest(p: NetPlayer, serverTick: number): void {
+    if (p.id === this.you) return; // our own player is drawn by local prediction
+    let track = this.tracks.get(p.id);
+    if (track === undefined) {
+      track = { name: p.name, cls: toClass(p.cls), level: p.level, samples: [] };
+      this.tracks.set(p.id, track);
+    } else {
+      track.name = p.name;
+      track.cls = toClass(p.cls);
+      track.level = p.level;
+    }
+    track.samples.push({
+      tMs: serverTick * TICK_DURATION_MS,
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      yaw: p.yaw,
+      move: p.move,
+    });
+    // Prune history older than a second of server time, keeping at least two to bracket.
+    const cutoff = this.serverNowMs() - SAMPLE_HISTORY_MS;
+    while (track.samples.length > 2 && track.samples[0]!.tMs < cutoff) track.samples.shift();
+  }
+
+  private onClose(): void {
+    this.connected = false;
+    this.ws = null;
+    this.stopPinging();
+    this.latencyMs = null;
+    this.lastPongMs = null;
+    // Drop the session identity so the sendIntent gate (`you === null`) closes until the
+    // next welcome. Otherwise, during the reconnect window (new socket OPEN but no welcome
+    // yet), the game loop would keep sending intents on the OLD seq counter to the server's
+    // brand-new player, poisoning its sequence gate so every real input after the welcome
+    // reset is dropped — a hard freeze after every reconnect. welcome reseeds all of these.
+    this.you = null;
+    this.seq = 0;
+    this.history.length = 0;
+    this.pendingSelf = null;
+    this.clockInit = false;
+    if (!this.closedByUser) {
+      this.phase = 'reconnecting';
+      this.scheduleReconnect();
+    }
+    this.emitStatus();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer !== null) return;
+    const delay = this.reconnectMs;
+    this.reconnectMs = Math.min(RECONNECT_MAX_MS, this.reconnectMs * 2);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.closedByUser) this.connect();
+    }, delay);
+  }
+
+  // --- ping / RTT ---
+
+  private startPinging(): void {
+    this.stopPinging();
+    // Start the liveness clock now, so a server that never answers a single ping from the
+    // very start is still caught by the timeout (rather than leaving lastPongMs null).
+    this.lastPongMs = this.nowMs();
+    this.sendPing();
+    this.pingTimer = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
+  }
+
+  private stopPinging(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+    this.inflightPings.clear();
+  }
+
+  private sendPing(): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN) return;
+    const now = this.nowMs();
+    // Application-level liveness: on a silent server death / partition (no TCP RST) the
+    // socket stays OPEN and 'close' never fires. If no pong has arrived in the liveness
+    // window, close the socket ourselves so onClose() drives the reconnect/backoff path.
+    if (this.lastPongMs !== null && now - this.lastPongMs > LIVENESS_TIMEOUT_MS) {
+      this.ws.close();
+      return;
+    }
+    // Prune probes whose pong never arrived so a flaky link can't leak memory.
+    for (const [id, t] of this.inflightPings)
+      if (now - t > PING_TIMEOUT_MS) this.inflightPings.delete(id);
+    const id = ++this.pingId;
+    this.inflightPings.set(id, now);
+    this.send({ t: 'ping', id, clientTime: now });
+  }
+
+  // --- intents + reconciliation ---
+
+  /** Send the local player's intent for this tick, recording Moves for reconciliation. */
+  sendIntent(intent: Intent): void {
+    this.localTick += 1;
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.seq += 1;
+    if (intent.type === 'Move') {
+      this.history.push({ seq: this.seq, intent });
+      if (this.history.length > MAX_UNACKED_INPUTS) this.history.shift();
+    }
+    this.send({ t: 'intent', seq: this.seq, tick: this.localTick, intent });
+  }
+
+  /** The newest authoritative self-state (consumed once), or null if none pending. */
+  takeReconcile(): ServerSelf | null {
+    const s = this.pendingSelf;
+    this.pendingSelf = null;
+    return s;
+  }
+
+  /** Prune acked inputs and return the remaining (unacked) intents in send order. */
+  drainInputsAfter(ackedSeq: number): MoveIntent[] {
+    let i = 0;
+    while (i < this.history.length && this.history[i]!.seq <= ackedSeq) i++;
+    if (i > 0) this.history.splice(0, i);
+    return this.history.map((h) => h.intent);
+  }
+
+  // --- remote rendering ---
+
+  /**
+   * Remote players, positions interpolated to (serverNow − renderDelay) between the two
+   * bracketing samples on the server timeline. No extrapolation past the last sample.
+   */
+  remotePlayers(): RemoteRenderState[] {
+    const target = this.serverNowMs() - this.renderDelayMs;
+    const out: RemoteRenderState[] = [];
+    for (const [id, track] of this.tracks) {
+      if (track.samples.length === 0) continue;
+      const s = this.sampleAt(track.samples, target);
+      out.push({
+        id,
+        name: track.name,
+        cls: track.cls,
+        level: track.level,
+        x: s.x,
+        y: s.y,
+        z: s.z,
+        yaw: s.yaw,
+        move: s.move,
+      });
+    }
+    return out;
+  }
+
+  private sampleAt(s: Sample[], target: number): Sample {
+    const first = s[0]!;
+    const last = s[s.length - 1]!;
+    if (target <= first.tMs) return first;
+    if (target >= last.tMs) return last;
+    for (let i = 0; i < s.length - 1; i++) {
+      const a = s[i]!;
+      const b = s[i + 1]!;
+      if (target >= a.tMs && target <= b.tMs) {
+        const span = b.tMs - a.tMs;
+        const alpha = span > 0 ? (target - a.tMs) / span : 0;
+        return {
+          tMs: target,
+          x: lerp(a.x, b.x, alpha),
+          y: lerp(a.y, b.y, alpha),
+          z: lerp(a.z, b.z, alpha),
+          yaw: lerpAngle(a.yaw, b.yaw, alpha),
+          // The state they are moving THROUGH this segment (source), not the one they
+          // arrive in — avoids showing 'idle' while a remote is still visibly sliding.
+          move: a.move,
+        };
+      }
+    }
+    return last;
+  }
+
+  status(): NetStatus {
+    return {
+      phase: this.phase,
+      connected: this.connected,
+      peers: this.tracks.size,
+      you: this.you,
+      latencyMs: this.latencyMs,
+    };
+  }
+
+  dispose(): void {
+    this.closedByUser = true;
+    this.stopPinging();
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws !== null) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.tracks.clear();
+    this.history.length = 0;
+    this.connected = false;
+  }
+
+  private send(msg: Parameters<typeof encodeClient>[0]): void {
+    if (this.ws !== null && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(encodeClient(msg));
+    }
+  }
+
+  private emitStatus(): void {
+    this.opts.onStatus?.(this.status());
+  }
+
+  private nowMs(): number {
+    return performance.now();
+  }
+}

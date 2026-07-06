@@ -7,7 +7,10 @@ import * as THREE from 'three';
 import {
   World,
   WORLD_SEED,
+  SPAWN_X,
+  SPAWN_Z,
   TICK_DT,
+  stepPlayerMovement,
   buildCharacterModel,
   BIOMES,
   CHARACTER_CLASSES,
@@ -24,6 +27,8 @@ import { EntityManager } from '../engine/entityManager.js';
 import { Environment } from '../engine/environment.js';
 import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
+import { RemotePlayerRenderer } from '../engine/remotePlayers.js';
+import { NetClient } from '../net/netClient.js';
 import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
@@ -36,13 +41,18 @@ import { BountyDirector } from './bountyDirector.js';
 import { questGiverById } from '@pathlands/shared';
 import { useStore, type GameCommands } from './store.js';
 
-// Brookhollow plaza, just north of the fountain (which sits at 1536,1536).
-const SPAWN_X = 1536.5;
-const SPAWN_Z = 1524.5;
+// Spawn (Brookhollow plaza, north of the fountain at 1536,1536) is a shared world
+// constant (SPAWN_X/SPAWN_Z) so the Phase-6 server and the client agree on it.
 const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
 const UNDERGROUND_MARGIN = 3;
+
+// Phase-6 reconciliation smoothing: the error offset decays with this time constant
+// (~95% gone in ~3τ ≈ 0.18 s); corrections larger than the snap distance are applied
+// instantly (a teleport/respawn should not visibly slide across the world).
+const RECONCILE_SMOOTH_TAU = 0.06;
+const RECONCILE_SNAP_DIST = 4;
 
 // VFX-density graphics setting → burst-count multiplier (Phase 5).
 const VFX_DENSITY_MULT: Record<VfxDensity, number> = { off: 0, low: 0.5, full: 1 };
@@ -89,6 +99,22 @@ export class Game {
   private adaptTimer = 0;
   /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
   private readonly shadowFocus = new THREE.Vector3();
+  /**
+   * Phase-6 netcode, OPT-IN: constructed only when a server URL is configured
+   * (VITE_PATHLANDS_SERVER), so the single-player build has no server dependency.
+   * The NetClient streams our intents up and other players down; the RemotePlayer-
+   * Renderer draws them. Our own player stays locally predicted.
+   */
+  private readonly net: NetClient | null;
+  private readonly remoteRenderer: RemotePlayerRenderer | null;
+  /**
+   * Cosmetic reconciliation error: the residual between our prediction and the server's
+   * authority after a reconcile, added to the RENDERED position and decayed to zero so a
+   * correction slides in smoothly instead of popping. Zero in the agreeing common case
+   * and in single-player. The authoritative `controller.physics` is never offset — only
+   * the visual follows this.
+   */
+  private readonly errorOffset = { x: 0, y: 0, z: 0 };
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -215,6 +241,27 @@ export class Game {
     this.gather.onMaterialGained = (id, qty) => this.bounties.onGather(id, qty);
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
+
+    // Opt-in multiplayer (Phase 6): connect only when a server URL is configured. The
+    // static single-player deploy leaves this unset and runs exactly as before.
+    const serverUrl = import.meta.env.VITE_PATHLANDS_SERVER as string | undefined;
+    if (serverUrl !== undefined && serverUrl.length > 0) {
+      this.net = new NetClient({
+        url: serverUrl,
+        identity: {
+          name: character?.name ?? 'Wanderer',
+          cls: this.currentClass,
+          level: character?.level ?? 1,
+        },
+        onStatus: (st) =>
+          useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+      });
+      this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+      this.net.connect();
+    } else {
+      this.net = null;
+      this.remoteRenderer = null;
+    }
 
     this.effectiveVD = viewDist;
     this.registerCommands();
@@ -446,6 +493,10 @@ export class Game {
 
     this.handleFrameInput(dt);
 
+    // Phase 6: correct our prediction against the server's authority BEFORE this frame's
+    // ticks, so newly predicted ticks build on the reconciled state. No-op single-player.
+    this.reconcileSelf();
+
     // Fixed-tick simulation with interpolation.
     const active = this.camera.mode === 'thirdPerson';
     this.accumulator += dt;
@@ -468,6 +519,9 @@ export class Game {
         // Keep the player settled (gravity only) while free-flying.
         this.controller.tick(this.sampler, freeInput, this.controller.physics.yaw, TICK_DT);
       }
+      // Phase 6: forward the exact intent we just applied to the authoritative server
+      // (the intent → sim boundary going over the wire). No-op in single-player.
+      this.net?.sendIntent(this.controller.lastIntent);
       const ph = this.controller.physics;
       this.combat.simTick(ph.x, ph.y, ph.z, ph.yaw);
       this.accumulator -= TICK_DT;
@@ -476,6 +530,19 @@ export class Game {
     const alpha = this.accumulator / TICK_DT;
     const rs = this.controller.renderState(alpha);
 
+    // Decay the cosmetic reconciliation offset toward zero and fold it into the rendered
+    // position so a server correction slides in smoothly (≈0 in the agreeing case). The
+    // authoritative physics is untouched — combat/quests read it, not this.
+    if (this.errorOffset.x !== 0 || this.errorOffset.y !== 0 || this.errorOffset.z !== 0) {
+      const decay = Math.exp(-dt / RECONCILE_SMOOTH_TAU);
+      this.errorOffset.x *= decay;
+      this.errorOffset.y *= decay;
+      this.errorOffset.z *= decay;
+      rs.x += this.errorOffset.x;
+      rs.y += this.errorOffset.y;
+      rs.z += this.errorOffset.z;
+    }
+
     // Player model follows the interpolated state, seated up on the mount if any.
     const thirdPerson = this.camera.mode === 'thirdPerson';
     this.playerModel.setTransform(rs.x, rs.y + this.mount.riderYOffset(), rs.z, rs.yaw);
@@ -483,6 +550,12 @@ export class Game {
     this.playerModel.group.visible = thirdPerson;
     this.playerModel.update(dt);
     this.mount.render(rs, dt, thirdPerson);
+
+    // Draw the other players the server reports, interpolated ~120 ms behind. No-op
+    // (and no models in the scene) in single-player.
+    if (this.net !== null && this.remoteRenderer !== null) {
+      this.remoteRenderer.sync(this.net.remotePlayers(), dt);
+    }
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
     this.shadowFocus.set(rs.x, rs.y, rs.z);
@@ -515,21 +588,28 @@ export class Game {
         : (this.entities.nearestVendor(rs.x, rs.z, 4.5)?.name ?? null);
     if (st.nearbyVendor !== promptName) st.setNearbyVendor(promptName);
 
+    // Gameplay/state systems read AUTHORITATIVE physics, never the render state `rs`
+    // (which carries the cosmetic reconciliation offset). Otherwise a sub-snap server
+    // correction's decaying slide would spuriously trip the gather "moved" test and
+    // cancel an in-progress channel, or offset quest/discovery/HUD position, while the
+    // player is standing still. Visual consumers (model, camera, streaming) keep `rs`.
+    const ph = this.controller.physics;
+
     // Quest explore-objective checks (throttled inside).
-    this.quests.tickExplore(dt, rs.x, rs.z);
+    this.quests.tickExplore(dt, ph.x, ph.z);
 
     // Gathering: node proximity, channel/fishing progress (cancels on movement).
-    const gMoved = Math.hypot(rs.x - this.lastGx, rs.z - this.lastGz) > 0.04;
-    this.lastGx = rs.x;
-    this.lastGz = rs.z;
-    this.gather.update(dt, rs.x, rs.y, rs.z, gMoved);
+    const gMoved = Math.hypot(ph.x - this.lastGx, ph.z - this.lastGz) > 0.04;
+    this.lastGx = ph.x;
+    this.lastGz = ph.z;
+    this.gather.update(dt, ph.x, ph.y, ph.z, gMoved);
 
-    this.discovery.reveal(rs.x, rs.z);
+    this.discovery.reveal(ph.x, ph.z);
     this.discovery.tick(dt);
     const live = useStore.getState().live;
-    live.x = rs.x;
-    live.z = rs.z;
-    live.yaw = rs.yaw;
+    live.x = ph.x;
+    live.z = ph.z;
+    live.yaw = ph.yaw;
 
     this.renderer.render(this.scene, this.camera.camera);
 
@@ -537,6 +617,44 @@ export class Game {
     this.updateStats(dt, rs);
     this.rafId = requestAnimationFrame(this.loop);
   };
+
+  /**
+   * Reconcile own-player prediction against the server (Phase 6). Resets the predicted
+   * physics to the latest authoritative self-state, then replays the inputs the server
+   * hasn't acked yet through the SAME shared movement function the server ran — so the
+   * result equals the prediction to floating-point in the agreeing case (no pop). Any
+   * residual is folded into the cosmetic error offset and smoothed away. No-op single-
+   * player, or when no new authoritative state arrived this frame.
+   */
+  private reconcileSelf(): void {
+    if (this.net === null) return;
+    const self = this.net.takeReconcile();
+    if (self === null) return;
+
+    const p = this.controller.physics;
+    const oldX = p.x;
+    const oldY = p.y;
+    const oldZ = p.z;
+
+    this.controller.applyAuthoritative(self.phys);
+    for (const intent of this.net.drainInputsAfter(self.ackedSeq)) {
+      stepPlayerMovement(this.sampler, this.controller.physics, intent, TICK_DT);
+    }
+
+    // Fold the visible discrepancy (≈0 when prediction agreed) into the render offset.
+    this.errorOffset.x += oldX - this.controller.physics.x;
+    this.errorOffset.y += oldY - this.controller.physics.y;
+    this.errorOffset.z += oldZ - this.controller.physics.z;
+    // A teleport-scale correction (respawn, big desync) snaps rather than sliding.
+    if (
+      Math.hypot(this.errorOffset.x, this.errorOffset.y, this.errorOffset.z) > RECONCILE_SNAP_DIST
+    ) {
+      this.errorOffset.x = 0;
+      this.errorOffset.y = 0;
+      this.errorOffset.z = 0;
+    }
+    this.controller.setPrevToCurrent(); // don't lerp across the reset
+  }
 
   private updateStats(
     dt: number,
@@ -669,6 +787,9 @@ export class Game {
       'webglcontextrestored',
       this.onContextRestored as EventListener,
     );
+    this.net?.dispose();
+    this.remoteRenderer?.dispose();
+    if (this.net !== null) useStore.getState().setNet(null); // hide the HUD on teardown
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();

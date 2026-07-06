@@ -89,6 +89,13 @@ export default tseslint.config(
       },
     },
   },
+  // The Phase-6 server is a Node process (ws, process, timers, console).
+  {
+    files: ['server/src/**/*.ts'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
   // Test files and config get node globals.
   {
     files: ['**/*.test.ts', '**/*.config.ts', 'scripts/**/*.ts'],

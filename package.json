@@ -10,9 +10,11 @@
   },
   "scripts": {
     "dev": "pnpm --filter @pathlands/client dev",
+    "dev:server": "pnpm --filter @pathlands/server dev",
+    "start:server": "pnpm --filter @pathlands/server start",
     "build": "pnpm --filter @pathlands/client build && node scripts/mirror-dist.mjs",
     "preview": "pnpm --filter @pathlands/client preview",
-    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
+    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p client/tsconfig.json && tsc --noEmit -p server/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint . && prettier --check \"**/*.{ts,tsx,json,md}\"",

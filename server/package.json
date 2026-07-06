@@ -1,0 +1,21 @@
+{
+  "name": "@pathlands/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pathlands game server (Phase 6) — Node.js + ws authoritative simulation host. Imports @pathlands/shared unchanged; runs the same fixed-tick sim as the client, but is the sole authority.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pathlands/shared": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2"
+  }
+}

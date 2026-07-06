@@ -81,18 +81,39 @@ Chunks (32×32 columns × 192 high) generate on demand in Web Workers from `(see
 - P1–5: IndexedDB (a hand-rolled dependency-free wrapper, not `idb-keyval`), autosave every 30 s + on unload; a **rotating 3-deep backup ring** with **corruption recovery** — `loadSave()` falls through primary → backups (newest first) → fresh using the never-throwing `tryMigrate()`, so one bad record can't brick a save (a recovered load shows a title-screen notice). Explicit migration functions per version bump with round-trip tests; **save export/import** (JSON download/restore) and a **React error boundary + bug-report screen** guard against browser-storage loss and UI crashes. WebGL context loss is caught and recovered (pause + overlay + auto-resume).
 - P6: same schema decomposed into PostgreSQL tables (accounts, characters, character_state JSONB for cold data + hot columns for queryable bits); a one-time importer lets local solo saves upload as a starting character (best-effort, server re-validates all values against legal bounds — no trusting client-grown stats).
 
-## 7. Netcode (designed now, built in Phase 6)
+## 7. Netcode (Phase 6 — build in progress)
 
-- **Transport:** WebSocket (wss via nginx). Messages: length-prefixed binary (MessagePack initially; hand-rolled codecs only where profiling justifies).
-- **Authority:** server runs the same `shared/sim` at 20 Hz and is sole truth. Clients send intents (rate-limited, sequence-numbered); server responds with acks + authoritative state.
-- **Replication:** interest management = 3×3 chunk subscription around each player. Per tick-bundle (every 2nd tick, 10 Hz on the wire): entity deltas (pos quantized to 1/16 voxel, hp%, anim state, buff bits) for subscribed cells; full snapshot on subscribe. Reliable event channel for chat/loot/quests.
-- **Feel:** own movement client-predicted + reconciled (movement rules already live in `shared/`, so prediction is literally running the same function); remote entities interpolated 100–150 ms behind; casts show locally at cast-start, resolve on server confirm (tab-target tolerance makes this easy — the reason we chose it).
+> **Status (Phase 6 Parts 1–2):** the **movement netcode is complete**. `shared/proto/net.ts`
+> defines the message schema + codec; `server/` runs the authoritative 20 Hz sim on the shared
+> movement rules with a **per-player input FIFO** and broadcasts per-subscriber at 10 Hz;
+> `client/src/net/netClient.ts` (opt-in) sends intents, **predicts + reconciles** own movement, and
+> interpolates remotes on the server-tick timeline. Built in Part 2: **client-side prediction
+> reconciliation** (the `self` message carries own authoritative physics + `ackedSeq`; the client
+> replays unacked inputs and smooths the residual), **3×3 chunk interest management** (per-subscriber
+> deltas via a `known` set, `server/interest.ts`), **connection UX** (ping/RTT, phase, `NetStatusHud`),
+> and **server hardening** (maxPayload, hello-timeout, connection cap, WebSocket heartbeat). Not yet
+> built: authoritative combat/loot/quests on the tick pipeline, quantised binary framing, session
+> resume on reconnect. The bullets below are the full target.
+>
+> - **Wire format now vs later:** the codec (`encodeClient`/`decodeClient`/`encodeServer`/
+>   `decodeServer`) is a single choke point. It ships **JSON** for legibility while the protocol
+>   is in flux; switching to length-prefixed MessagePack (below) is a change to those four functions
+>   only, no call-site churn.
+> - **Reconciliation invariant:** the client and server must apply the _same_ intent to stay
+>   convergent. The server therefore currently trusts the **clamped** client `speedMult` (so a
+>   mounted client reconciles without rubber-banding); authoritative `speedMult` (recomputed from
+>   server-side mount/combat state) lands with those systems. The clamp bounds the exploit to 2×.
+
+- **Transport:** WebSocket (wss via nginx). Messages: length-prefixed binary (MessagePack initially; hand-rolled codecs only where profiling justifies). _(Part 1: JSON text frames behind the codec choke point; binary is the documented upgrade.)_
+- **Authority:** server runs the same `shared/sim` at 20 Hz and is sole truth. Clients send intents (sequence-numbered, non-negative safe integers, **rate-limited** per connection); the server buffers them in a **bounded per-player FIFO** drained one per tick (jitter/catch-up buffer) and replies on the `self` channel with the last-applied seq (`ackedSeq`) + authoritative physics. _(Built Parts 1–2.)_
+- **Replication:** interest management = 3×3 chunk subscription around each player. Per tick-bundle (every 2nd tick, 10 Hz on the wire): per-subscriber entity deltas (enter=full / update=if-dirty / leave) for players in the 3×3 cells, diffed against a per-connection `known` set; interest-filtered snapshot on subscribe; the `self` channel bypasses interest. _(Built Part 2 in `server/interest.ts`. Field-level quantisation — pos to 1/16 voxel, hp%, anim/buff bits — and the reliable chat/loot/quest event channel are later.)_
+- **Feel:** own movement client-predicted + reconciled (movement rules already live in `shared/`, so prediction and the reconcile **replay** are literally the same function; the residual is smoothed at the render edge, not the sim); remote entities interpolated ~150 ms behind on the server-tick timeline; casts show locally at cast-start, resolve on server confirm (tab-target tolerance makes this easy — the reason we chose it). _(Movement built Part 2; casts with combat authority.)_
 - **Scale target:** 200 CCU on one 4-vCPU VPS process; zone-sharding by region grid is the documented escape hatch, not built until needed.
 - **Cheat posture:** server validates everything (already true by construction); sanity ceilings on move speed/teleport deltas/action rates; server-side cooldown & resource books; no client-supplied numbers ever applied.
 
 ## 8. Server & Ops (Phase 6)
 
-- `server/`: ws gateway (auth handshake → session) · sim host (imports `shared/`) · persistence writer (dirty-state flush every 30 s + on logout/events) · REST endpoints for auth (register/login/reset, argon2id, rate-limited).
+- `server/`: ws gateway (auth handshake → session) · sim host (imports `shared/`) · persistence writer (dirty-state flush every 30 s + on logout/events) · REST endpoints for auth (register/login/reset, argon2id, rate-limited). _(Parts 1–2 modules: `config.ts` (env + safety limits at the edge), `world.ts` (headless `VoxelSampler`), `sim.ts` (`ServerSim` — registry + authoritative tick on `stepPlayerMovement`, input FIFO, `selfOf`), `interest.ts` (3×3 chunk visibility), `gateway.ts` (`GameServer` — ws lifecycle, tick clock, per-subscriber broadcast + `self` channel, and hardening: maxPayload / hello-timeout / connection cap / heartbeat / per-connection frame-rate limit), `index.ts` (entry). Run via `pnpm dev:server` / `pnpm start:server` (tsx). Auth + persistence land in later parts.)_
 - PostgreSQL via Drizzle; nightly `pg_dump` to VPS-local + offsite copy; restore drill documented in the runbook.
 - **Static client (P1–5):** the build is a self-contained `dist/` (repo root). Deploy on Vercel (zero-config via `vercel.json`) or serve from the VPS's nginx — see **docs/DEPLOY.md** for the Ubuntu VPS + nginx guide (SPA fallback, immutable asset caching, certbot TLS). Both must keep working.
 - **Docker Compose (P6):** `game` (Node), `db` (Postgres + volume), `nginx` (TLS via certbot companion, serves wss reverse-proxy — and optionally the static client). Client stays deployable on Vercel pointing at `wss://play.<domain>`; both topologies must work.

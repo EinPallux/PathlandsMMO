@@ -2,6 +2,125 @@
 
 All notable changes to Pathlands are documented here, per working session. Format follows [Keep a Changelog](https://keepachangelog.com/); the project is pre-release, so entries are grouped by phase rather than semver until 1.0.
 
+## [Phase 6 — The MMO: Server Authority & Launch] — in progress
+
+### Part 2 — Reconciliation, interest management, connection UX, server hardening (2026-07-06)
+
+Built on top of Part 1 after an **adversarial audit** of the Part-1 netcode (which surfaced the
+server-hardening gaps fixed below).
+
+#### Added
+
+- **Client-side prediction reconciliation.** New per-connection `self` protocol message
+  (`ServerSelf` + `NetSelf`, `NET_PROTOCOL_VERSION` → 2) carries a client's own authoritative
+  `PlayerPhysics` + the last input sequence the server applied (`ackedSeq`). The client keeps a
+  bounded **input history**, and each frame resets its predicted physics to the authoritative state
+  and **replays the unacked inputs** through the same shared `stepPlayerMovement`. Because both
+  sides run identical code on identical intents, the agreeing case reproduces the prediction exactly
+  (no pop); any residual is folded into a decaying **render error-offset** (teleport-scale
+  corrections snap). Full physics — not just position — is sent so the replay integrates the right
+  dynamics through falls/jumps/water. Shared `physToNetSelf` / `applyNetSelf` keep the projection in
+  one place. (`shared/proto/net.ts`, `server/sim.ts`, `client/net/netClient.ts`,
+  `client/game/game.ts` `reconcileSelf`, `client/game/playerController.ts` `applyAuthoritative`.)
+- **Chunk-grid interest management** (`server/interest.ts`): replication is now per-subscriber —
+  each client receives only the players within its **3×3 chunk region** (`cellOf`/`cellKey`/
+  `buildCellIndex`/`visibleIds`), plus its own `self` frame regardless of interest. The gateway
+  diffs a per-connection `known` set to emit enter (full state) / update (if dirty) / leave, so
+  `gone` now means "despawn — left interest or disconnected." No wire-shape change.
+- **Connection UX**: the `NetClient` now sends **pings** and computes an EWMA-smoothed **RTT**,
+  tracks a connection **phase** (connecting / connected / reconnecting), and drives a new
+  **`NetStatusHud`** (a pill under the minimap showing phase · peers · latency) via a minimal store
+  `net` slice. Hidden entirely in single-player (`net === null`).
+- **Server-time remote interpolation**: remote samples are now placed on the **server-tick
+  timeline** (each carries a server tick) and played back ~150 ms behind an estimated server clock,
+  so network jitter no longer warps a remote's apparent speed (audit finding).
+- Headless tests (+12 → **319**): reconciliation byte-parity / mispredict-erase / replay-convergence
+  / ws ack channel (`server/test/reconcile.test.ts`), interest enter/leave/re-enter + leave≠
+  disconnect + self-bypasses-interest (`server/test/interest.test.ts`), and codec `self` round-trip
+  / malformed-rejection (`shared/test/net.test.ts`). Shared test helpers in `server/test/support.ts`.
+
+#### Changed
+
+- **Server input handling**: the last-wins `pendingMove` became a **bounded FIFO** (`inputs[]`,
+  `MAX_INPUT_QUEUE`) drained one per tick, with a separate `lastRecvSeq` (ordering gate) and
+  `lastAppliedSeq` (the reconciliation ack). A client's catch-up burst now applies input-for-input
+  over successive ticks instead of collapsing to the newest — matching the client's predicted path.
+
+#### Fixed (server hardening, from the audit)
+
+- **`maxPayload`** on the WebSocket server — oversized frames are rejected before `JSON.parse`, so a
+  hostile giant frame can't block the event loop or OOM the process.
+- **Hello timeout + connection cap** — an unauthenticated socket that never says hello is terminated,
+  and connections past a configured limit are refused (anti-idle/DoS). `ping` now requires a
+  completed hello.
+- **WebSocket heartbeat** — the server pings every connection and terminates any that miss a round,
+  reaping half-open sockets (client sleep / dropped wifi) so their player no longer lingers as a
+  frozen ghost.
+
+#### Fixed (from a follow-up adversarial review of the Part-2 diff)
+
+- **Reconnect no longer freezes movement.** `NetClient.onClose` now clears the session identity
+  (`you`/`seq`/`history`/`pendingSelf`), so during the reconnect window the `sendIntent` gate stays
+  closed — previously stale-sequence intents from the old session leaked to the server's brand-new
+  player and poisoned its sequence gate, dropping every real input after the welcome reset (a hard
+  freeze after every reconnect).
+- **Gameplay reads authoritative physics, not the smoothed render state.** Quest explore, gathering
+  (the "moved" test), discovery, and the HUD/minimap `live` position now read `controller.physics`;
+  previously the decaying reconciliation offset in `rs` could spuriously cancel an in-progress
+  gather channel while the player stood still. (Combat already read physics.)
+- **Per-connection message rate limit** (`maxMsgsPerSec`, default 60) — excess frames are dropped
+  before the decoder and egregious floods terminate the socket, so an intent flood can't burn
+  parse/validate CPU and starve the tick loop (the rate backstop `maxPayload` couldn't provide).
+- **Client liveness timeout** — if no pong arrives within ~3 ping intervals the client closes the
+  socket itself, driving the reconnect path, instead of freezing until the OS TCP timeout on a
+  silent server death / partition.
+- **Protocol-mismatch reconnect loop stopped** — the client now handles the server `error` frame and
+  stops retrying on a `protocol` error (a version mismatch won't fix itself on retry).
+- **Sequence/tick validation** — the codec now requires non-negative safe integers for `seq`/`tick`,
+  so a fractional/negative/absurd value can't poison the server's monotonic gate.
+
+_(Left as a documented, 2×-bounded known gap: the server still trusts the clamped client `speedMult`
+— the correct fix is coupled to server-side mount/combat state and would otherwise break a mounted
+client's reconciliation, so it lands with those systems.)_
+
+### Part 1 — Server skeleton + two-player vertical slice (2026-07-06)
+
+Phase 5 is tagged **`v1.0-solo`** (the complete single-player game). Phase 6 begins by turning the
+intent → simulation boundary that has existed since Phase 1 into a network boundary: an
+authoritative server, and two clients that see each other move.
+
+#### Added
+
+- **Network protocol** (`shared/proto/net.ts`): pure, serialisable client↔server messages —
+  `hello`/`intent`/`ping` (up) and `welcome`/`snapshot`/`delta`/`pong`/`error` (down) — a
+  `NetPlayer` replication shape, `NET_PROTOCOL_VERSION`, and a **single-choke-point codec**. JSON
+  today; swapping to length-prefixed MessagePack (ARCH §7) touches only the four encode/decode
+  functions. Decoders structurally validate untrusted frames and return `null` on anything
+  malformed, so a hostile frame is dropped at the boundary before it can reach the sim.
+- **Game server** (`server/` — new pnpm workspace, Node 22 + `ws`, run via `pnpm dev:server` /
+  `pnpm start:server`): imports `@pathlands/shared` **unchanged**. A headless `VoxelSampler` from
+  the same deterministic `World(WORLD_SEED)`; an **authoritative 20 Hz** tick advancing players
+  through the identical shared `stepPlayerMovement`; a player registry; snapshot-on-join and a
+  **10 Hz delta broadcast** (interest-management seam left for the next part). Wall-clock is read
+  only at the tick edge — the sim stays fixed-tick and deterministic.
+- **Client netcode** (`client/src/net/netClient.ts` + `client/src/engine/remotePlayers.ts`):
+  **opt-in** via `VITE_PATHLANDS_SERVER` (unset ⇒ the single-player static build has **no server
+  dependency**, unchanged). Streams the local player's exact applied intent to the server, renders
+  other players interpolated **~120 ms** in the past for smooth motion under a 10 Hz wire, and
+  auto-reconnects with capped backoff. Own movement stays locally predicted (same shared function).
+- **Two-player proof** (`server/test/twoPlayer.test.ts`): boots the server, connects two real `ws`
+  clients, moves one, and asserts the **other** sees the moved position **matching the server's
+  authoritative sim** — plus distinct session ids and departure cleanup. (+3 tests → **307**.)
+- Root scripts: `dev:server`, `start:server`; `typecheck` now covers `server/` too.
+
+#### Changed
+
+- **`SPAWN_X` / `SPAWN_Z`** promoted from client-local literals to **shared world constants**
+  (`shared/core/constants.ts`), so the client and the Phase-6 server agree on where a character
+  enters the world. The client now imports them; no behaviour change single-player.
+- `PlayerController` retains `lastIntent` (the exact `MoveIntent` it applied each tick) so the
+  NetClient can send the authoritative server the same input the local prediction ran.
+
 ## [Phase 5 — Polish: The Complete Solo Game] — feature-complete & launch-ready
 
 ### Part 8 — Content gap-fill, Phase-5 acceptance, VPS deploy guide (2026-07-06)

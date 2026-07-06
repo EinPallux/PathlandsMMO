@@ -68,9 +68,12 @@ A phase is complete only when **every** acceptance criterion in ROADMAP.md passe
 ```bash
 pnpm install          # install workspace deps
 pnpm dev              # run client dev server (Vite)
+pnpm dev:server       # run the Phase-6 game server (Node + ws, tsx watch)
+pnpm start:server     # run the game server once (no watch)
 pnpm build            # production build → repo-root dist/ (Vercel output)
-pnpm typecheck        # tsc --noEmit across workspaces
+pnpm typecheck        # tsc --noEmit across workspaces (shared + client + server)
 pnpm lint             # eslint + prettier check
-pnpm test             # vitest (shared/ simulation tests)
-# Phase 6 additions: pnpm dev:server, docker compose up, etc.
+pnpm test             # vitest (shared/ sim tests + server/ integration tests)
+# The client connects to a server only when VITE_PATHLANDS_SERVER is set (opt-in);
+# unset, it runs as the standalone single-player build. Phase 6 later: docker compose up.
 ```

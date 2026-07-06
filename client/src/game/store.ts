@@ -338,11 +338,23 @@ export interface GameCommands {
   travelTo(id: string): void;
 }
 
+/** Multiplayer connection phase for the HUD indicator (Phase 6). */
+export type NetPhase = 'connecting' | 'connected' | 'reconnecting';
+
+/** Connection status the HUD shows; null ⇒ single-player (indicator hidden). */
+export interface NetUi {
+  phase: NetPhase;
+  peers: number;
+  latencyMs: number | null;
+}
+
 export interface UiState {
   ready: boolean;
   loadProgress: number; // 0..1
   /** WebGL context lost → rendering paused, awaiting GPU restore (Phase 5). */
   contextLost: boolean;
+  /** Multiplayer status (Phase 6); null in single-player. Drives the NetStatusHud. */
+  net: NetUi | null;
 
   fps: number;
   drawCalls: number;
@@ -417,6 +429,7 @@ export interface UiState {
 
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
+  setNet: (n: NetUi | null) => void;
   toggleMap: () => void;
   toggleDev: () => void;
   toggleChar: () => void;
@@ -466,6 +479,7 @@ export interface UiState {
 
 export const useStore = create<UiState>((set) => ({
   contextLost: false,
+  net: null,
   ready: false,
   loadProgress: 0,
 
@@ -538,6 +552,7 @@ export const useStore = create<UiState>((set) => ({
 
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
+  setNet: (net) => set({ net }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
   toggleChar: () => set((st) => ({ showChar: !st.showChar })),

@@ -5,6 +5,15 @@
 /** The one and only world seed. Same seed + same code ⇒ byte-identical world anywhere. */
 export const WORLD_SEED = 1348563048;
 
+/**
+ * Default spawn: the Brookhollow plaza, the starting town's centre. Both the client
+ * (fresh character) and the Phase-6 server place new players here, so it lives in
+ * shared/ — client and server must agree on where a character enters the world.
+ * The feet-Y is resolved from worldgen (`heightAt` + a small drop) at spawn time.
+ */
+export const SPAWN_X = 1536.5;
+export const SPAWN_Z = 1524.5;
+
 // --- Simulation timing (fixed tick; no wall-clock time in sim code) ---
 /** Simulation ticks per second. */
 export const TICK_RATE = 20;
