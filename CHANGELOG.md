@@ -29,15 +29,36 @@ the server it talks to is headless-proven (Parts 9–10).
 - **`client/src/game/game.ts`**: wires `combat.setNetSink({ enemies, combatSelf, send })` to
   the `NetClient` when the game connects.
 
+#### Fixed (adversarial review of the client flip)
+
+- **Predicted-kill flicker / lost target / model churn**: the player's predicted damage could
+  drive a mirrored enemy to 0 HP → the shared `killEntity` marked it dead and nulled the
+  player's target, then the next server frame resurrected it (new `ModelObject`), so every
+  tab-target kill flickered dead→alive and dropped the target. Networked `simTick` now ticks
+  `stepCombat` (combat resolution only — **no enemy AI**), then **re-asserts the server's enemy
+  HP/alive-state** after prediction and **restores a target** a predicted kill dropped. Enemy
+  HP + death are the server's truth, never the client's.
+- **Leashing enemies showed full HP**: mirroring the server's `state:'leash'` onto a
+  spawn-pinned enemy tripped the shared leash-arrival branch, which reset HP to full every
+  tick. Using `stepCombat` (no enemy AI) removes the leash path entirely.
+- **False death animations**: a server despawn (a kill OR just leaving interest — the client
+  can't tell) played a death animation. In networked mode a dropped enemy is now removed
+  quietly (authoritative death VFX arrive with the Stage 2c event channel).
+- **Stale mismatched enemy**: `seen.add` moved after the `makeEnemyById` null-guard so an
+  unknown `enemyId` can't shield a stale entity from cleanup. Mirrored enemies also clear the
+  boss-phase cursor so local prediction can never fire a boss summon.
+
 #### Notes
 
 - Because server enemies are mirrored into the existing local `CombatState`, the entire enemy
   rendering / HP-nameplate / combat-HUD / targeting machinery works **unchanged** — a
   deliberately small, high-reuse flip. Combat feel is tab-target-tolerant (~1 broadcast of
   latency); authoritative damage floaters + enemy cast bars arrive with the Stage 2c event
-  channel. A known follow-up: the client's local player identity must adopt the server's
-  persisted character (level/class) on login (Onboarding-v2 character fetch) so prediction and
-  the hotbar match the server player exactly.
+  channel. Known Stage 2c follow-ups: (a) the client's local player identity must adopt the
+  server's persisted character (level/class) on login (Onboarding-v2 character fetch) so
+  prediction and the hotbar match the server player exactly; (b) enemies currently take raw
+  ~10 Hz server positions with single-tick interpolation (a slight stutter during chases) —
+  server-timeline interpolation like the remote-player path smooths it.
 
 ### Part 10 — Server-authoritative combat, Stage 2a (2026-07-06)
 

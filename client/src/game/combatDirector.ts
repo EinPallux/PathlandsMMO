@@ -12,6 +12,7 @@ import {
   createCombatState,
   createSpawner,
   stepSim,
+  stepCombat,
   stepSpawner,
   applyIntent,
   drainEvents,
@@ -847,12 +848,25 @@ export class CombatDirector {
 
     if (this.networked) {
       // MMO mode: the server owns enemies + combat outcomes. Mirror the server's enemies in
-      // (as passive targets), tick the shared sim for the player's OWN prediction (cooldowns,
-      // resource, cast/auto feedback vs. those passive targets), then reconcile our authoritative
-      // health/resource from the server.
+      // (as passive targets), then tick ONLY combat resolution (stepCombat — no enemy AI, so
+      // the leash/aggro paths can't corrupt a mirrored enemy) for the player's own prediction
+      // (cooldowns, resource, cast/auto feedback). The player's predicted damage CAN drive a
+      // mirrored enemy's HP to 0 and null the target, so we re-assert the server's truth right
+      // after and restore a target the prediction dropped — enemy HP + death are the server's,
+      // never the client's. Finally reconcile our own authoritative health/resource.
       this.mirrorServerEnemies();
-      stepSim(this.state, this.ctx);
+      const prevTarget = this.player.targetId;
+      stepCombat(this.state, this.ctx);
       this.consumeEvents();
+      this.mirrorServerEnemies(); // undo any predicted damage/kill — server HP is the truth
+      const p2 = this.player;
+      if (
+        p2.targetId === null &&
+        prevTarget !== null &&
+        this.state.entities.get(prevTarget) !== undefined
+      ) {
+        p2.targetId = prevTarget; // a predicted kill nulled the target; the server still has it
+      }
       this.reconcileFromServer();
       return;
     }
@@ -885,14 +899,14 @@ export class CombatDirector {
     if (sink === null) return;
     const seen = new Set<string>();
     for (const ne of sink.enemies()) {
-      seen.add(ne.id);
       let e = this.state.entities.get(ne.id);
       if (e === undefined || e.faction !== 'enemy' || e.enemyId !== ne.enemyId) {
         const made = makeEnemyById(ne.id, ne.enemyId, ne.level, ne.x, ne.y, ne.z);
-        if (made === null) continue;
+        if (made === null) continue; // unknown enemyId — leave any stale one for the cleanup
         e = made;
         this.state.entities.set(ne.id, e);
       }
+      seen.add(ne.id); // only keep ids we actually hold (so cleanup can drop stale mismatches)
       e.x = ne.x;
       e.y = ne.y;
       e.z = ne.z;
@@ -901,15 +915,17 @@ export class CombatDirector {
       e.maxHP = ne.maxHP;
       e.dead = false;
       e.aiState = (ne.state as CombatEntity['aiState']) ?? 'idle';
-      // Passive locally — the server drives all enemy behaviour. Pinning the leash home to
-      // the current server position (and zeroing aggro) keeps the local AI from ever moving
-      // it, so its rendered position is purely the server's truth.
+      // Passive locally — the server drives all enemy behaviour. We use stepCombat (no enemy
+      // AI) so nothing here moves them; zeroing aggro/auto/abilities and clearing the boss
+      // cursor keeps the resolver from making them act, and pinning the leash home makes any
+      // stray AI a no-op. Their rendered position/HP is purely the server's truth.
       e.autoAttack = false;
       e.aggroRadius = 0;
       e.abilities = [];
       e.threat = {};
       e.spawnX = ne.x;
       e.spawnZ = ne.z;
+      e.bossPhaseIdx = undefined;
     }
     for (const [id, e] of this.state.entities) {
       if (e.faction === 'enemy' && !seen.has(id)) this.state.entities.delete(id);
@@ -1086,8 +1102,16 @@ export class CombatDirector {
     for (const [id, r] of [...this.renders]) {
       const e = this.state.entities.get(id);
       if (!e || e.dead) {
-        r.obj.setClip('death');
-        this.dying.push({ obj: r.obj, age: 0 });
+        if (this.networked && !e) {
+          // MMO: the server dropped this enemy — it may have died OR just left our interest,
+          // and we can't tell, so remove it quietly rather than play a false death animation.
+          // (Real death VFX arrives with the Stage 2c combat-events channel.)
+          this.scene.remove(r.obj.group);
+          r.obj.dispose();
+        } else {
+          r.obj.setClip('death');
+          this.dying.push({ obj: r.obj, age: 0 });
+        }
         this.renders.delete(id);
       }
     }
