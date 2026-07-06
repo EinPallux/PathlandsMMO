@@ -449,7 +449,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 
 ### Acceptance Criteria
 
-1. [x] `pnpm build` produces a static `client/dist` (Vercel-ready); initial JS 182 KB gzipped (≪ 3 MB budget). Real-GPU 60 FPS unmeasured in this headless env, but draw-call/triangle/bundle budgets are met and the render loop runs. _(FPS to be re-confirmed on real hardware.)_
+1. [x] `pnpm build` produces a static `dist/` at the repo root (Vercel-ready); initial JS 182 KB gzipped (≪ 3 MB budget). Real-GPU 60 FPS unmeasured in this headless env, but draw-call/triangle/bundle budgets are met and the render loop runs. _(FPS to be re-confirmed on real hardware.)_
 2. [x] Continent traversal works with no surface holes/fall-throughs (collision from the deterministic world function is always available, even before a chunk meshes); worldgen regenerates byte-identical (region-hash tests + two-instance equality tests).
 3. [x] All four class models render and animate; live class-switch via the dev menu verified in-browser.
 4. [x] Six biomes are visually distinct and match the WORLD.md macro map (confirmed against the in-game seed-inspector map).
@@ -504,7 +504,7 @@ build` clean; in-browser, `B` opens the bank with both starter letters and a wor
 2. [x] All 10 asset enemies (and the new archetypes) fight with functioning AI, animations, loot, and correct level bands in their atlas-assigned regions (`shared/data/spawns.ts`; verified in-browser at Briarhollow).
 3. [x] Briarhollow Warrens (the level ~8–12 Hollow) is clearable solo at-level, including its boss; death/respawn/Waystone loop works (acceptance test: Warrior + Ranger solo Warlord Bramblegut; boss + pack verified spawning in-browser).
 4. [x] Combat math unit tests pass (damage, mitigation, crit, threat, XP — 170 tests green); save/load round-trips a mid-progress character losslessly.
-5. [x] The onboarding flow works on the static build (title → create → spawn → persist verified in headless Chromium; Vercel-deployable `client/dist`).
+5. [x] The onboarding flow works on the static build (title → create → spawn → persist verified in headless Chromium; Vercel-deployable repo-root `dist/`).
 
 ---
 
