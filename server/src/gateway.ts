@@ -10,6 +10,7 @@
 // The boundary is also hardened against hostile/half-open clients: a max frame size, a
 // hello timeout, a connection cap, and a WebSocket heartbeat that reaps dead sockets.
 
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
   decodeClient,
@@ -53,20 +54,25 @@ export interface GatewayOptions {
 const FLOOD_TERMINATE_FACTOR = 8;
 
 export class GameServer {
+  private readonly http: Server;
   private readonly wss: WebSocketServer;
   private readonly conns = new Map<WebSocket, Conn>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   /** Set when a player joined or disconnected — forces a delta pass past the idle-skip. */
   private membershipChanged = false;
+  /** Server start time (ms, wall-clock at the edge) — for the /status uptime. */
+  private startedAtMs = 0;
 
   constructor(
     private readonly sim: ServerSim,
     private readonly opts: GatewayOptions,
   ) {
+    // The ws server rides on our own HTTP server so `wss://` upgrades and the plain-HTTP
+    // health/status routes share one port — the shape nginx reverse-proxies in production.
+    this.http = createServer((req, res) => this.onHttpRequest(req, res));
     this.wss = new WebSocketServer({
-      port: opts.port,
-      host: opts.host,
+      server: this.http,
       // Reject oversized frames before they reach JSON.parse (event-loop / OOM DoS).
       maxPayload: opts.maxPayloadBytes,
     });
@@ -76,18 +82,19 @@ export class GameServer {
   /** Resolve once the socket is accepting connections. */
   listen(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.wss.once('listening', () => {
+      this.http.once('error', reject);
+      this.http.listen(this.opts.port, this.opts.host, () => {
+        this.startedAtMs = Date.now();
         this.timer = setInterval(() => this.onTick(), this.opts.tickDurationMs);
         this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
         resolve();
       });
-      this.wss.once('error', reject);
     });
   }
 
   /** The port actually bound (useful when constructed with port 0 in tests). */
   address(): number {
-    const addr = this.wss.address();
+    const addr = this.http.address();
     return typeof addr === 'object' && addr !== null ? addr.port : this.opts.port;
   }
 
@@ -106,6 +113,34 @@ export class GameServer {
     }
     this.conns.clear();
     await new Promise<void>((resolve) => this.wss.close(() => resolve()));
+    await new Promise<void>((resolve) => this.http.close(() => resolve()));
+  }
+
+  // --- HTTP: health + status (for nginx upstream checks and monitoring, ARCH §8) ---
+
+  private onHttpRequest(req: IncomingMessage, res: ServerResponse): void {
+    if (req.method === 'GET' && req.url === '/healthz') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('ok');
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/status') {
+      const body = JSON.stringify({
+        status: 'ok',
+        protocol: NET_PROTOCOL_VERSION,
+        seed: WORLD_SEED,
+        tickRate: this.opts.tickDurationMs > 0 ? 1000 / this.opts.tickDurationMs : 0,
+        serverTick: this.sim.tick,
+        players: this.sim.players.size,
+        connections: this.conns.size,
+        uptimeMs: this.startedAtMs > 0 ? Date.now() - this.startedAtMs : 0,
+      });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(body);
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not found');
   }
 
   // --- connection lifecycle ---

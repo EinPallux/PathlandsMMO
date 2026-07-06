@@ -74,6 +74,7 @@ pnpm build            # production build → repo-root dist/ (Vercel output)
 pnpm typecheck        # tsc --noEmit across workspaces (shared + client + server)
 pnpm lint             # eslint + prettier check
 pnpm test             # vitest (shared/ sim tests + server/ integration tests)
+docker compose up -d --build   # (VPS) run the game server + nginx TLS/wss — see docs/SERVER_DEPLOY.md
 # The client connects to a server only when VITE_PATHLANDS_SERVER is set (opt-in);
-# unset, it runs as the standalone single-player build. Phase 6 later: docker compose up.
+# unset, it runs as the standalone single-player build.
 ```

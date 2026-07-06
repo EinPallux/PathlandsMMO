@@ -1,0 +1,14 @@
+# Keep the build context small — the server image only needs shared/ + server/ source
+# plus the workspace manifests (see server/Dockerfile).
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.github
+.claude
+client/src
+public
+docs
+scripts
+*.log
+.DS_Store

@@ -6,6 +6,35 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 3: Server Ops — deployable to a VPS.**
+> The authoritative server can now actually **run on a Linux VPS behind TLS**, so the
+> two-player movement slice is testable with real players, not just headless. Landed:
+>
+> - **HTTP health/status endpoint** — the ws server now shares one `http.Server`, so
+>   `wss://` upgrades and plain-HTTP routes live on one port: `GET /healthz` (nginx
+>   upstream check + Docker `HEALTHCHECK`) and `GET /status` (JSON: server tick, players,
+>   connections, uptime, protocol, seed) for monitoring (ARCH §8).
+> - **Containerisation** — `server/Dockerfile` (Node 22 + pnpm; installs **only** the
+>   `server` + `shared` workspaces via a filtered install, so the client's three/react/vite
+>   are never pulled; runs unprivileged via `tsx`, `shared/` imported unchanged) and a
+>   `.dockerignore` that keeps the build context to the server's source.
+> - **`docker-compose.yml`** — `game` + `nginx` (TLS/wss reverse proxy) as the core; a
+>   `db` (PostgreSQL) service is declared behind a `--profile db` for the accounts phase.
+> - **nginx config** (`deploy/nginx/pathlands.conf`) — TLS termination + WebSocket upgrade
+>   proxy to the game service, with health/status passthrough and long socket timeouts.
+> - **`docs/SERVER_DEPLOY.md`** — the full runbook (DNS → certbot standalone → `compose up`
+>   → build the client with `VITE_PATHLANDS_SERVER=wss://…` → two-browser test), plus ops
+>   (status/logs/update), TLS renewal, and the deferred-Postgres note.
+>
+> **323 tests green** (+3: health/status endpoints); `pnpm typecheck` + `lint` + `build`
+> clean; `docker compose config` validates; the server boots and `/healthz` + `/status`
+> respond over HTTP. _(The image build itself runs on the VPS — the Docker daemon isn't
+> available in the dev sandbox; the pnpm workspace filter that the build relies on is
+> verified to resolve to exactly `server` + `shared`.)_ _Next: server-authoritative
+> combat/entities on the tick pipeline, then accounts + PostgreSQL persistence._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 2: Reconciliation, interest management, connection UX, server hardening.**
 > Part 1's slice becomes a real netcode foundation. An **adversarial audit** of Part 1 (run first)
 > surfaced real server-hardening gaps, fixed here. Landed:
@@ -794,7 +823,7 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 - [ ] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks).
 - [ ] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD).
 - [ ] **Multiplayer endgame** — weekly world boss at the restored final Waystone, group bounty variants, guild Deeds; anti-cheat essentials (server validates everything; speed/teleport/rate sanity checks; no client-trusted numbers).
-- [ ] **Ops & launch** — VPS deployment via Docker Compose (server, PostgreSQL, nginx + TLS/wss, backups cron), GitHub Actions deploy pipeline, structured logging + metrics dashboard (CCU, tick time, DB health), load test at 200 simulated clients, GM tooling (kick/mute/teleport/item-grant), status page; launch checklist & rollback plan.
+- [~] **Ops & launch** — VPS deployment via Docker Compose (server, PostgreSQL, nginx + TLS/wss, backups cron), GitHub Actions deploy pipeline, structured logging + metrics dashboard (CCU, tick time, DB health), load test at 200 simulated clients, GM tooling (kick/mute/teleport/item-grant), status page; launch checklist & rollback plan. _(Part 3: `server/Dockerfile` + `docker-compose.yml` (game + nginx TLS/wss; Postgres behind a profile) + `deploy/nginx/pathlands.conf` + a `/healthz` + `/status` endpoint + `docs/SERVER_DEPLOY.md` runbook — the movement slice is VPS-deployable now. Remaining: DB backups cron, CI deploy pipeline, metrics dashboard, 200-client load test, GM tooling, launch/rollback plan.)_
 
 ### Acceptance Criteria
 

@@ -4,6 +4,33 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 3 — Server Ops: deployable to a VPS (2026-07-06)
+
+The authoritative server can now run on a Linux VPS behind TLS, so the two-player movement
+slice is testable with real players (ARCH §8, first slice of the Ops & launch deliverable).
+
+#### Added
+
+- **HTTP health/status endpoint.** The gateway now creates its own `http.Server` and lets
+  `ws` ride on it, so `wss://` upgrades and plain-HTTP routes share one port: `GET /healthz`
+  (returns `ok`, for nginx upstream checks and the Docker `HEALTHCHECK`) and `GET /status`
+  (JSON: `status`, `protocol`, `seed`, `tickRate`, `serverTick`, `players`, `connections`,
+  `uptimeMs`). Covered by `server/test/health.test.ts`.
+- **`server/Dockerfile`** — Node 22 + pnpm; a **filtered install** (`--filter
+"@pathlands/server..."`) pulls only the `server` + `shared` workspaces (the client's
+  `three`/`react`/`vite` are never fetched), runs unprivileged as the `node` user, and
+  starts via `tsx` with `shared/` imported unchanged. Includes a container `HEALTHCHECK`.
+- **`docker-compose.yml`** — `game` + `nginx` (TLS/wss reverse proxy) core services; a
+  `db` (PostgreSQL 16) service is declared behind a `--profile db` for the later accounts
+  phase (the server doesn't use it yet).
+- **`deploy/nginx/pathlands.conf`** — TLS termination, port-80→443 redirect, WebSocket
+  upgrade proxy to the `game` service, `/healthz` + `/status` passthrough, and long
+  read/send timeouts for persistent game sockets.
+- **`docs/SERVER_DEPLOY.md`** — the VPS runbook: DNS A-record → certbot standalone → `docker
+compose up -d --build` → build the client with `VITE_PATHLANDS_SERVER=wss://…` → two-browser
+  test, plus operating (status/logs/update), weekly TLS renewal via cron, and the
+  deferred-Postgres note. `.dockerignore` keeps the build context to the server source.
+
 ### Part 2 — Reconciliation, interest management, connection UX, server hardening (2026-07-06)
 
 Built on top of Part 1 after an **adversarial audit** of the Part-1 netcode (which surfaced the
