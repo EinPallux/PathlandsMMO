@@ -159,6 +159,22 @@ describe('net protocol codec', () => {
     // Server → client: id + authoritative name + text + tick.
     const serverChat = { t: 'chat', fromId: 'p1', from: 'Alia', text: 'hail!', tick: 12 } as const;
     expect(decodeServer(encodeServer(serverChat))).toEqual(serverChat);
+    // An emote line carries the optional `emote` flag through the codec.
+    const emote = {
+      t: 'chat',
+      fromId: 'p1',
+      from: 'Alia',
+      text: 'waves.',
+      tick: 3,
+      emote: true,
+    } as const;
+    expect(decodeServer(encodeServer(emote))).toEqual(emote);
+    // A non-boolean emote flag is rejected.
+    expect(
+      decodeServer(
+        JSON.stringify({ t: 'chat', fromId: 'p1', from: 'A', text: 'x', tick: 1, emote: 1 }),
+      ),
+    ).toBeNull();
     // A missing display name is rejected.
     expect(
       decodeServer(JSON.stringify({ t: 'chat', fromId: 'p1', text: 'hi', tick: 1 })),

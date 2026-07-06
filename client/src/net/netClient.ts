@@ -52,6 +52,8 @@ export interface ChatEvent {
   text: string;
   /** True when the server attributes this line to our own session. */
   self: boolean;
+  /** True when `text` is a third-person emote phrase (render `${from} ${text}`). */
+  emote: boolean;
 }
 
 /** Connection status surfaced to the UI (indicator, reconnect notice, latency). */
@@ -242,6 +244,7 @@ export class NetClient {
           from: msg.from,
           text: msg.text,
           self: msg.fromId === this.you,
+          emote: msg.emote === true,
         });
         break;
       default:

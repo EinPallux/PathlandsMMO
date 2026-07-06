@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../game/store.js';
-import { MAX_CHAT_LEN } from '@pathlands/shared';
+import { emoteCommands, findEmote, MAX_CHAT_LEN } from '@pathlands/shared';
 import { colors } from './theme.js';
 
 const LOG_WIDTH = 340;
@@ -14,6 +14,7 @@ export function Chat(): JSX.Element | null {
   const net = useStore((s) => s.net);
   const chat = useStore((s) => s.chat);
   const commands = useStore((s) => s.commands);
+  const pushChat = useStore((s) => s.pushChat);
   const setChatTyping = useStore((s) => s.setChatTyping);
   const [active, setActive] = useState(false);
   const [draft, setDraft] = useState('');
@@ -67,10 +68,43 @@ export function Chat(): JSX.Element | null {
   const submit = (e: React.FormEvent): void => {
     e.preventDefault();
     const text = draft.trim();
-    if (text.length > 0) commands?.sendChat(text.slice(0, MAX_CHAT_LEN));
+    if (text.length > 0) send(text);
     setDraft('');
     setActive(false);
     inputRef.current?.blur();
+  };
+
+  // Route a line: a `/command` is an emote (or the /emotes help). Validate against the
+  // shared table locally so a typo gets instant feedback and never hits the server; a
+  // valid emote or plain say line goes out (the server re-validates + formats emotes).
+  const send = (text: string): void => {
+    const capped = text.slice(0, MAX_CHAT_LEN);
+    if (capped.startsWith('/')) {
+      const cmd = (capped.slice(1).split(/\s+/)[0] ?? '').toLowerCase();
+      if (cmd === 'emote' || cmd === 'emotes' || cmd === 'help') {
+        pushChat({
+          from: '',
+          text: `Emotes: ${emoteCommands()
+            .map((c) => '/' + c)
+            .join('  ')}`,
+          self: false,
+          system: true,
+          emote: false,
+        });
+        return;
+      }
+      if (findEmote(cmd) === null) {
+        pushChat({
+          from: '',
+          text: `Unknown command "/${cmd}". Type /emotes for the list.`,
+          self: false,
+          system: true,
+          emote: false,
+        });
+        return;
+      }
+    }
+    commands?.sendChat(capped);
   };
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
@@ -121,6 +155,17 @@ export function Chat(): JSX.Element | null {
             <div key={line.key} style={{ fontSize: 13, lineHeight: 1.45, wordBreak: 'break-word' }}>
               {line.system ? (
                 <span style={{ color: colors.gold, fontStyle: 'italic' }}>{line.text}</span>
+              ) : line.emote ? (
+                // Emote action line: "Alia waves." — italic, no colon, one colour.
+                <span
+                  style={{
+                    color: line.self ? colors.accent : '#d9b45a',
+                    fontStyle: 'italic',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                  }}
+                >
+                  {line.from} {line.text}
+                </span>
               ) : (
                 <>
                   <span
@@ -151,7 +196,7 @@ export function Chat(): JSX.Element | null {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             onBlur={() => setActive(false)}
-            placeholder="Say something…  (Enter to send, Esc to cancel)"
+            placeholder="Say something…  (/emotes · Enter to send, Esc to cancel)"
             style={{
               width: '100%',
               boxSizing: 'border-box',

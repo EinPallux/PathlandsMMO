@@ -340,7 +340,7 @@ Solo-viable loop, weekly cadence:
 - **Guilds:** create (5 g), roster, 3 ranks, guild chat, MOTD, guild Deeds. No guild banks at launch (backlog).
 - **Trade:** secure two-pane trade window (items + gold, double-confirm). No auction house at launch (population reality; backlog).
 - **Duels:** flag-based, no death (loser drops to 1 HP), anywhere outdoors. No open PvP at launch.
-- **Presence:** nameplates with title/guild, /inspect, friends list, /emotes (~20 with animations where cheap).
+- **Presence:** nameplates with title/guild, /inspect, friends list, /emotes (~20 with animations where cheap). _(Part 7: **remote-player nameplates** (name + level over other players) and a **15-emote** text set (`/wave`…`/roar`, `shared/data/emotes.ts`) that broadcasts a third-person action line ("Alia waves.") — server-formatted under the authoritative name. Emote **animations**, titles/guild on the plate, and /inspect land with those systems.)_
 
 ## 13. Onboarding Flow
 

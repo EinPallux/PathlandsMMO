@@ -15,9 +15,11 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
   decodeClient,
   encodeServer,
+  findEmote,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
   type NetPlayer,
+  type ServerChat,
   type ServerMessage,
 } from '@pathlands/shared';
 import type { ServerSim, ServerPlayer } from './sim.js';
@@ -395,17 +397,27 @@ export class GameServer {
         conn.lastChatMs = now;
         const player = this.sim.players.get(conn.id);
         if (player === undefined) return;
-        // Re-derive the display name server-side (never trust the client's copy) so a
-        // player cannot post under someone else's name.
+        // A leading `/` is an emote command: resolve it against the shared table and, if
+        // known, broadcast the third-person action phrase under the player's authoritative
+        // name (`Alia waves.`). An unknown command is dropped (the client validates first
+        // for instant feedback). Everything else is an ordinary say line. Either way the
+        // display name is re-derived server-side — the client's copy is never trusted.
+        if (text.startsWith('/')) {
+          const cmd = text.slice(1).split(/\s+/, 1)[0] ?? '';
+          const emote = findEmote(cmd);
+          if (emote !== null) this.broadcastChat(conn.id, player.name, emote.phrase, true);
+          return;
+        }
         this.broadcastChat(conn.id, player.name, text);
         return;
       }
     }
   }
 
-  /** Fan a sanitised chat line out to every joined session (global chat for the playtest). */
-  private broadcastChat(fromId: string, from: string, text: string): void {
-    const frame: ServerMessage = { t: 'chat', fromId, from, text, tick: this.sim.tick };
+  /** Fan a sanitised chat/emote line out to every joined session (global chat for the playtest). */
+  private broadcastChat(fromId: string, from: string, text: string, emote = false): void {
+    const frame: ServerChat = { t: 'chat', fromId, from, text, tick: this.sim.tick };
+    if (emote) frame.emote = true;
     for (const conn of this.conns.values()) {
       if (conn.id === null) continue; // pre-hello sockets don't receive chat
       this.send(conn.ws, frame);

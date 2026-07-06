@@ -358,6 +358,8 @@ export interface ChatLine {
   text: string;
   self: boolean;
   system: boolean;
+  /** True when `text` is a third-person emote phrase, rendered `${from} ${text}` (no colon). */
+  emote: boolean;
 }
 
 /** Most recent lines kept in the scrollback (older ones drop off). */

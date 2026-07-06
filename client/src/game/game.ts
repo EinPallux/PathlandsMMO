@@ -39,7 +39,7 @@ import { MetaDirector } from './metaDirector.js';
 import { MountController } from './mountController.js';
 import { BountyDirector } from './bountyDirector.js';
 import { questGiverById } from '@pathlands/shared';
-import { useStore, type GameCommands } from './store.js';
+import { useStore, type GameCommands, type Nameplate } from './store.js';
 
 // Spawn (Brookhollow plaza, north of the fountain at 1536,1536) is a shared world
 // constant (SPAWN_X/SPAWN_Z) so the Phase-6 server and the client agree on it.
@@ -99,6 +99,8 @@ export class Game {
   private adaptTimer = 0;
   /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
   private readonly shadowFocus = new THREE.Vector3();
+  /** Scratch vector for projecting remote-player heads to screen nameplates. */
+  private readonly plateProj = new THREE.Vector3();
   /**
    * Phase-6 netcode, OPT-IN: constructed only when a server URL is configured
    * (VITE_PATHLANDS_SERVER), so the single-player build has no server dependency.
@@ -261,9 +263,13 @@ export class Game {
         onStatus: (st) =>
           useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
         onChat: (line) =>
-          useStore
-            .getState()
-            .pushChat({ from: line.from, text: line.text, self: line.self, system: false }),
+          useStore.getState().pushChat({
+            from: line.from,
+            text: line.text,
+            self: line.self,
+            system: false,
+            emote: line.emote,
+          }),
         ...(onAuthError !== undefined ? { onAuthError } : {}),
       });
       this.remoteRenderer = new RemotePlayerRenderer(this.scene);
@@ -570,9 +576,28 @@ export class Game {
     this.mount.render(rs, dt, thirdPerson);
 
     // Draw the other players the server reports, interpolated ~120 ms behind. No-op
-    // (and no models in the scene) in single-player.
+    // (and no models in the scene) in single-player. Project each remote's head to a
+    // friendly name+level nameplate so you can see WHO is around you (and who's chatting).
+    const remotePlates: Nameplate[] = [];
     if (this.net !== null && this.remoteRenderer !== null) {
-      this.remoteRenderer.sync(this.net.remotePlayers(), dt);
+      const remotes = this.net.remotePlayers();
+      this.remoteRenderer.sync(remotes, dt);
+      const sw = this.canvas.clientWidth;
+      const sh = this.canvas.clientHeight;
+      for (const r of remotes) {
+        this.plateProj.set(r.x, r.y + 2.4, r.z);
+        this.plateProj.project(this.camera.camera);
+        if (this.plateProj.z < -1 || this.plateProj.z > 1) continue; // behind camera / clipped
+        if (Math.abs(this.plateProj.x) > 1.1 || Math.abs(this.plateProj.y) > 1.1) continue;
+        remotePlates.push({
+          id: `remote:${r.id}`,
+          name: r.name,
+          level: r.level,
+          hostile: false,
+          sx: (this.plateProj.x * 0.5 + 0.5) * sw,
+          sy: (-this.plateProj.y * 0.5 + 0.5) * sh,
+        });
+      }
     }
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
@@ -596,7 +621,9 @@ export class Game {
       this.canvas.clientWidth,
       this.canvas.clientHeight,
     );
-    useStore.getState().setNameplates([...this.entities.nameplates, ...this.combat.enemyPlates]);
+    useStore
+      .getState()
+      .setNameplates([...this.entities.nameplates, ...this.combat.enemyPlates, ...remotePlates]);
 
     // "Press E to trade" prompt: nearest merchant in reach, unless a panel is open.
     const st = useStore.getState();

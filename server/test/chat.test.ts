@@ -121,4 +121,26 @@ describe('chat', () => {
     pre.close();
     b.close();
   });
+
+  it('broadcasts a known /emote as a third-person action under the server name', async () => {
+    const [a, b] = await twoJoined();
+    a.chat('/wave');
+    await until(() => b.chats.length > 0, 3000, 'B received the emote');
+    const line = b.chats[0];
+    expect(line?.emote).toBe(true);
+    expect(line?.from).toBe('Alia');
+    expect(line?.text).toBe('waves.'); // the shared table's phrase, server-formatted
+    a.close();
+    b.close();
+  });
+
+  it('drops an unknown /command (no broadcast)', async () => {
+    const [a, b] = await twoJoined();
+    a.chat('/teleport');
+    await sleep(300);
+    expect(a.chats.length).toBe(0);
+    expect(b.chats.length).toBe(0);
+    a.close();
+    b.close();
+  });
 });

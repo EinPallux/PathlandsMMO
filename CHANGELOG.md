@@ -4,6 +4,33 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 7 — Presence & emotes (2026-07-06)
+
+Make other players legible in the shared world: see who they are, and let them emote.
+
+#### Added
+
+- **Remote-player nameplates** (`client/src/game/game.ts`): each server-reported remote
+  now gets a friendly **name + level** plate, projected from its interpolated head position
+  and merged into the existing nameplate layer (no HP bar — friendlies aren't targets).
+  Client-only; single-player unchanged.
+- **Emotes** (`shared/src/data/emotes.ts`): a data-driven 15-command table (`/wave`,
+  `/bow`, `/cheer`, `/dance`, `/roar`, …) with `findEmote` / `emoteCommands` helpers.
+  Typing `/wave` broadcasts a third-person action line everyone sees — "Alia waves." —
+  formatted **server-side** under the authoritative display name and rendered as an italic
+  emote line. The client validates the command against the shared table first (instant
+  "unknown command" / `/emotes` help without a round-trip); the server re-validates and
+  drops an unknown command. Carried on the existing chat channel via a new optional
+  `ServerChat.emote` flag (no new client message; still protocol v4).
+
+#### Tests
+
+- `shared/test/emotes.test.ts` (+3): command uniqueness/format, non-empty phrases,
+  case-insensitive `findEmote` + unknown → null.
+- `server/test/chat.test.ts` (+2): a known `/wave` broadcasts `emote:true` "waves." under
+  the server name; an unknown `/command` produces no broadcast.
+- `shared/test/net.test.ts`: `ServerChat.emote` codec round-trip + non-boolean rejection.
+
 ### Part 6 — Chat: the first social channel (2026-07-06)
 
 Global chat so players in the same world can talk — the first slice of the Social layer,

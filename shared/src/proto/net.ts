@@ -217,7 +217,9 @@ export interface ServerError {
 /**
  * A chat line rebroadcast to every joined session. `fromId` is the sender's session id
  * (so the client can flag its own lines) and `from` is the server-authoritative display
- * name — never the client-supplied name — so no player can impersonate another.
+ * name — never the client-supplied name — so no player can impersonate another. When
+ * `emote` is set, `text` is a third-person action phrase and the client renders it as
+ * `${from} ${text}` (an emote line) rather than `${from}: ${text}`.
  */
 export interface ServerChat {
   t: 'chat';
@@ -225,6 +227,7 @@ export interface ServerChat {
   from: string;
   text: string;
   tick: number;
+  emote?: boolean;
 }
 
 export type ServerMessage =
@@ -471,7 +474,18 @@ export function decodeServer(raw: string): ServerMessage | null {
       ) {
         return null;
       }
-      return { t: 'chat', fromId: o.fromId, from: o.from, text: o.text, tick: o.tick };
+      const chat: ServerChat = {
+        t: 'chat',
+        fromId: o.fromId,
+        from: o.from,
+        text: o.text,
+        tick: o.tick,
+      };
+      if (o.emote !== undefined) {
+        if (!isBool(o.emote)) return null;
+        chat.emote = o.emote;
+      }
+      return chat;
     }
     default:
       return null;
