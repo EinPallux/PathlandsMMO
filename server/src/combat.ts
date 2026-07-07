@@ -393,13 +393,16 @@ export class ServerCombat {
         ? killerId
         : (this.lootRecipientProvider?.(killerId, eligible) ?? killerId);
     // Roll loot for the actual recipient's class (class-appropriate drops follow the loot, not
-    // always the killer).
+    // always the killer). If the picked id somehow has no live entity, the loot falls back to the
+    // killer — so credit it to `recipient.id` (the entity we rolled for), keeping the class the
+    // loot was rolled for and the id it's queued to consistent. `recipient.id` is always in
+    // `eligible` (it's either the picked member or the killer), so the loot is never dropped.
     const recipient = this.state.entities.get(recipientId) ?? killer;
     const table = buildEnemyLootTable(def, level);
     const result = rollLoot(table, this.state.rng, { forClass: recipient.cls });
     const loot = result.items.map((s) => ({ item: s.item, qty: s.qty }));
     for (const id of eligible) {
-      const isRecipient = id === recipientId;
+      const isRecipient = id === recipient.id;
       const credit: KillCredit = {
         enemyId, // quest credit for all eligible members
         gold: isRecipient ? result.gold : 0, // loot only for the rotated recipient
