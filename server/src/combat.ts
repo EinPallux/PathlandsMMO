@@ -137,6 +137,9 @@ export class ServerCombat {
    *  the gateway (which owns the session-scoped `PartyManager`) so a kill can share XP with the
    *  killer's nearby party (Part 21). Null until set — kills then credit only the killer. */
   private partyProvider: ((id: string) => readonly string[]) | null = null;
+  /** Picks the round-robin LOOT recipient among a kill's eligible members (Part 22) — the gateway
+   *  advances the killer's party rotation. Null until set — loot then goes to the killer. */
+  private lootRecipientProvider: ((killerId: string, eligible: string[]) => string) | null = null;
   /** Per-player queue of kills to credit (loot + quest-objective enemy id), drained by the
    * gateway each broadcast and sent to that player as ServerKill frames (Stage 2c-2). */
   private readonly killFeed = new Map<string, KillCredit[]>();
@@ -199,6 +202,13 @@ export class ServerCombat {
    *  share XP with the killer's nearby party (Part 21). The gateway owns the party state. */
   setPartyProvider(fn: (id: string) => readonly string[]): void {
     this.partyProvider = fn;
+  }
+
+  /** Inject the loot round-robin picker (Part 22): given the killer + the kill's eligible members
+   *  (from `eligiblePartyMembers`), returns the member whose turn it is to receive the drops. The
+   *  gateway advances the killer's party rotation. Unset ⇒ loot goes to the killer. */
+  setLootRecipientProvider(fn: (killerId: string, eligible: string[]) => string): void {
+    this.lootRecipientProvider = fn;
   }
 
   /** Write a player's authoritative movement position into its combat entity (pre-step). */
@@ -282,13 +292,14 @@ export class ServerCombat {
   }
 
   /**
-   * Award a kill's XP with party sharing (Part 21): the earner always, plus every OTHER party
-   * member within the share radius of the earner — each getting the FULL amount (grouping scales
-   * rewards up, never splits). Solo (no provider / empty party) reduces to crediting the earner.
+   * The players eligible to share a kill's rewards: the earner/killer, plus every OTHER party
+   * member (live player entity) within the share radius of them (Part 21/22). The earner leads
+   * the list. Solo (no provider / empty party) yields just the earner. Empty if the earner isn't
+   * a live player. Used by both XP sharing and the loot round-robin so they agree on "in range".
    */
-  private awardKillXp(earnerId: string, amount: number): void {
+  private eligiblePartyMembers(earnerId: string): string[] {
     const earner = this.state.entities.get(earnerId);
-    if (earner === undefined || earner.faction !== 'player') return;
+    if (earner === undefined || earner.faction !== 'player') return [];
     const memberIds = this.partyProvider?.(earnerId) ?? [];
     const members: XpShareMember[] = [];
     for (const id of memberIds) {
@@ -296,7 +307,16 @@ export class ServerCombat {
       const m = this.state.entities.get(id);
       if (m !== undefined && m.faction === 'player') members.push({ id, x: m.x, z: m.z });
     }
-    for (const id of partyXpRecipients(earnerId, earner, members)) this.awardXp(id, amount);
+    return partyXpRecipients(earnerId, earner, members);
+  }
+
+  /**
+   * Award a kill's XP with party sharing (Part 21): the earner always, plus every OTHER party
+   * member within the share radius — each getting the FULL amount (grouping scales rewards up,
+   * never splits). Solo reduces to crediting the earner.
+   */
+  private awardKillXp(earnerId: string, amount: number): void {
+    for (const id of this.eligiblePartyMembers(earnerId)) this.awardXp(id, amount);
   }
 
   /**
@@ -354,27 +374,41 @@ export class ServerCombat {
   }
 
   /**
-   * Credit a player for killing an enemy: roll its loot table (server-authoritative, on the
-   * shared seeded RNG — never `Math.random`) and queue the drop + the enemy def id for the
-   * killer. The enemy id + level ride the death EVENT (not looked up in the state), because an
-   * instant-cast kill resolves inside `applyIntent` and the corpse is reaped by the next tick's
-   * spawner before this drain runs. Only a live player killer is credited.
+   * Credit a kill (Part 22, party-aware). The enemy def id (for quest objectives) goes to EVERY
+   * eligible member — the killer + nearby party — so party members on the same quest all get
+   * kill credit. The LOOT (gold + items) is rolled once (server-authoritative, on the shared
+   * seeded RNG — never `Math.random`) and goes to a SINGLE round-robin recipient, so grouping
+   * stays economy-neutral (one drop per kill, rotated fairly). Solo reduces to the old behaviour:
+   * one credit to the killer with its own loot. The enemy id + level ride the death EVENT (not
+   * looked up in the state) because an instant-cast kill reaps the corpse before this runs.
    */
   private creditKill(killerId: string, enemyId: string, level: number): void {
     const killer = this.state.entities.get(killerId);
     if (killer === undefined || killer.faction !== 'player') return;
     const def = enemyById(enemyId);
     if (def === undefined) return;
+    const eligible = this.eligiblePartyMembers(killerId); // [killer, ...nearby party]
+    const recipientId =
+      eligible.length <= 1
+        ? killerId
+        : (this.lootRecipientProvider?.(killerId, eligible) ?? killerId);
+    // Roll loot for the actual recipient's class (class-appropriate drops follow the loot, not
+    // always the killer).
+    const recipient = this.state.entities.get(recipientId) ?? killer;
     const table = buildEnemyLootTable(def, level);
-    const result = rollLoot(table, this.state.rng, { forClass: killer.cls });
-    const credit: KillCredit = {
-      enemyId,
-      gold: result.gold,
-      items: result.items.map((s) => ({ item: s.item, qty: s.qty })),
-    };
-    const queue = this.killFeed.get(killerId);
-    if (queue === undefined) this.killFeed.set(killerId, [credit]);
-    else queue.push(credit);
+    const result = rollLoot(table, this.state.rng, { forClass: recipient.cls });
+    const loot = result.items.map((s) => ({ item: s.item, qty: s.qty }));
+    for (const id of eligible) {
+      const isRecipient = id === recipientId;
+      const credit: KillCredit = {
+        enemyId, // quest credit for all eligible members
+        gold: isRecipient ? result.gold : 0, // loot only for the rotated recipient
+        items: isRecipient ? loot : [],
+      };
+      const queue = this.killFeed.get(id);
+      if (queue === undefined) this.killFeed.set(id, [credit]);
+      else queue.push(credit);
+    }
   }
 
   /** Take and clear a player's pending kill credits (the gateway sends them as ServerKill). */

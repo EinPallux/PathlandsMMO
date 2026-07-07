@@ -167,6 +167,46 @@ describe('server-authoritative player combat — ServerCombat', () => {
     expect(combat.progressionOf('Q')!.totalXp).toBe(0); // out of range → no share
   });
 
+  it('shares quest kill-credit with the whole nearby party; loot goes to one (Part 22)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.setPartyProvider(() => ['P', 'Q']);
+    combat.setLootRecipientProvider(() => 'Q'); // deterministic round-robin recipient
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    combat.addPlayer('Q', 'Cleric', 'priest', 6, boar.x + 5, boar.y, boar.z, 0);
+    const enemyId = combat.state.entities.get(boar.id)!.enemyId!;
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+
+    const pKills = combat.drainKills('P');
+    const qKills = combat.drainKills('Q');
+    // BOTH members get quest credit (the enemy def id) — party questing works.
+    expect(pKills.map((k) => k.enemyId)).toContain(enemyId);
+    expect(qKills.map((k) => k.enemyId)).toContain(enemyId);
+    // Loot (gold + items) went ONLY to the chosen recipient Q; the killer P got none.
+    for (const k of pKills) {
+      expect(k.gold).toBe(0);
+      expect(k.items).toEqual([]);
+    }
+  });
+
+  it('gives loot to the killer when solo (no party) — unchanged behaviour', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.setPartyProvider(() => []); // solo
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    const enemyId = combat.state.entities.get(boar.id)!.enemyId!;
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+    const kills = combat.drainKills('P');
+    expect(kills).toHaveLength(1);
+    expect(kills[0]!.enemyId).toBe(enemyId); // killer gets the sole credit + its loot
+  });
+
   it('levels a player up when a kill crosses the XP threshold', () => {
     const combat = new ServerCombat(createServerWorld());
     const boar = spawnBoar(combat);

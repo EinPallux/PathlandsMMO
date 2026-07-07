@@ -6,6 +6,26 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 22: Parties, loot round-robin + shared quest credit (Social layer).**
+> Completes the "grouping rewards" story: a party kill gives **quest kill-credit to every in-range
+> member** (party questing works) while the **loot rotates round-robin** to one member per kill
+> (economy-neutral — one drop, distributed fairly). Solo play is byte-for-byte unchanged. Landed:
+>
+> - **`lootTurnRecipient`** (`shared/combat/xp.ts`): a pure round-robin over the eligible members +
+>   a per-party turn counter (negative-safe; null for empty). **`Party.lootTurn`** holds the cursor.
+> - **`ServerCombat` credit refactor**: a shared `eligiblePartyMembers` helper (killer + in-range
+>   party, reused by XP + loot); `creditKill` queues the enemy def id (quest credit) to **all**
+>   eligible members and the rolled loot to a **single** round-robin recipient (loot rolled for
+>   that recipient's class), picked via the gateway-injected `setLootRecipientProvider`.
+> - Each recipient's client applies its own credit on the existing `ServerKill` channel — **no
+>   protocol change**. This is the whole grouping-rewards arc: form → see → vitals → XP → loot.
+>
+> **397 tests green**; `pnpm typecheck` + `lint` + `build` (287 KB gzip) clean. _Next: group scaling
+> in Hollows (already partially in via the boss-ally count), or the next Phase-6 system (quests/
+> professions server migration, or friends/guild)._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 21: Parties, shared kill XP (Social layer).**
 > Grouping now **rewards**, not just shows health: a party kill grants the **full** XP to every
 > member within the "in the fight" radius (**40 m**) — no split, so playing together is strictly

@@ -4,6 +4,38 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 22 — Parties, loot round-robin + shared quest credit (2026-07-07)
+
+Completes the "grouping rewards" story: a party kill now gives **quest kill-credit to every
+in-range member** (party questing works) while the **loot rotates round-robin** to one member
+per kill (so the economy stays neutral — one drop per kill, distributed fairly). Solo play is
+byte-for-byte unchanged. Server-authoritative + tested.
+
+#### Added
+
+- **`lootTurnRecipient` rule** (`shared/src/combat/xp.ts`): a pure round-robin — given the eligible
+  members (stable order) and a per-party turn counter, returns whose turn it is (negative-safe;
+  null for an empty list).
+- **`Party.lootTurn`** (`server/src/party.ts`): a monotonic per-party rotation cursor, advanced by
+  the gateway on each credited kill.
+- **`ServerCombat` credit refactor** (`server/src/combat.ts`): a shared `eligiblePartyMembers`
+  helper (killer + in-range party, reused by XP + loot); `creditKill` now queues the enemy def id
+  (quest credit) to **all** eligible members and the rolled loot (gold + items) to a **single**
+  round-robin recipient — chosen via the injected `setLootRecipientProvider`, with the loot rolled
+  for that recipient's class. `awardKillXp` now delegates to the same eligibility helper.
+- **Gateway wiring** (`server/src/gateway.ts`): injects the loot picker — filters the killer's
+  party to the eligible/in-range members in stable order, picks via `lootTurnRecipient`, and
+  advances `party.lootTurn`. Each recipient's client applies its own credit on the existing
+  `ServerKill` channel — no protocol change.
+
+#### Tests
+
+- **`shared/test/progression.test.ts`** (+1): `lootTurnRecipient` rotates + wraps + handles
+  single/empty.
+- **`server/test/combat.test.ts`** (+2): a party kill gives **both** members the quest credit while
+  loot goes only to the chosen recipient (the killer gets none); a solo kill still gives the killer
+  the sole credit + its loot (unchanged).
+
 ### Part 21 — Parties, shared kill XP (2026-07-07)
 
 Grouping now **rewards**, not just shows health: a party kill grants the **full** XP to every

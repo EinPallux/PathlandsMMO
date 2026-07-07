@@ -16,6 +16,7 @@ import {
   decodeClient,
   encodeServer,
   findEmote,
+  lootTurnRecipient,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
   type ClientParty,
@@ -143,6 +144,17 @@ export class GameServer {
     // Let the combat sim share a kill's XP with the killer's nearby party (Part 21): it looks up
     // the party's member ids and range-gates them itself. Solo players resolve to an empty list.
     this.combat.setPartyProvider((id) => this.party.partyOf(id)?.members ?? []);
+    // Round-robin a kill's LOOT among the eligible members (Part 22): pick from the party's members
+    // in stable order (filtered to those eligible/in-range), advancing the party's rotation cursor.
+    this.combat.setLootRecipientProvider((killerId, eligible) => {
+      const party = this.party.partyOf(killerId);
+      if (party === null) return killerId;
+      const ordered = party.members.filter((m) => eligible.includes(m));
+      const pick = lootTurnRecipient(ordered, party.lootTurn);
+      if (pick === null) return killerId;
+      party.lootTurn += 1;
+      return pick;
+    });
     this.auth = deps.auth ?? new Auth('dev-insecure-secret-change-me');
     this.store = deps.store ?? new MemoryStore();
     this.api = new HttpApi(this.auth, this.store, {

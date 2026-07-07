@@ -10,6 +10,8 @@ export interface Party {
   /** Session ids in the party (2..MAX_PARTY while it exists). */
   members: string[];
   leaderId: string;
+  /** Monotonic round-robin cursor for loot distribution (Part 22); advanced per credited kill. */
+  lootTurn: number;
 }
 
 /** Outcome of an invite attempt (for player-facing feedback). */
@@ -57,7 +59,7 @@ export class PartyManager {
       if (party.members.length >= MAX_PARTY) return null; // filled meanwhile
       party.members.push(id);
     } else {
-      party = { members: [fromId, id], leaderId: fromId };
+      party = { members: [fromId, id], leaderId: fromId, lootTurn: 0 };
       this.memberParty.set(fromId, party);
     }
     this.memberParty.set(id, party);

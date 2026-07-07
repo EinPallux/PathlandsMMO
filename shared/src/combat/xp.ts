@@ -169,3 +169,17 @@ export function partyXpRecipients(
   }
   return out;
 }
+
+/**
+ * Round-robin loot: the member whose turn it is to receive a kill's drops, given the eligible
+ * members in a stable order and a monotonically-advancing per-party turn counter. Unlike XP
+ * (shared to all), LOOT goes to exactly one member per kill so grouping stays economy-neutral
+ * (one drop per kill, rotated fairly). Returns null for an empty list. `turn` may be any integer
+ * (negative-safe); the caller advances it after each kill.
+ */
+export function lootTurnRecipient(orderedEligible: readonly string[], turn: number): string | null {
+  const n = orderedEligible.length;
+  if (n === 0) return null;
+  const i = ((turn % n) + n) % n;
+  return orderedEligible[i]!;
+}

@@ -8,6 +8,7 @@ import {
   killXpMultiplier,
   partyXpRecipients,
   PARTY_XP_SHARE_RADIUS,
+  lootTurnRecipient,
   applyRested,
   restedCap,
   baseStatsAtLevel,
@@ -105,6 +106,16 @@ describe('Party kill-XP sharing (Phase 6 §Party)', () => {
       { id: 'B', x: 105, z: 100 }, // B repeated
     ];
     expect(partyXpRecipients('A', earner, members)).toEqual(['A', 'B']);
+  });
+
+  it('round-robins loot: rotates through eligible members and wraps', () => {
+    const party = ['A', 'B', 'C'];
+    expect(lootTurnRecipient(party, 0)).toBe('A');
+    expect(lootTurnRecipient(party, 1)).toBe('B');
+    expect(lootTurnRecipient(party, 2)).toBe('C');
+    expect(lootTurnRecipient(party, 3)).toBe('A'); // wraps
+    expect(lootTurnRecipient(['solo'], 7)).toBe('solo'); // one member always wins
+    expect(lootTurnRecipient([], 0)).toBeNull(); // nobody eligible
   });
 });
 
