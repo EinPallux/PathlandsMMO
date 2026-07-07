@@ -19,10 +19,13 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > is smaller, since gold/bag are coupled through vendors/loot/quests):_
 >
 > - **1a (done):** server inventory model + seed + loot/ground routing + `ServerInventory` replication.
-> - **1b:** flip the client to render the server frame; port **equip / unequip / sell / buy / buyback**
->   to server intents validated against the authoritative model; persist inventory server-side.
-> - **1c:** bridge the not-yet-migrated gold/bag sources (quest reward, travel fee, crafting output) as
->   trusted server grants, then validate each as its own system migrates (quests #138, professions #139).
+> - **1b·A (done):** server-validated `equip/unequip/sell/buy/buyback` intents + perk-aware bag cap.
+> - **1b·B (done):** the client renders the server inventory as authoritative (bag/gold/equipment are a
+>   mirror written only by the frame); actions go through the validated intents; quest-reward /
+>   travel-fee / mount / crafted-gear are trusted-bridged (`ClientClaimReward` / `ClientSpendGold`)
+>   until quests (#138) / professions (#139) add server validation; inventory persists server-side.
+>   Proto **v18**. **427 tests green.**
+> - **Next:** server-authoritative quests (#138) — retires the claimReward trust; then professions (#139).
 >
 > ---
 >

@@ -40,7 +40,7 @@ import { GatherDirector } from './gatherDirector.js';
 import { MetaDirector } from './metaDirector.js';
 import { MountController } from './mountController.js';
 import { BountyDirector } from './bountyDirector.js';
-import { questGiverById } from '@pathlands/shared';
+import { questGiverById, perkMagnitude } from '@pathlands/shared';
 import { useStore, type GameCommands, type Nameplate } from './store.js';
 
 // Spawn (Brookhollow plaza, north of the fountain at 1536,1536) is a shared world
@@ -270,6 +270,8 @@ export class Game {
         name: character?.name ?? 'Wanderer',
         cls: this.currentClass,
         level: character?.level ?? 1,
+        // Deep-Pockets bag bonus, so the server sizes the authoritative bag cap right (account perk).
+        bagBonus: perkMagnitude(this.account.perks, 'bagSlots'),
         ...(serverToken !== null ? { token: serverToken } : {}),
       },
       onStatus: (st) =>
@@ -324,7 +326,11 @@ export class Game {
       drainKills: () => net.drainKills(),
       drainFx: () => net.drainFx(),
       drainGrants: () => net.drainGrants(),
+      drainInventory: () => net.drainInventory(),
       send: (intent) => net.sendIntent(intent),
+      sendInvAction: (a) => net.sendInvAction(a),
+      sendClaimReward: (gold, items) => net.sendClaimReward(gold, items),
+      sendSpendGold: (amount) => net.sendSpendGold(amount),
     });
     // Persist promptly whenever a ground-item drop/pickup mutates the bag (dupe-window mitigation).
     this.combat.setBagMutationHook(() => this.onPersist?.());
@@ -443,14 +449,11 @@ export class Game {
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
       dropItem: (index) => {
-        // Send the drop FIRST, remove from the local bag only on a confirmed send. A drop the
-        // server would reject (rate-limited, or the socket isn't open) must not vanish the item —
-        // there is no inventory ack to restore it (the bag is client-authoritative).
+        // Send the drop by content; the SERVER removes the matching stack from the authoritative
+        // bag and spawns the ground item, then re-replicates the bag (the client never mutates it
+        // locally now — the inventory frame is the single writer).
         const stack = this.combat.peekInventory(index);
-        if (stack === null) return;
-        if (this.net?.sendDropItem(stack.item, stack.qty) === true) {
-          this.combat.removeInventoryAt(index);
-        }
+        if (stack !== null) this.net?.sendDropItem(stack.item, stack.qty);
       },
       buyItem: (index) => this.combat.buyItem(index),
       buybackItem: (index) => this.combat.buybackItem(index),

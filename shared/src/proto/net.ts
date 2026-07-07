@@ -36,9 +36,12 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v16 added droppable ground items (ClientDropItem / ClientPickupItem / ServerWorldItems /
  *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped;
  * v17 added the server-authoritative inventory channel (ServerInventory — the owner's bag / gold /
- *     equipment) as the economy migration begins moving inventory authority server-side.
+ *     equipment) as the economy migration begins moving inventory authority server-side;
+ * v18 completed the inventory flip: the client renders the server's inventory + drives it via
+ *     ClientInvAction / ClientClaimReward / ClientSpendGold (the last two trusted bridges for the
+ *     not-yet-migrated quest-reward / travel / mount sources), and ClientHello carries bagBonus.
  */
-export const NET_PROTOCOL_VERSION = 17;
+export const NET_PROTOCOL_VERSION = 18;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -186,6 +189,13 @@ export interface ClientHello {
    * used when no token is supplied). Absent ⇒ an ephemeral guest session.
    */
   token?: string;
+  /**
+   * Extra bag slots from the account's Deep-Pockets perk, so the server sizes the authoritative bag
+   * cap correctly. Client-supplied (perks aren't persisted server-side yet) and self-scoped — a
+   * bogus value only changes the sender's OWN cap, so it's a negligible self-cheat; it's replaced by
+   * server-side perk state when perks migrate.
+   */
+  bagBonus?: number;
 }
 
 /**
@@ -303,6 +313,30 @@ export interface ClientInvAction {
   tier?: number;
 }
 
+/**
+ * A TRUSTED credit into the sender's own inventory — the bridge for a bag/gold source that hasn't
+ * migrated server-side yet (a quest turn-in reward). The client (which validated the quest) tells
+ * the server to grant the reward; the server applies it to the authoritative inventory. Trusted for
+ * now (parity with the previously client-authoritative bag) and replaced by server-side validation
+ * when quests migrate (#138).
+ */
+export interface ClientClaimReward {
+  t: 'claimReward';
+  gold: number;
+  items: NetItemStack[];
+}
+
+/**
+ * A TRUSTED gold DEBIT from the sender's own wallet — the bridge for a not-yet-migrated gold sink
+ * (a Waystone travel fee, a mount purchase). The server debits only if the wallet can afford it, so
+ * this can't push gold negative; the amount is client-computed for now (validated when travel /
+ * mounts migrate). Not a gain vector — it only ever spends.
+ */
+export interface ClientSpendGold {
+  t: 'spendGold';
+  amount: number;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientIntent
@@ -313,7 +347,9 @@ export type ClientMessage =
   | ClientGm
   | ClientDropItem
   | ClientPickupItem
-  | ClientInvAction;
+  | ClientInvAction
+  | ClientClaimReward
+  | ClientSpendGold;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -778,6 +814,10 @@ export function decodeClient(raw: string): ClientMessage | null {
         if (!isString(o.token)) return null;
         hello.token = o.token;
       }
+      if (o.bagBonus !== undefined) {
+        if (!isFiniteNumber(o.bagBonus)) return null;
+        hello.bagBonus = o.bagBonus;
+      }
       return hello;
     }
     case 'intent': {
@@ -878,6 +918,21 @@ export function decodeClient(raw: string): ClientMessage | null {
         act.tier = o.tier;
       }
       return act;
+    }
+    case 'claimReward': {
+      if (!isNonNegInt(o.gold) || !Array.isArray(o.items) || !o.items.every(isNetItemStack)) {
+        return null;
+      }
+      // The reward items are trusted (client-validated quest); still reject a non-finite stat so a
+      // forged reward can't poison the bag (same guard as a dropped item).
+      for (const s of o.items) {
+        if (!isSafeItemTree((s as { item: unknown }).item, 0, { n: 256 })) return null;
+      }
+      return { t: 'claimReward', gold: o.gold, items: o.items };
+    }
+    case 'spendGold': {
+      if (!isNonNegInt(o.amount)) return null;
+      return { t: 'spendGold', amount: o.amount };
     }
     default:
       return null;

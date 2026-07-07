@@ -36,7 +36,10 @@ import {
   type NetPlayer,
   type NetWorldItem,
   type ClientGm,
+  type ClientInvAction,
+  type ItemStackSave,
   type NetWhoEntry,
+  type ServerInventory,
   type ServerKill,
   type ServerSelf,
 } from '@pathlands/shared';
@@ -108,7 +111,7 @@ export interface NetStatus {
 export interface NetClientOptions {
   url: string;
   /** Guest identity; plus an optional account session token (accounts, Phase-6 Part 4). */
-  identity: { name: string; cls: string; level: number; token?: string };
+  identity: { name: string; cls: string; level: number; token?: string; bagBonus?: number };
   /** How far in the past to render remotes (ms). ≥ ~1.5× the wire interval (ARCH §7). */
   renderDelayMs?: number;
   /** Notified whenever connection status changes. */
@@ -188,6 +191,8 @@ export class NetClient {
   private readonly worldItemMap = new Map<string, NetWorldItem>();
   /** Item stacks granted to us (a ground-item pickup) since the game last drained them. */
   private readonly grantQueue: NetItemStack[] = [];
+  /** The latest authoritative inventory frame (bag/gold/equipment), last-wins until drained. */
+  private pendingInventory: ServerInventory | null = null;
   /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
   private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
@@ -244,6 +249,7 @@ export class NetClient {
         cls: id.cls,
         level: id.level,
         ...(id.token !== undefined ? { token: id.token } : {}),
+        ...(id.bagBonus !== undefined ? { bagBonus: id.bagBonus } : {}),
       });
       this.startPinging();
     });
@@ -358,7 +364,10 @@ export class NetClient {
         for (const id of msg.gone) this.worldItemMap.delete(id); // LEAVE / picked up / despawned
         break;
       case 'grant':
-        for (const s of msg.items) this.grantQueue.push(s); // a pickup — the game adds to the bag
+        for (const s of msg.items) this.grantQueue.push(s); // a pickup — the game floats the loot cue
+        break;
+      case 'inventory':
+        this.pendingInventory = msg; // last-wins authoritative bag/gold/equipment (economy migration)
         break;
       default:
         break;
@@ -445,6 +454,7 @@ export class NetClient {
     this.enemySamples.clear();
     this.worldItemMap.clear();
     this.grantQueue.length = 0;
+    this.pendingInventory = null;
     this.lastCombatSelf = null;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
@@ -571,6 +581,31 @@ export class NetClient {
   drainGrants(): NetItemStack[] {
     if (this.grantQueue.length === 0) return [];
     return this.grantQueue.splice(0, this.grantQueue.length);
+  }
+
+  /** Take and clear the latest authoritative inventory frame, or null if none since the last drain. */
+  drainInventory(): ServerInventory | null {
+    const inv = this.pendingInventory;
+    this.pendingInventory = null;
+    return inv;
+  }
+
+  /** Send a server-validated inventory action (equip / unequip / sell / buy / buyback). */
+  sendInvAction(a: Omit<ClientInvAction, 't'>): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'inv', ...a });
+  }
+
+  /** Send a trusted reward claim (quest turn-in / crafted item) — the server grants it. */
+  sendClaimReward(gold: number, items: ItemStackSave[]): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'claimReward', gold, items });
+  }
+
+  /** Send a trusted gold debit (travel fee / mount) — the server spends it if affordable. */
+  sendSpendGold(amount: number): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'spendGold', amount });
   }
 
   /** Send a GM action (the server re-checks GM privilege; a non-GM's frame is ignored). */

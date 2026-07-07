@@ -20,8 +20,42 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 17 (…/ gm / ground items / inventory)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(17);
+  it('is at protocol version 18 (…/ ground items / inventory / inventory-action flip)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(18);
+  });
+
+  it('round-trips the inventory-action + trusted-bridge frames + hello bagBonus', () => {
+    const item = { id: 'blade', name: 'Blade' } as unknown as never;
+    // Validated actions.
+    const equip: ClientMessage = { t: 'inv', action: 'equip', index: 2 };
+    expect(decodeClient(encodeClient(equip))).toEqual(equip);
+    const buy: ClientMessage = { t: 'inv', action: 'buy', seed: 7, tier: 5, index: 0 };
+    expect(decodeClient(encodeClient(buy))).toEqual(buy);
+    // A bad action / fractional index sinks it.
+    expect(decodeClient(JSON.stringify({ t: 'inv', action: 'nuke' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'inv', action: 'equip', index: 1.5 }))).toBeNull();
+    // Trusted bridges.
+    const reward: ClientMessage = { t: 'claimReward', gold: 30, items: [{ item, qty: 1 }] };
+    expect(decodeClient(encodeClient(reward))).toEqual(reward);
+    const spend: ClientMessage = { t: 'spendGold', amount: 12 };
+    expect(decodeClient(encodeClient(spend))).toEqual(spend);
+    // A reward with a non-finite stat is rejected (forged-item guard); a negative spend too.
+    expect(
+      decodeClient(
+        '{"t":"claimReward","gold":0,"items":[{"item":{"id":"x","name":"X","atk":1e999},"qty":1}]}',
+      ),
+    ).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'spendGold', amount: -5 }))).toBeNull();
+    // Hello carries the optional bagBonus.
+    const hello: ClientMessage = {
+      t: 'hello',
+      protocol: 18,
+      name: 'A',
+      cls: 'warrior',
+      level: 5,
+      bagBonus: 4,
+    };
+    expect(decodeClient(encodeClient(hello))).toEqual(hello);
   });
 
   it('round-trips the server-authoritative inventory frame', () => {

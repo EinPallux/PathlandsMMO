@@ -35,7 +35,6 @@ import {
   applyHeal,
   WORLD_SPAWNS,
   EquipSlot,
-  RING_SLOTS,
   nearestWaystone,
   nearestActivated,
   waystoneById,
@@ -65,8 +64,29 @@ import {
   type NetCombatEvent,
   type NetEntity,
   type NetCombatSelf,
+  type ServerInventory,
   type ServerKill,
 } from '@pathlands/shared';
+
+/** Fields a server-validated inventory action carries (only the ones its action uses are read). */
+export interface InvActionOpts {
+  action: 'equip' | 'unequip' | 'sell' | 'buy' | 'buyback';
+  index?: number;
+  slot?: string;
+  seed?: number;
+  tier?: number;
+}
+
+/** Shallow equality of two equip maps by slot → item id — decides whether to rebuild the player. */
+function sameEquipment(a: Record<string, ItemDef>, b: Record<string, ItemDef>): boolean {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const slot of ka) {
+    if (b[slot]?.id !== a[slot]?.id) return false;
+  }
+  return true;
+}
 import { ModelObject } from '../engine/voxelModel.js';
 import { audio } from '../platform/audio.js';
 import { Vfx, SCHOOL_COLOR } from '../engine/vfx.js';
@@ -156,7 +176,13 @@ export class CombatDirector {
   private equipment: Record<string, ItemDef>;
   private discovered: Set<string>;
   /** The merchant the player is currently trading with (null = no vendor open). */
-  private activeVendor: { name: string; stock: VendorStockItem[] } | null = null;
+  private activeVendor: {
+    name: string;
+    stock: VendorStockItem[];
+    /** The (seed, tier) the stock was derived from — sent with a buy so the server recomputes it. */
+    seed: number;
+    tier: number;
+  } | null = null;
   /** Recently sold stacks, buyable back at the sold price (most-recent first). */
   private buyback: Array<{ item: ItemDef; qty: number; price: number }> = [];
 
@@ -197,7 +223,13 @@ export class CombatDirector {
     drainFx: () => NetCombatEvent[];
     /** Item stacks granted to us by the server (a ground-item pickup) to add to the bag. */
     drainGrants: () => ItemStackSave[];
+    /** The latest authoritative inventory (bag/gold/equipment), or null if unchanged since drained. */
+    drainInventory: () => ServerInventory | null;
     send: (intent: Intent) => void;
+    /** Economy migration (Stage 1b): server-validated inventory actions + trusted bridges. */
+    sendInvAction: (a: InvActionOpts) => void;
+    sendClaimReward: (gold: number, items: ItemStackSave[]) => void;
+    sendSpendGold: (amount: number) => void;
   } | null = null;
 
   /** Wire the director to the network (called once when the game connects). */
@@ -326,10 +358,15 @@ export class CombatDirector {
     return Math.max(0, Math.min(1, 1 - remaining / skill.castTicks));
   }
 
-  /** Debit gold if affordable (mount purchase). Returns whether it was paid. */
+  /**
+   * Debit gold if affordable (mount purchase / travel fee). Gold is server-authoritative now
+   * (economy migration): this checks affordability against the mirror for instant UX, sends the
+   * trusted spend to the server (which debits authoritatively), and the wallet updates via the next
+   * inventory frame. Returns whether the mirror could afford it.
+   */
   spendGold(amount: number): boolean {
     if (amount < 0 || this.gold < amount) return false;
-    this.gold -= amount;
+    this.netSink?.sendSpendGold(amount);
     return true;
   }
 
@@ -386,51 +423,42 @@ export class CombatDirector {
     this.state.entities.set(PLAYER_ID, next);
   }
 
-  /** Equip the inventory item at `index` (rings auto-pick a free finger). */
+  // --- Inventory actions (economy migration): validated + applied SERVER-side; the local bag /
+  //     gold / equipment are a mirror updated by the inventory frame. Each method pre-checks the
+  //     mirror for instant UX feedback (floaters), then sends the intent — the server re-validates.
+
+  /** Equip the inventory item at `index` (rings auto-pick a free finger); server-validated. */
   equipItem(index: number): void {
     const stack = this.inventory[index];
     if (!stack) return;
-    const item = stack.item;
-    if (!canEquip(this.cls, this.level, item)) {
+    if (!canEquip(this.cls, this.level, stack.item)) {
       this.pushFloater(this.player, 'Cannot equip', 'miss');
       return;
     }
-    let slot: string = item.slot;
-    if (slot === EquipSlot.Ring1 || slot === EquipSlot.Ring2) {
-      slot = RING_SLOTS.find((s) => !this.equipment[s]) ?? EquipSlot.Ring1;
-    }
-    const prev = this.equipment[slot];
-    this.equipment[slot] = item;
-    // Consume one from the stack (equipment is single items).
-    if (stack.qty > 1) stack.qty -= 1;
-    else this.inventory.splice(index, 1);
-    if (prev) this.inventory.push({ item: prev, qty: 1 });
-    this.rebuildPlayer();
+    this.netSink?.sendInvAction({ action: 'equip', index });
   }
 
-  /** Unequip the item in `slot` back to the bag. */
+  /** Unequip the item in `slot` back to the bag; server-validated. */
   unequipItem(slot: string): void {
-    const item = this.equipment[slot];
-    if (!item) return;
+    if (!this.equipment[slot]) return;
     if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return;
     }
-    delete this.equipment[slot];
-    this.inventory.push({ item, qty: 1 });
-    this.rebuildPlayer();
+    this.netSink?.sendInvAction({ action: 'unequip', slot });
   }
 
-  /** Sell the inventory item at `index` for a quarter of its value (GDD §6). */
+  /** Sell the inventory item at `index` for a quarter of its value (GDD §6); server-validated. */
   sellItem(index: number): void {
     const stack = this.inventory[index];
     if (!stack) return;
+    this.netSink?.sendInvAction({ action: 'sell', index });
+    // Mirror the sale into the CLIENT's buyback list for the vendor UI (the server keeps its own in
+    // the same order, so a later buyback-by-index resolves to the same stack).
     const price = sellPrice(stack.item, stack.qty);
-    this.gold += price;
-    this.inventory.splice(index, 1);
-    // Remember the sale so the player can buy it back at the same price.
     this.buyback.unshift({ item: stack.item, qty: stack.qty, price });
     if (this.buyback.length > BUYBACK_MAX) this.buyback.pop();
+    this.publishVendor();
   }
 
   /** Open the merchant's shop: build its stock from settlement tier + its seed. */
@@ -445,11 +473,11 @@ export class CombatDirector {
         best = SETTLEMENT_TIER[s.id] ?? DEFAULT_VENDOR_TIER;
       }
     }
-    this.activeVendor = { name, stock: vendorStock(seed, best) };
+    this.activeVendor = { name, stock: vendorStock(seed, best), seed, tier: best };
     this.publishVendor();
   }
 
-  /** Buy the vendor stock item at `index` (stock is unlimited, like a town vendor). */
+  /** Buy the vendor stock item at `index`; server recomputes the price from (seed, tier). */
   buyItem(index: number): void {
     if (!this.activeVendor) return;
     const entry = this.activeVendor.stock[index];
@@ -462,12 +490,15 @@ export class CombatDirector {
       this.pushFloater(this.player, 'Not enough gold', 'miss');
       return;
     }
-    this.gold -= entry.price;
-    this.inventory.push({ item: entry.item, qty: 1 });
-    this.publishVendor();
+    this.netSink?.sendInvAction({
+      action: 'buy',
+      index,
+      seed: this.activeVendor.seed,
+      tier: this.activeVendor.tier,
+    });
   }
 
-  /** Buy back a previously-sold stack at `index` for the price it was sold for. */
+  /** Buy back a previously-sold stack at `index` for the price it was sold for; server-validated. */
   buybackItem(index: number): void {
     const entry = this.buyback[index];
     if (!entry) return;
@@ -479,9 +510,8 @@ export class CombatDirector {
       this.pushFloater(this.player, 'Not enough gold', 'miss');
       return;
     }
-    this.gold -= entry.price;
-    this.inventory.push({ item: entry.item, qty: entry.qty });
-    this.buyback.splice(index, 1);
+    this.netSink?.sendInvAction({ action: 'buyback', index });
+    this.buyback.splice(index, 1); // mirror the server's buyback removal for the UI
     this.publishVendor();
   }
 
@@ -652,7 +682,7 @@ export class CombatDirector {
       this.pushFloater(this.player, 'Not enough gold', 'miss');
       return;
     }
-    this.gold -= fee;
+    if (fee > 0) this.netSink?.sendSpendGold(fee); // gold is server-authoritative; the frame updates it
     this.respawnAt(to.x, to.z);
     const p = this.player;
     p.x = to.x;
@@ -667,31 +697,47 @@ export class CombatDirector {
     this.relevelIfNeeded();
   }
 
-  /** Grant a completed quest's reward: XP, gold, fixed + chosen items, Waystone. */
+  /**
+   * Grant a completed quest's reward. XP + the Waystone unlock stay client-side (not inventory);
+   * the gold + reward items are bridged to the authoritative inventory via a single TRUSTED
+   * claimReward (the client validated the quest — server-side quest validation replaces the trust
+   * when quests migrate). The bag / gold update arrives via the next inventory frame.
+   */
   grantReward(reward: QuestReward, choiceIndex: number): void {
     // Quest XP is scaled by the §5 pace tuning (QUEST_XP_SCALE) so quests lead the climb.
     this.gainXp(scaledQuestXp(reward.xp));
-    if (reward.gold) {
-      this.gold += reward.gold;
-      this.pushFloater(this.player, `+${reward.gold}c`, 'xp');
-    }
-    for (const s of reward.items ?? []) this.awardItem(s);
+    const items: ItemStackSave[] = [];
+    for (const s of reward.items ?? []) items.push(this.generateRewardItem(s));
     if (reward.choices && reward.choices.length > 0) {
       const pick = reward.choices[Math.max(0, Math.min(choiceIndex, reward.choices.length - 1))];
-      if (pick) this.awardItem(pick);
+      if (pick) items.push(this.generateRewardItem(pick));
     }
+    const gold = reward.gold ?? 0;
+    if (gold > 0) this.pushFloater(this.player, `+${gold}c`, 'xp');
+    if (gold > 0 || items.length > 0) this.netSink?.sendClaimReward(gold, items);
     if (reward.waystoneUnlock) this.discovered.add(reward.waystoneUnlock);
   }
 
-  /** Forge a crafted item for the player's class into the bag. Returns success. */
+  /** Generate a reward item for the player's class (floats its name; caller bridges it to the bag). */
+  private generateRewardItem(s: GeneratedItemSpec): ItemStackSave {
+    const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
+    this.pushFloater(this.player, item.name, 'heal');
+    return { item, qty: 1 };
+  }
+
+  /**
+   * Forge a crafted item for the player's class and bridge it to the authoritative bag (a trusted
+   * claimReward — crafting validation moves server-side when professions migrate). Returns false if
+   * the mirror bag is full (the craft's materials are already spent by the caller — pre-existing).
+   */
   craftGear(s: GeneratedItemSpec): boolean {
     if (this.inventory.length >= this.bagCap()) {
       this.pushFloater(this.player, 'Bag full', 'miss');
       return false;
     }
     const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
-    this.inventory.push({ item, qty: 1 });
     this.pushFloater(this.player, `Crafted ${item.name}`, 'heal');
+    this.netSink?.sendClaimReward(0, [{ item, qty: 1 }]);
     return true;
   }
 
@@ -722,17 +768,6 @@ export class CombatDirector {
       else p.auras.push(aura);
       this.pushFloater(p, effect.label, 'xp');
     }
-  }
-
-  /** Generate a reward item for the player's class and drop it in the bag. */
-  private awardItem(s: GeneratedItemSpec): void {
-    if (this.inventory.length >= this.bagCap()) {
-      this.pushFloater(this.player, 'Bag full', 'miss');
-      return;
-    }
-    const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
-    this.inventory.push({ item, qty: 1 });
-    this.pushFloater(this.player, item.name, 'heal');
   }
 
   /** Level up the player if accumulated XP crossed a threshold (shared with kills). */
@@ -811,6 +846,7 @@ export class CombatDirector {
       this.reconcileFromServer();
       this.applyServerKills();
       this.applyServerGrants();
+      this.applyServerInventory();
       if (this.netSink !== null) this.renderServerFx(this.netSink.drainFx());
       return;
     }
@@ -1029,23 +1065,33 @@ export class CombatDirector {
   }
 
   /**
-   * Apply the server's item grants — the authoritative result of picking a ground item up (Part
-   * 29). Unlike a kill this plays a loot cue (not a death cue) and never advances quest objectives:
-   * it's purely "these stacks entered your bag." The grant is ALWAYS accepted, even if it pushes the
-   * bag over capacity: the server has already atomically removed the item from the world, so refusing
-   * it here would LOSE it. A full-bag player is stopped BEFORE the pickup is ever sent (bagHasRoom
-   * gates the interact), so over-cap only happens in a rare double-pickup race and self-corrects the
-   * moment the player drops the excess.
+   * The cosmetic side of a ground-item pickup (Part 29): the loot cue + item-name floater. The bag
+   * itself is applied by the server-authoritative inventory frame (the server added the picked stack
+   * to the model); this no longer mutates the bag.
    */
   private applyServerGrants(): void {
     const grants = this.netSink?.drainGrants();
     if (grants === undefined || grants.length === 0) return;
-    for (const stack of grants) {
-      this.inventory.push({ item: stack.item, qty: stack.qty });
-      this.pushFloater(this.player, stack.item.name, 'heal');
-    }
+    for (const stack of grants) this.pushFloater(this.player, stack.item.name, 'heal');
     audio.sfx('loot');
-    this.bagMutationHook?.(); // a pickup changed the bag — persist promptly (dupe-window shrink)
+  }
+
+  /**
+   * Overwrite the local bag / gold / equipment MIRROR from the server's authoritative inventory
+   * frame (economy migration). This is the ONLY writer of `inventory` / `gold` / `equipment` in MMO
+   * mode — every action sends an intent and the change comes back here. On an equipment change the
+   * player entity is rebuilt so stats reflect the new gear. Fires the persist hook so the client
+   * cloud-save stays fresh.
+   */
+  private applyServerInventory(): void {
+    const frame = this.netSink?.drainInventory();
+    if (frame === undefined || frame === null) return;
+    this.inventory = frame.bag.map((s) => ({ item: s.item, qty: s.qty }));
+    this.gold = frame.gold;
+    const equipChanged = !sameEquipment(this.equipment, frame.equipment);
+    this.equipment = { ...frame.equipment };
+    if (equipChanged) this.rebuildPlayer();
+    this.bagMutationHook?.();
   }
 
   /** Whether the bag has room for one more stack — gates a ground-item pickup client-side so a
@@ -1060,19 +1106,17 @@ export class CombatDirector {
   }
 
   /**
-   * A hook fired whenever a ground-item drop or pickup mutates the bag, so the client can persist
-   * immediately. This shrinks the drop-then-crash dupe window (a client-authoritative bag saved
-   * only every 30 s could roll back a drop while the server-side world item persists) from the
-   * autosave interval to the IndexedDB flush latency. The real fix is server-side inventory
-   * authority (the pending economy migration); this is the interim mitigation.
+   * A hook fired whenever the bag changes, so the client persists (cloud-saves) promptly. Now that
+   * inventory is server-authoritative + server-persisted, this is a belt-and-suspenders client save;
+   * it fires from the inventory-frame application.
    */
   private bagMutationHook: (() => void) | null = null;
   setBagMutationHook(fn: () => void): void {
     this.bagMutationHook = fn;
   }
 
-  /** Peek a bag stack WITHOUT removing it — the drop path sends to the server first and only
-   *  removes on a confirmed send (so a rate-limited / disconnected drop never loses the item). */
+  /** Peek a bag stack WITHOUT removing it — the drop path sends the item to the server, which
+   *  authoritatively removes it and re-replicates the bag (the client never mutates it locally). */
   peekInventory(index: number): ItemStackSave | null {
     if (index < 0 || index >= this.inventory.length) return null;
     const s = this.inventory[index];
@@ -1080,23 +1124,10 @@ export class CombatDirector {
   }
 
   /**
-   * Remove a bag stack after its drop was confirmed sent (the server will spawn the authoritative
-   * ground item). Returns the removed stack, or null for an out-of-range slot. Fires the bag-mutation
-   * hook so the client persists the post-drop bag promptly.
-   */
-  removeInventoryAt(index: number): ItemStackSave | null {
-    if (index < 0 || index >= this.inventory.length) return null;
-    const removed = this.inventory.splice(index, 1)[0];
-    if (removed === undefined) return null;
-    this.pushFloater(this.player, `Dropped ${removed.item.name}`, 'miss');
-    this.bagMutationHook?.();
-    return { item: removed.item, qty: removed.qty };
-  }
-
-  /**
-   * Credit one kill: advance quest objectives, play the death cue, add the rolled gold, and push
-   * the rolled items into the bag (respecting capacity). `anchor` is where item-name floaters
-   * appear — the corpse in single-player, the player in MMO mode (the corpse may already be gone).
+   * Credit one kill's cosmetics: advance quest objectives, play the death cue, and float the rolled
+   * gold + item names. The bag + gold themselves are applied by the server-authoritative inventory
+   * frame (economy migration) — the server rolled + added them; this method no longer mutates the
+   * bag. `anchor` is where item-name floaters appear (the corpse, or the player if it's gone).
    */
   private applyKillLoot(
     enemyId: string,
@@ -1106,18 +1137,8 @@ export class CombatDirector {
   ): void {
     this.onEnemyKilled?.(enemyId); // quest kill/collect/boss objectives
     audio.sfx('death');
-    if (gold > 0) {
-      this.gold += gold;
-      this.pushFloater(this.player, `+${gold}c`, 'xp');
-    }
-    for (const stack of items) {
-      if (this.inventory.length >= this.bagCap()) {
-        this.pushFloater(this.player, 'Bag full', 'miss');
-        break;
-      }
-      this.inventory.push({ item: stack.item, qty: stack.qty });
-      this.pushFloater(anchor, stack.item.name, 'heal');
-    }
+    if (gold > 0) this.pushFloater(this.player, `+${gold}c`, 'xp');
+    for (const stack of items) this.pushFloater(anchor, stack.item.name, 'heal');
   }
 
   private pushFloater(e: CombatEntity, text: string, kind: Floater['kind']): void {

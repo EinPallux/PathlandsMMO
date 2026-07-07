@@ -10,6 +10,29 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 32 — Inventory authority flip, Stage 1b·B (2026-07-07)
+
+The economy migration's flip: the **client now renders the server's inventory as authoritative** and
+drives it entirely by intents. `CombatDirector`'s bag / gold / equipment are a **mirror** written
+ONLY by the `ServerInventory` frame — no client-side inventory mutation remains. This closes the
+item-dupe and gold-mint vectors a client-authoritative bag left open, and the server **persists**
+the authoritative inventory.
+
+#### Changed
+
+- **Client actions → intents.** `equip` / `unequip` / `sell` / `buy` / `buyback` send `ClientInvAction`
+  (server re-validates); the change returns via the inventory frame. Kill loot, ground pickups, and
+  drops no longer mutate the bag locally — the frame does. Item-name / gold floaters stay as cosmetics.
+- **Trusted bridges (proto v18)** for the not-yet-migrated bag/gold sources: `ClientClaimReward`
+  (quest turn-in reward + crafted gear — the client validated them) and `ClientSpendGold` (Waystone
+  travel fee, mount purchase — debits only if affordable). Both are documented interim trust, replaced
+  by server validation when quests (#138) / professions (#139) migrate. `ClientHello` carries
+  `bagBonus` so the server sizes the Deep-Pockets bag cap.
+- **Server persistence.** `persistCharacter` writes the authoritative bag / gold / equipment back to
+  the stored character (read-modify-write preserves the still-client-owned quest / profession fields).
+- **Tests** (+1): the v18 inventory-action / trusted-bridge / hello-bagBonus codec round-trips (the
+  Stage 1a/1b·A wire tests already cover seed → replicate → equip → drop end to end).
+
 ### Part 31 — Server-validated inventory actions, Stage 1b·A (2026-07-07)
 
 The server can now **validate and apply** inventory actions against its authoritative model, ahead

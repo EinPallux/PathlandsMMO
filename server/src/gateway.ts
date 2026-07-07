@@ -390,6 +390,15 @@ export class GameServer {
       ch.xp = prog.totalXp;
       ch.level = prog.level;
     }
+    // Server-authoritative inventory (economy migration): the bag / gold / equipment are the
+    // server's truth now, so write them back. Read-modify-write preserves the still-client-owned
+    // fields (quests / professions / deeds) already on the loaded blob.
+    const inv = this.inventories.get(player.id);
+    if (inv !== null) {
+      ch.inventory = inv.bag.map((s) => ({ item: s.item, qty: s.qty }));
+      ch.gold = inv.gold;
+      ch.equipment = { ...inv.equipment };
+    }
     await this.store.putCharacter(accountId, ch);
   }
 
@@ -499,6 +508,7 @@ export class GameServer {
           inventory: seedInventory,
           gold: seedGold,
           equipment: seedEquipment,
+          bagBonus: msg.bagBonus, // client-supplied Deep-Pockets bonus (self-scoped; see ClientHello)
         });
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);
@@ -683,6 +693,20 @@ export class GameServer {
       case 'inv': {
         if (conn.id === null) return; // must be joined
         this.handleInvAction(conn.id, msg);
+        return;
+      }
+      case 'claimReward': {
+        if (conn.id === null) return; // must be joined
+        // Trusted bridge (quest turn-in reward) — the client validated the quest; grant into the
+        // authoritative inventory. Server-side quest validation replaces the trust when quests migrate.
+        this.inventories.addGold(conn.id, msg.gold);
+        for (const s of msg.items) this.inventories.addStack(conn.id, s.item, s.qty);
+        return;
+      }
+      case 'spendGold': {
+        if (conn.id === null) return; // must be joined
+        // Trusted bridge (travel fee / mount) — debits only if affordable, so it can't go negative.
+        this.inventories.spendGold(conn.id, Math.max(0, Math.floor(msg.amount)));
         return;
       }
     }
