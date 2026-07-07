@@ -9,7 +9,8 @@ import { createServerWorld } from './world.js';
 import { ServerSim } from './sim.js';
 import { GameServer } from './gateway.js';
 import { Auth } from './auth.js';
-import { FileStore } from './store.js';
+import { FileStore, type Store } from './store.js';
+import { PgStore } from './db/pgStore.js';
 
 async function main(): Promise<void> {
   const world = createServerWorld();
@@ -26,7 +27,13 @@ async function main(): Promise<void> {
     );
   }
   const auth = new Auth(secret);
-  const store = await FileStore.open(config.dataFile);
+  // Postgres is the production store (all player data — and content as it migrates). Falls back
+  // to the durable FileStore when DATABASE_URL is unset (local dev without a database).
+  const store: Store =
+    config.databaseUrl !== ''
+      ? await PgStore.open(config.databaseUrl)
+      : await FileStore.open(config.dataFile);
+  const storeLabel = config.databaseUrl !== '' ? 'postgres' : config.dataFile;
 
   const server = new GameServer(
     sim,
@@ -52,7 +59,7 @@ async function main(): Promise<void> {
   console.log(
     `[pathlands] server listening on ws://${config.host}:${server.address()} ` +
       `(${config.tickRate} Hz sim, broadcast every ${config.broadcastEveryTicks} ticks; ` +
-      `data: ${config.dataFile})`,
+      `data: ${storeLabel})`,
   );
 
   const shutdown = (): void => {

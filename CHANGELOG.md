@@ -4,6 +4,38 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+> **Scope change (2026-07-07):** cut from 1.0 — guilds, friends, duels, 200-client load test,
+> password reset / email verification, character import. Refocused on: everything (player data +
+> content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
+> **quests / professions / economy**, **player trade**, **shared quest credit**.
+
+### Part 25 — PostgreSQL player store (2026-07-07)
+
+The production storage layer: **all player data in Postgres**, with the schema built to grow into
+the content tables an admin/map editor will edit.
+
+#### Added
+
+- **`server/src/db/schema.ts`**: the idempotent Postgres schema (`CREATE TABLE IF NOT EXISTS`),
+  applied on connect. `accounts` (email / password hash / `is_gm` / `is_banned`) and `characters`
+  (the full versioned `CharacterSave` in a `jsonb` `data` column, with `name`/`class`/`level`/`xp`/
+  position promoted to real columns for querying + the server's authoritative write-back). UUIDs
+  are generated in Node, so no `pgcrypto` extension is needed.
+- **`server/src/db/pgStore.ts` (`PgStore`)**: implements the `Store` contract on Postgres via a
+  minimal `Queryable` (satisfied by `pg.Pool` and by pg-mem alike). `createAccount` is a
+  check-then-insert with the UNIQUE constraint as the race guard; `putCharacter` upserts on the
+  `account_id` PK; jsonb round-trips the blob (tolerating string or parsed reads).
+- **Store selection** (`index.ts` + `config.ts`): the server uses `PgStore` when `DATABASE_URL`
+  is set, else the `FileStore` (local dev). The gateway + auth API are unchanged — same contract.
+- **Compose**: the `db` (postgres:16) service now runs by default with a healthcheck; `game`
+  waits on it and gets `DATABASE_URL`. Deploy docs updated (pg_dump backups, nightly cron).
+
+#### Tests
+
+- **`server/test/db.test.ts`** (+3, pg-mem): accounts (normalise + reject duplicates), the
+  character jsonb round-trip + upsert, and the promoted identity/position columns — real SQL,
+  headless.
+
 ### Part 24 — `/who` online roster (2026-07-07)
 
 A small social utility for the shared world: `/who` lists everyone currently online (name, level,

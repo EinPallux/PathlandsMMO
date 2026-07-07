@@ -6,6 +6,25 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Scope change (2026-07-07):** the launch plan is refocused. **DESCOPED (cut from 1.0):** guilds,
+> friends list, duels, the 200-client load test, password reset / email verification, character
+> import. **NEW launch priorities:** everything (player data + all content — items/enemies/NPCs/
+> quests) in **PostgreSQL** so a future **admin/map editor** can edit the world; **GM tooling**;
+> server-authoritative **quests / professions / economy**; **player trade**; **shared quest credit**.
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 25: PostgreSQL player store.**
+> `PgStore` (`server/src/db/`) implements the `Store` contract on Postgres — accounts + characters,
+> the full versioned CharacterSave in a `jsonb` column with identity/position/level promoted to
+> real columns (queryable + editor-friendly). The server uses it whenever `DATABASE_URL` is set
+> (compose now runs a `db` service by default, game waits on its healthcheck), falling back to the
+> FileStore otherwise. Schema applied idempotently on connect; extensible for the content tables
+> next. Tested headlessly against **pg-mem** (real SQL, no live server). **405 tests green.**
+> _Next: content tables + seed (items/enemies/NPCs/quests in Postgres), then GM tooling._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 24: `/who` online roster (Social layer).**
 > A small utility: `/who` lists everyone online (name · level · class), server-answered so it's
 > global. Protocol v14 (`ClientWho` / `ServerWho` with `NetWhoEntry`); the gateway caps the reply

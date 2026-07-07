@@ -2,8 +2,7 @@
 # serves it with nginx (TLS), which also reverse-proxies the `game` server's wss + HTTP API on
 # the same origin. One command brings up the whole stack. See docs/SERVER_DEPLOY.md.
 #
-#   docker compose up -d --build      # build the client + start the game server + nginx
-#   docker compose --profile db up -d # also start PostgreSQL (for the accounts phase)
+#   docker compose up -d --build      # build the client + start Postgres + game server + nginx
 
 services:
   game:
@@ -12,6 +11,9 @@ services:
       dockerfile: server/Dockerfile
     image: pathlands-server
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       HOST: 0.0.0.0
       PORT: '8080'
@@ -19,7 +21,9 @@ services:
       # Put it in a .env file next to this compose (AUTH_SECRET=...). Changing it logs
       # everyone out. Generate one with:  openssl rand -base64 32
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in a .env file}
-      # Accounts + characters persist here (mounted volume below).
+      # PostgreSQL is the source of truth for all player data (and content as it migrates).
+      DATABASE_URL: postgres://pathlands:${POSTGRES_PASSWORD:-changeme}@db:5432/pathlands
+      # DATA_FILE is the fallback store used only if DATABASE_URL is unset (it isn't here).
       DATA_FILE: /data/pathlands.json
       # Optional tuning (defaults are sensible — see server/src/config.ts):
       # MAX_CONNECTIONS: '512'
@@ -50,11 +54,10 @@ services:
       # certbot on the host writes certs here; mounted read-only for TLS termination.
       - /etc/letsencrypt:/etc/letsencrypt:ro
 
-  # PostgreSQL persistence lands with the accounts phase. Declared now so the compose is
-  # ready; the game server does not connect to it yet. Start with `--profile db`.
+  # PostgreSQL — the source of truth for all player data (and content as it migrates). The
+  # server applies its schema on connect. Set a strong POSTGRES_PASSWORD in .env for production.
   db:
     image: postgres:16-alpine
-    profiles: ['db']
     restart: unless-stopped
     environment:
       POSTGRES_DB: pathlands
@@ -62,6 +65,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pathlands -d pathlands']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   gamedata:

@@ -56,8 +56,12 @@ export const config = {
    * secret change, so rotating it logs everyone out.
    */
   authSecret: process.env.AUTH_SECRET ?? '',
-  /** Where the FileStore persists accounts + characters (a mounted volume in Docker). */
+  /** Where the FileStore persists accounts + characters (a mounted volume in Docker). Used only
+   *  when DATABASE_URL is unset (local dev without Postgres). */
   dataFile: process.env.DATA_FILE ?? './data/pathlands.json',
+  /** PostgreSQL connection string. When set, the server uses the Postgres Store (the production
+   *  target — all player data, and content as it migrates); unset falls back to the FileStore. */
+  databaseUrl: process.env.DATABASE_URL ?? '',
   /** Per-IP auth attempts allowed per minute (brute-force backstop). */
   authRatePerMin: envInt('AUTH_RATE_PER_MIN', 20),
   /** Max body for an auth request (email+password is tiny). */
