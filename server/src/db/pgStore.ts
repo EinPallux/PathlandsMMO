@@ -22,11 +22,21 @@ interface AccountRow {
   id: string;
   email: string;
   password_hash: string;
+  is_gm: boolean;
+  is_banned: boolean;
 }
 
 function toAccount(row: AccountRow): Account {
-  return { id: row.id, email: row.email, passwordHash: row.password_hash };
+  return {
+    id: row.id,
+    email: row.email,
+    passwordHash: row.password_hash,
+    isGm: row.is_gm === true,
+    isBanned: row.is_banned === true,
+  };
 }
+
+const ACCOUNT_COLS = 'id, email, password_hash, is_gm, is_banned';
 
 export class PgStore implements Store {
   private constructor(private readonly db: Queryable) {}
@@ -53,7 +63,7 @@ export class PgStore implements Store {
     try {
       const res = await this.db.query(
         `INSERT INTO accounts (id, email, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, password_hash`,
+         RETURNING ${ACCOUNT_COLS}`,
         [randomUUID(), key, passwordHash],
       );
       return res.rowCount ? toAccount(res.rows[0] as AccountRow) : null;
@@ -63,18 +73,23 @@ export class PgStore implements Store {
   }
 
   async getByEmail(email: string): Promise<Account | null> {
-    const res = await this.db.query(
-      'SELECT id, email, password_hash FROM accounts WHERE email = $1',
-      [normalizeEmail(email)],
-    );
+    const res = await this.db.query(`SELECT ${ACCOUNT_COLS} FROM accounts WHERE email = $1`, [
+      normalizeEmail(email),
+    ]);
     return res.rowCount ? toAccount(res.rows[0] as AccountRow) : null;
   }
 
   async getById(id: string): Promise<Account | null> {
-    const res = await this.db.query('SELECT id, email, password_hash FROM accounts WHERE id = $1', [
-      id,
-    ]);
+    const res = await this.db.query(`SELECT ${ACCOUNT_COLS} FROM accounts WHERE id = $1`, [id]);
     return res.rowCount ? toAccount(res.rows[0] as AccountRow) : null;
+  }
+
+  async setGm(accountId: string, isGm: boolean): Promise<void> {
+    await this.db.query('UPDATE accounts SET is_gm = $2 WHERE id = $1', [accountId, isGm]);
+  }
+
+  async setBanned(accountId: string, isBanned: boolean): Promise<void> {
+    await this.db.query('UPDATE accounts SET is_banned = $2 WHERE id = $1', [accountId, isBanned]);
   }
 
   async putCharacter(accountId: string, character: CharacterSave): Promise<void> {

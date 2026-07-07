@@ -70,4 +70,13 @@ export const config = {
   maxCharacterBodyBytes: envInt('MAX_CHARACTER_BODY_BYTES', 512 * 1024),
   /** How often authenticated players' positions flush to the store. */
   saveIntervalMs: envInt('SAVE_INTERVAL_MS', 30_000),
+  /**
+   * Bootstrap GM accounts: a comma-separated list of emails auto-granted GM on login (so the
+   * operator becomes a GM without hand-editing the DB). GM status is otherwise the persisted
+   * `accounts.is_gm` flag (set by another GM's /gm command in a later pass, or by SQL).
+   */
+  gmEmails: (process.env.GM_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0),
 } as const;

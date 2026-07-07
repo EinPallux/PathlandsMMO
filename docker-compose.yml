@@ -25,6 +25,8 @@ services:
       DATABASE_URL: postgres://pathlands:${POSTGRES_PASSWORD:-changeme}@db:5432/pathlands
       # DATA_FILE is the fallback store used only if DATABASE_URL is unset (it isn't here).
       DATA_FILE: /data/pathlands.json
+      # Comma-separated emails auto-granted GM on login (set in .env). Empty = no bootstrap GM.
+      GM_EMAILS: ${GM_EMAILS:-}
       # Optional tuning (defaults are sensible — see server/src/config.ts):
       # MAX_CONNECTIONS: '512'
       # MAX_MSGS_PER_SEC: '60'

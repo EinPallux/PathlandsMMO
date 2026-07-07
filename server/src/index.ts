@@ -51,6 +51,7 @@ async function main(): Promise<void> {
       maxAuthBodyBytes: config.maxAuthBodyBytes,
       maxCharacterBodyBytes: config.maxCharacterBodyBytes,
       saveIntervalMs: config.saveIntervalMs,
+      gmEmails: config.gmEmails,
     },
     { auth, store },
   );

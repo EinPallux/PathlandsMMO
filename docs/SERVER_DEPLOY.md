@@ -155,6 +155,19 @@ it after. Add a host cron (as root):
 (the site is down for a few seconds once a week during renewal — acceptable for a game server;
 switch to the webroot challenge later if you want zero-downtime renewal.)
 
+### GM tooling
+
+Make yourself a GM by adding your account email to `GM_EMAILS` in `.env` (comma-separated), then
+restart the game container — you're granted GM on your next login:
+
+```bash
+echo "GM_EMAILS=you@example.com" >> .env
+docker compose up -d game
+```
+
+In-game GM commands (typed in chat): `/kick <name>`, `/mute <name> [minutes]`, `/unmute <name>`,
+`/ban <name>`, `/unban <name>`, `/tp <name> <x> <z>`, `/give <name> <gold>`.
+
 ### PostgreSQL
 
 The `db` service starts automatically and is the **source of truth for all player data** (and

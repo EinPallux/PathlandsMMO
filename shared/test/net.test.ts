@@ -20,8 +20,44 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 14 (…/ party / party-vitals / whisper / who)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(14);
+  it('is at protocol version 15 (…/ party-vitals / whisper / who / gm)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(15);
+  });
+
+  it('round-trips + validates a GM action + the welcome gm flag', () => {
+    const kick: ClientMessage = { t: 'gm', action: 'kick', target: 'Griefer' };
+    expect(decodeClient(encodeClient(kick))).toEqual(kick);
+    const mute: ClientMessage = { t: 'gm', action: 'mute', target: 'Loud', minutes: 15 };
+    expect(decodeClient(encodeClient(mute))).toEqual(mute);
+    const tp: ClientMessage = { t: 'gm', action: 'teleport', target: 'Lost', x: 10, z: -20 };
+    expect(decodeClient(encodeClient(tp))).toEqual(tp);
+    // Unknown action, or a non-string target, sinks the frame.
+    expect(decodeClient(JSON.stringify({ t: 'gm', action: 'nuke', target: 'X' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'gm', action: 'kick', target: 5 }))).toBeNull();
+    // The welcome's optional gm flag round-trips; a non-boolean sinks it.
+    const w: ServerMessage = {
+      t: 'welcome',
+      protocol: 15,
+      you: 'p1',
+      seed: 1,
+      tick: 0,
+      tickRate: 20,
+      gm: true,
+    };
+    expect(decodeServer(encodeServer(w))).toEqual(w);
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'welcome',
+          protocol: 15,
+          you: 'p',
+          seed: 1,
+          tick: 0,
+          tickRate: 20,
+          gm: 1,
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips the /who roster query + reply', () => {

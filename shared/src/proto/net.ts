@@ -31,15 +31,19 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite);
  * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide);
  * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag);
- * v14 added the online roster query (ClientWho / ServerWho).
+ * v14 added the online roster query (ClientWho / ServerWho);
+ * v15 added GM tooling (ClientGm + ServerWelcome.gm).
  */
-export const NET_PROTOCOL_VERSION = 14;
+export const NET_PROTOCOL_VERSION = 15;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
 
 /** Valid party actions on the wire (validated at the boundary; the server enforces semantics). */
 const PARTY_ACTIONS = ['invite', 'accept', 'decline', 'leave', 'kick'];
+
+/** Valid GM actions on the wire (the server re-checks GM privilege before acting). */
+const GM_ACTIONS = ['kick', 'mute', 'unmute', 'ban', 'unban', 'teleport', 'give'];
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -217,8 +221,25 @@ export interface ClientWho {
   t: 'who';
 }
 
+/**
+ * A GM tooling action. Gated server-side on the sender's account `is_gm` flag (never trusted from
+ * the client). `target` is a player NAME — a GM is trusted, so the server resolves it globally and
+ * reports the result on the system channel. Field use by action: `mute` → `minutes`; `teleport` →
+ * `x`/`z`; `give` → `item` (registry id) + `qty`; `kick`/`ban`/`unban`/`unmute` → none.
+ */
+export interface ClientGm {
+  t: 'gm';
+  action: 'kick' | 'mute' | 'unmute' | 'ban' | 'unban' | 'teleport' | 'give';
+  target: string;
+  minutes?: number;
+  x?: number;
+  z?: number;
+  item?: string;
+  qty?: number;
+}
+
 export type ClientMessage =
-  ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty | ClientWho;
+  ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty | ClientWho | ClientGm;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -232,6 +253,8 @@ export interface ServerWelcome {
   seed: number;
   tick: number;
   tickRate: number;
+  /** True when this session's account has GM privileges (unlocks the client's GM commands). */
+  gm?: boolean;
 }
 
 /**
@@ -647,6 +670,32 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (o.target !== undefined) party.target = o.target;
       return party;
     }
+    case 'gm': {
+      if (!isString(o.action) || !GM_ACTIONS.includes(o.action)) return null;
+      if (!isString(o.target) || o.target.length > MAX_CHAT_LEN) return null;
+      const gm: ClientGm = { t: 'gm', action: o.action as ClientGm['action'], target: o.target };
+      if (o.minutes !== undefined) {
+        if (!isFiniteNumber(o.minutes)) return null;
+        gm.minutes = o.minutes;
+      }
+      if (o.x !== undefined) {
+        if (!isFiniteNumber(o.x)) return null;
+        gm.x = o.x;
+      }
+      if (o.z !== undefined) {
+        if (!isFiniteNumber(o.z)) return null;
+        gm.z = o.z;
+      }
+      if (o.item !== undefined) {
+        if (!isString(o.item) || o.item.length > MAX_CHAT_LEN) return null;
+        gm.item = o.item;
+      }
+      if (o.qty !== undefined) {
+        if (!isFiniteNumber(o.qty)) return null;
+        gm.qty = o.qty;
+      }
+      return gm;
+    }
     default:
       return null;
   }
@@ -769,7 +818,7 @@ export function decodeServer(raw: string): ServerMessage | null {
   const o = parseObject(raw);
   if (o === null) return null;
   switch (o.t) {
-    case 'welcome':
+    case 'welcome': {
       if (
         !isFiniteNumber(o.protocol) ||
         !isString(o.you) ||
@@ -779,7 +828,7 @@ export function decodeServer(raw: string): ServerMessage | null {
       ) {
         return null;
       }
-      return {
+      const welcome: ServerWelcome = {
         t: 'welcome',
         protocol: o.protocol,
         you: o.you,
@@ -787,6 +836,12 @@ export function decodeServer(raw: string): ServerMessage | null {
         tick: o.tick,
         tickRate: o.tickRate,
       };
+      if (o.gm !== undefined) {
+        if (!isBool(o.gm)) return null;
+        welcome.gm = o.gm;
+      }
+      return welcome;
+    }
     case 'snapshot': {
       if (!isFiniteNumber(o.tick) || !Array.isArray(o.players)) return null;
       if (!o.players.every(isNetPlayer)) return null;

@@ -32,10 +32,20 @@ import {
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
+  type ClientGm,
   type NetWhoEntry,
   type ServerKill,
   type ServerSelf,
 } from '@pathlands/shared';
+
+/** Options for a GM action (only the fields the action uses are read). */
+export interface GmActionOpts {
+  minutes?: number;
+  x?: number;
+  z?: number;
+  item?: string;
+  qty?: number;
+}
 
 /** What the renderer needs to draw one remote player this frame. */
 export interface RemoteRenderState {
@@ -112,6 +122,8 @@ export interface NetClientOptions {
   onPartyVitals?: (vitals: NetPartyVital[]) => void;
   /** Called with the online-player roster in reply to a `/who` (requestWho). */
   onWho?: (players: NetWhoEntry[]) => void;
+  /** Called with this session's GM status (from the welcome; false on disconnect). */
+  onGm?: (isGm: boolean) => void;
 }
 
 interface Sample {
@@ -235,6 +247,7 @@ export class NetClient {
       case 'welcome':
         this.you = msg.you;
         this.seed = msg.seed;
+        this.opts.onGm?.(msg.gm === true); // GM status unlocks the client's GM commands
         this.connected = true;
         this.phase = 'connected';
         this.lastPongMs = this.nowMs(); // the welcome itself proves the link is alive
@@ -415,6 +428,7 @@ export class NetClient {
     // fresh session the server won't re-group), so clear the UI's roster + any pending invite.
     this.opts.onParty?.({ leaderId: '', members: [], selfId: '' });
     this.opts.onInvite?.(null);
+    this.opts.onGm?.(false); // GM status is re-established on the next welcome
     this.opts.onPartyVitals?.([]);
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
@@ -500,6 +514,18 @@ export class NetClient {
   requestWho(): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'who' });
+  }
+
+  /** Send a GM action (the server re-checks GM privilege; a non-GM's frame is ignored). */
+  sendGm(action: ClientGm['action'], target: string, opts: GmActionOpts = {}): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    const msg: ClientGm = { t: 'gm', action, target };
+    if (opts.minutes !== undefined) msg.minutes = opts.minutes;
+    if (opts.x !== undefined) msg.x = opts.x;
+    if (opts.z !== undefined) msg.z = opts.z;
+    if (opts.item !== undefined) msg.item = opts.item;
+    if (opts.qty !== undefined) msg.qty = opts.qty;
+    this.send(msg);
   }
 
   // --- party (Phase 6 §Social) ---

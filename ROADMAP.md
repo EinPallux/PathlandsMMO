@@ -14,6 +14,17 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >
 > ---
 >
+> **Phase 6 (2026-07-07) — Part 26: GM tooling.**
+> Live-server moderation, server-authoritative + GM-gated (`accounts.is_gm`, never client-trusted).
+> A GM (flagged in the DB, or bootstrapped via `GM_EMAILS`) gets a `gm` welcome that unlocks
+> `/kick`, `/mute [min]`, `/unmute`, `/ban`, `/unban`, `/tp <x> <z>`, `/give <gold>` (proto v15,
+> `ClientGm`). Banned accounts are refused at login; a non-GM's GM frame is silently dropped.
+> **411 tests green.** _Next: content tables + seed in Postgres (items/enemies/NPCs/quests), then
+> the quests / professions / economy server migration (which reads that content) + shared quest
+> turn-in credit, then player trade._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 25: PostgreSQL player store.**
 > `PgStore` (`server/src/db/`) implements the `Store` contract on Postgres — accounts + characters,
 > the full versioned CharacterSave in a `jsonb` column with identity/position/level promoted to

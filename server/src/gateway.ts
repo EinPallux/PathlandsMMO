@@ -19,6 +19,7 @@ import {
   lootTurnRecipient,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
+  type ClientGm,
   type ClientParty,
   type NetCombatEvent,
   type NetEntity,
@@ -67,6 +68,10 @@ interface Conn {
   lastPartyMs: number;
   /** Wall-clock (ms) of this connection's last /who — gates the (potentially large) roster reply. */
   lastWhoMs: number;
+  /** GM privilege for this session (from the account's is_gm / GM_EMAILS) — gates GM actions. */
+  isGm: boolean;
+  /** Wall-clock (ms) until which this player is muted by a GM (0 = not muted). */
+  mutedUntilMs: number;
 }
 
 export interface GatewayOptions {
@@ -84,6 +89,8 @@ export interface GatewayOptions {
   maxCharacterBodyBytes: number;
   /** How often to flush authenticated players' authoritative positions to the store. */
   saveIntervalMs: number;
+  /** Emails auto-granted GM on login (GM tooling bootstrap). */
+  gmEmails: readonly string[];
 }
 
 /** Dependencies the gateway needs for accounts; defaulted for tests. */
@@ -284,6 +291,8 @@ export class GameServer {
       lastChatMs: 0,
       lastPartyMs: 0,
       lastWhoMs: 0,
+      isGm: false,
+      mutedUntilMs: 0,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
@@ -397,6 +406,18 @@ export class GameServer {
             return;
           }
           conn.accountId = claims.sub;
+          // Load the account for its GM / banned flags. A banned account is refused here.
+          const account = await this.store.getById(claims.sub);
+          if (account !== null) {
+            if (account.isBanned) {
+              this.send(conn.ws, { t: 'error', code: 'auth', message: 'This account is banned.' });
+              conn.ws.close();
+              return;
+            }
+            // Bootstrap GMs: an email in GM_EMAILS is granted (and persisted) GM on login.
+            conn.isGm = account.isGm || this.opts.gmEmails.includes(account.email.toLowerCase());
+            if (conn.isGm && !account.isGm) await this.store.setGm(account.id, true);
+          }
           const ch = await this.store.getCharacter(claims.sub);
           if (ch !== null) {
             name = ch.name;
@@ -432,6 +453,7 @@ export class GameServer {
           seed: WORLD_SEED,
           tick: this.sim.tick,
           tickRate: this.opts.tickDurationMs > 0 ? 1000 / this.opts.tickDurationMs : 0,
+          ...(conn.isGm ? { gm: true } : {}),
         });
         // Seed interest: the joiner gets an interest-filtered snapshot of the OTHER
         // players around it (own state arrives on the `self` channel). Existing clients
@@ -482,6 +504,8 @@ export class GameServer {
       }
       case 'chat': {
         if (conn.id === null) return; // must be joined to speak
+        // GM-muted: silently drop the line (say + whisper) until the mute expires.
+        if (conn.mutedUntilMs > now) return;
         // Per-connection send-rate gate (wall-clock is fine at the edge). Silently drop a
         // too-fast line rather than error — spamming is not a protocol violation.
         if (now - conn.lastChatMs < CHAT_MIN_INTERVAL_MS) return;
@@ -534,6 +558,84 @@ export class GameServer {
         }
         this.send(conn.ws, { t: 'who', players });
         return;
+      }
+      case 'gm': {
+        if (conn.id === null) return; // must be joined
+        if (!conn.isGm) return; // silently ignore GM actions from a non-GM (never trusted)
+        void this.handleGm(conn.id, msg);
+        return;
+      }
+    }
+  }
+
+  // --- GM tooling (server-authoritative; gated on conn.isGm) ---
+
+  /** Apply a validated GM action. Targets a player by name (resolved globally — a GM is trusted);
+   *  every path reports its result to the acting GM on the system channel. */
+  private async handleGm(gmId: string, msg: ClientGm): Promise<void> {
+    const target = this.resolvePlayerByName(msg.target);
+    if (target === null) {
+      this.systemNotice(gmId, `No player named “${msg.target.slice(0, 24)}” is online.`);
+      return;
+    }
+    const targetConn = this.connById(target.id);
+    const name = target.name;
+    switch (msg.action) {
+      case 'kick': {
+        targetConn?.ws.terminate();
+        this.systemNotice(gmId, `Kicked ${name}.`);
+        break;
+      }
+      case 'mute': {
+        const mins = Math.max(1, Math.min(1440, Math.floor(msg.minutes ?? 10)));
+        if (targetConn !== null) targetConn.mutedUntilMs = Date.now() + mins * 60_000;
+        this.systemNotice(gmId, `Muted ${name} for ${mins} min.`);
+        this.systemNotice(target.id, `You have been muted by a GM for ${mins} min.`);
+        break;
+      }
+      case 'unmute': {
+        if (targetConn !== null) targetConn.mutedUntilMs = 0;
+        this.systemNotice(gmId, `Unmuted ${name}.`);
+        break;
+      }
+      case 'ban': {
+        if (targetConn !== null && targetConn.accountId !== null) {
+          await this.store.setBanned(targetConn.accountId, true);
+        }
+        targetConn?.ws.terminate();
+        this.systemNotice(gmId, `Banned ${name}.`);
+        break;
+      }
+      case 'unban': {
+        // The target is offline once banned; unban resolves the name only if they're online, so
+        // this handles the (rare) re-connect race. Persistent unban by email is a SQL/editor op.
+        if (targetConn !== null && targetConn.accountId !== null) {
+          await this.store.setBanned(targetConn.accountId, false);
+        }
+        this.systemNotice(gmId, `Unbanned ${name}.`);
+        break;
+      }
+      case 'teleport': {
+        const x = msg.x ?? 0;
+        const z = msg.z ?? 0;
+        this.sim.teleport(target.id, x, z);
+        this.systemNotice(gmId, `Teleported ${name} to (${Math.round(x)}, ${Math.round(z)}).`);
+        break;
+      }
+      case 'give': {
+        // Item-granting by registry id lands with the content catalog; for now `give` grants gold.
+        const gold = Math.max(0, Math.floor(msg.qty ?? 0));
+        if (targetConn !== null && gold > 0) {
+          this.send(targetConn.ws, {
+            t: 'kill',
+            tick: this.sim.tick,
+            enemyId: '', // no quest credit — a GM grant, not a kill
+            gold,
+            items: [],
+          });
+        }
+        this.systemNotice(gmId, `Gave ${name} ${gold} gold.`);
+        break;
       }
     }
   }
@@ -660,6 +762,17 @@ export class GameServer {
   /** The connection whose session id is `id`, or null (small N — parties are ≤ 4). */
   private connById(id: string): Conn | null {
     for (const c of this.conns.values()) if (c.id === id) return c;
+    return null;
+  }
+
+  /** Resolve a player NAME (case-insensitive) to their session id + authoritative name, or null.
+   *  Used only by GM tooling — a GM is trusted, so first-match on a duplicate name is acceptable. */
+  private resolvePlayerByName(name: string): { id: string; name: string } | null {
+    const lower = name.trim().toLowerCase();
+    if (lower.length === 0) return null;
+    for (const p of this.sim.players.values()) {
+      if (p.name.toLowerCase() === lower) return { id: p.id, name: p.name };
+    }
     return null;
   }
 

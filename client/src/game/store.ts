@@ -342,6 +342,12 @@ export interface GameCommands {
   whisper(name: string, text: string): void;
   /** Request the online-player roster (`/who`); the reply prints to chat. */
   who(): void;
+  /** GM tooling (only sent when the session is a GM): kick/mute/ban/teleport/give by player name. */
+  gm(
+    action: string,
+    target: string,
+    opts?: { minutes?: number; x?: number; z?: number; qty?: number },
+  ): void;
   /** Party: invite a nearby player by name (resolved to a session id client-side), accept /
    *  decline a pending invite, leave the party, kick a member (leader-only) by session id. */
   partyInvite(name: string): void;
@@ -429,6 +435,8 @@ export interface UiState {
   party: PartyUi | null;
   /** A pending party invite awaiting accept/decline; null ⇒ none. Drives the invite toast. */
   partyInvite: PartyInviteUi | null;
+  /** True when this session's account has GM privileges (unlocks the chat GM commands). */
+  gm: boolean;
   /** Live vitals of each party member, keyed by session id (Part 20 ally frames). */
   partyVitals: Record<string, PartyVitalUi>;
 
@@ -514,6 +522,8 @@ export interface UiState {
   setParty: (p: PartyUi) => void;
   /** Set (or clear, with null) the pending party invite. */
   setPartyInvite: (i: PartyInviteUi | null) => void;
+  /** Set this session's GM privilege (from the welcome). */
+  setGm: (gm: boolean) => void;
   /** Replace the party vitals map from a vitals frame (keyed by member session id). */
   setPartyVitals: (vitals: Array<PartyVitalUi & { id: string }>) => void;
   toggleMap: () => void;
@@ -571,6 +581,7 @@ export const useStore = create<UiState>((set) => ({
   party: null,
   partyInvite: null,
   partyVitals: {},
+  gm: false,
   ready: false,
   loadProgress: 0,
 
@@ -657,6 +668,7 @@ export const useStore = create<UiState>((set) => ({
     // drops any lingering vitals so a rejoin never shows a stale bar.
     set(p.members.length > 0 ? { party: p, partyInvite: null } : { party: null, partyVitals: {} }),
   setPartyInvite: (partyInvite) => set({ partyInvite }),
+  setGm: (gm) => set({ gm }),
   setPartyVitals: (vitals) =>
     set(() => {
       const map: Record<string, PartyVitalUi> = {};

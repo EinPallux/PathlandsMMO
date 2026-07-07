@@ -298,6 +298,7 @@ export class Game {
           emote: false,
         });
       },
+      onGm: (isGm) => useStore.getState().setGm(isGm),
       ...(onAuthError !== undefined ? { onAuthError } : {}),
     });
     this.net = net;
@@ -318,6 +319,7 @@ export class Game {
       party: null,
       partyInvite: null,
       partyVitals: {},
+      gm: false,
     });
     net.connect();
 
@@ -447,6 +449,12 @@ export class Game {
       sendChat: (text) => this.net?.sendChat(text),
       whisper: (name, text) => this.whisperByName(name, text),
       who: () => this.net?.requestWho(),
+      gm: (action, target, opts) =>
+        this.net?.sendGm(
+          action as Parameters<NonNullable<typeof this.net>['sendGm']>[0],
+          target,
+          opts,
+        ),
       partyInvite: (name) => this.inviteByName(name),
       partyAccept: () => this.net?.partyAccept(),
       partyDecline: () => this.net?.partyDecline(),

@@ -9,6 +9,35 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **player trade**, **shared quest credit**.
 
+### Part 26 — GM tooling (2026-07-07)
+
+Live-server moderation: kick, mute, ban, teleport, and gold-grant — server-authoritative and
+gated on an account's GM flag (never trusted from the client).
+
+#### Added
+
+- **GM privilege** (`accounts.is_gm` / `is_banned`, now on the `Store`): the gateway loads the
+  account on login, **refuses banned accounts**, and marks the session GM from `is_gm` or the
+  `GM_EMAILS` bootstrap env (first GM without hand-editing the DB; auto-persisted). `ServerWelcome`
+  carries a `gm` flag that unlocks the client's GM commands.
+- **GM channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **15**): `ClientGm`
+  (action + target NAME + per-action args), validated at the boundary; the server re-checks GM
+  privilege before acting (a non-GM's frame is silently dropped).
+- **Actions** (`server/src/gateway.ts` `handleGm`): `kick` (terminate the socket), `mute [minutes]`
+  (drop the target's chat + whisper until it expires), `unmute`, `ban` (persist + kick; refused at
+  next login), `unban`, `teleport <x> <z>` (`ServerSim.teleport`), `give <gold>` (grant gold via a
+  ServerKill with no quest credit). Every action reports its result to the GM on the system channel.
+  Item-granting by id lands with the content catalog.
+- **Client** (`netClient` `sendGm` + `onGm`; `store` `gm` flag + command; `Chat.tsx` parses
+  `/kick /mute /unmute /ban /unban /tp /give` **only** for a GM session; `game.ts` wiring).
+
+#### Tests
+
+- **`server/test/gm.test.ts`** (+5): a GM token gets `welcome.gm` (a guest doesn't); `/kick`
+  terminates the target socket; `/mute` drops the target's later chat; `/give` grants gold; a
+  non-GM's GM frame is ignored. **`shared/test/net.test.ts`**: the v15 codec round-trips a GM
+  action + the welcome `gm` flag (bad action / non-string target / non-bool flag rejected).
+
 ### Part 25 — PostgreSQL player store (2026-07-07)
 
 The production storage layer: **all player data in Postgres**, with the schema built to grow into

@@ -59,6 +59,7 @@ export function gatewayOptions(port = 0): GatewayOptions {
     maxCharacterBodyBytes: 512 * 1024,
     // Long so the periodic position flush never races the tests; they persist explicitly.
     saveIntervalMs: 3_600_000,
+    gmEmails: [],
   };
 }
 
@@ -92,12 +93,21 @@ export class TestClient {
   lastVitals: NetPartyVital[] | null = null;
   /** Latest /who roster reply, or null before the first request. */
   lastWho: { name: string; level: number; cls: string }[] | null = null;
+  /** GM privilege reported by the welcome. */
+  gm = false;
+  /** True once the socket has closed (e.g. after a GM kick). */
+  closed = false;
+  /** Gold from the most recent kill/grant frame, or null. */
+  lastKillGold: number | null = null;
   deltaCount = 0;
   private seq = 0;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
     this.ws.on('message', (data) => this.onMessage(data.toString()));
+    this.ws.on('close', () => {
+      this.closed = true;
+    });
   }
 
   opened(): Promise<void> {
@@ -114,6 +124,10 @@ export class TestClient {
       case 'welcome':
         this.you = msg.you;
         this.seed = msg.seed;
+        this.gm = msg.gm === true;
+        break;
+      case 'kill':
+        this.lastKillGold = msg.gold;
         break;
       case 'snapshot':
         this.players.clear();
@@ -190,6 +204,14 @@ export class TestClient {
   /** Request the online-player roster (/who). */
   who(): void {
     this.send({ t: 'who' });
+  }
+  /** Send a GM action (target by name). */
+  gmAction(
+    action: 'kick' | 'mute' | 'unmute' | 'ban' | 'unban' | 'teleport' | 'give',
+    target: string,
+    opts: { minutes?: number; x?: number; z?: number; qty?: number } = {},
+  ): void {
+    this.send({ t: 'gm', action, target, ...opts });
   }
 
   /** Send a combat intent (target / cast / auto-attack / release) with an increasing seq. */

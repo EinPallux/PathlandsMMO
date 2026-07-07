@@ -16,6 +16,7 @@ export function Chat(): JSX.Element | null {
   const commands = useStore((s) => s.commands);
   const pushChat = useStore((s) => s.pushChat);
   const setChatTyping = useStore((s) => s.setChatTyping);
+  const isGm = useStore((s) => s.gm);
   const [active, setActive] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -124,6 +125,38 @@ export function Chat(): JSX.Element | null {
       // Roster: /who lists the players currently online (server-answered).
       if (cmd === 'who') {
         commands?.who();
+        return;
+      }
+      // GM tooling (only for a GM session; the server re-checks). /kick /mute /unmute /ban /unban
+      // /tp (alias /teleport) /give — all target a player by name.
+      const gmAction =
+        cmd === 'tp' || cmd === 'teleport'
+          ? 'teleport'
+          : ['kick', 'mute', 'unmute', 'ban', 'unban', 'give'].includes(cmd)
+            ? cmd
+            : null;
+      if (isGm && gmAction !== null) {
+        const args = capped
+          .slice(1 + raw.length)
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        const name = args[0] ?? '';
+        if (name.length === 0) {
+          pushChat({
+            from: '',
+            text: `Usage: /${cmd} <player name>${gmAction === 'teleport' ? ' <x> <z>' : gmAction === 'mute' ? ' [minutes]' : gmAction === 'give' ? ' <gold>' : ''}`,
+            self: false,
+            system: true,
+            emote: false,
+          });
+          return;
+        }
+        if (gmAction === 'mute') commands?.gm('mute', name, { minutes: Number(args[1]) || 10 });
+        else if (gmAction === 'teleport')
+          commands?.gm('teleport', name, { x: Number(args[1]) || 0, z: Number(args[2]) || 0 });
+        else if (gmAction === 'give') commands?.gm('give', name, { qty: Number(args[1]) || 0 });
+        else commands?.gm(gmAction, name);
         return;
       }
       if (cmd === 'emote' || cmd === 'emotes' || cmd === 'help') {
