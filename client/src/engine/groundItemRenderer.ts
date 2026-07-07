@@ -6,10 +6,12 @@
 import * as THREE from 'three';
 import { RARITY_COLOR, type NetWorldItem } from '@pathlands/shared';
 
-/** Colour for an item's rarity, with a safe amber fallback for unknown/absent rarities. */
+/** Colour for an item's rarity, with a safe amber fallback for unknown/absent rarities. A
+ *  `constructor`/prototype-keyed rarity would resolve to a function, so require an actual number. */
 function rarityColor(item: NetWorldItem['item']): number {
   const r = (item as { rarity?: string }).rarity;
-  return (r !== undefined && RARITY_COLOR[r as keyof typeof RARITY_COLOR]) || 0xffcc55;
+  const c = r === undefined ? undefined : RARITY_COLOR[r as keyof typeof RARITY_COLOR];
+  return typeof c === 'number' ? c : 0xffcc55;
 }
 
 export class GroundItemRenderer {

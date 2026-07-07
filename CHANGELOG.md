@@ -41,6 +41,27 @@ the anti-duplication guarantee.
   out-of-range, despawn, cap eviction) and the wire path (replicate to a nearby player, grant +
   remove on pickup, anti-dup race, interest filtering); `shared/test/net.test.ts` — v16 round-trips.
 
+#### Fixed / hardened (adversarial-review pass)
+
+- **Item loss on a full bag (pickup).** The server pickup is atomic (removes the world item, sends a
+  grant), so refusing the grant on a full bag lost the item. Pickups are now gated client-side on
+  `bagHasRoom()` (a full player never removes an item it can't hold), and a grant is **always**
+  accepted — over-cap is a transient, self-correcting state.
+- **Item loss on a rejected drop.** The client now sends the drop FIRST and removes the stack from
+  the (client-authoritative) bag only on a confirmed send; `NetClient.sendDropItem` returns whether
+  it sent and self-rate-limits a hair above the server's gate, so a rate-limited / disconnected drop
+  can no longer strand the item (removed locally, never spawned).
+- **Drop-then-crash dupe (mitigation).** A bag mutation from a drop/pickup now triggers an immediate
+  client persist, shrinking the window in which a crash could roll the bag back to a pre-drop state
+  while the server-side world item persists. The complete fix is server-side inventory authority
+  (the pending economy migration).
+- **Forged-item hardening.** The drop decoder rejects any **non-finite** number (`1e999` → Infinity)
+  anywhere in the item and bounds its depth/size — a crafted `ItemDef` re-broadcast into other
+  players' bags can no longer poison their character sheet / combat math.
+- **Dead-player guard.** Drop and pickup are refused for a frozen/dead player (matches the movement
+  freeze). Renderer rarity lookup now requires an actual number (a `constructor`-keyed rarity can't
+  yield a function).
+
 ### Part 28 — Scrap Bank, Mail & Trading (2026-07-07)
 
 Owner call: the Waymeet **Bank** (item vault) and **Mail** inbox are removed, and no dedicated

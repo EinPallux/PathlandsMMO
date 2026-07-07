@@ -119,6 +119,13 @@ export class Game {
   /** Renders the server's dropped ground items (the trade motes); null in a server-free build. */
   private readonly groundItems: GroundItemRenderer | null;
   /**
+   * Optional "persist now" callback (set by the UI to its save function). Fired right after a
+   * ground-item drop / pickup mutates the bag, so the client-authoritative bag can't roll back a
+   * drop (30 s autosave) while the server-side world item persists — the interim dupe mitigation
+   * until inventory authority moves server-side.
+   */
+  onPersist: (() => void) | null = null;
+  /**
    * Cosmetic reconciliation error: the residual between our prediction and the server's
    * authority after a reconcile, added to the RENDERED position and decayed to zero so a
    * correction slides in smoothly instead of popping. Zero in the agreeing common case
@@ -319,6 +326,8 @@ export class Game {
       drainGrants: () => net.drainGrants(),
       send: (intent) => net.sendIntent(intent),
     });
+    // Persist promptly whenever a ground-item drop/pickup mutates the bag (dupe-window mitigation).
+    this.combat.setBagMutationHook(() => this.onPersist?.());
     // Fresh session: clear any scrollback + party state left from a previous game instance.
     useStore.setState({
       chat: [],
@@ -434,10 +443,14 @@ export class Game {
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
       dropItem: (index) => {
-        // Drop the stack out of the local bag, then have the server spawn the authoritative
-        // ground item at our position (other players can pick it up — the trade mechanic).
-        const removed = this.combat.dropInventory(index);
-        if (removed !== null) this.net?.sendDropItem(removed.item, removed.qty);
+        // Send the drop FIRST, remove from the local bag only on a confirmed send. A drop the
+        // server would reject (rate-limited, or the socket isn't open) must not vanish the item —
+        // there is no inventory ack to restore it (the bag is client-authoritative).
+        const stack = this.combat.peekInventory(index);
+        if (stack === null) return;
+        if (this.net?.sendDropItem(stack.item, stack.qty) === true) {
+          this.combat.removeInventoryAt(index);
+        }
       },
       buyItem: (index) => this.combat.buyItem(index),
       buybackItem: (index) => this.combat.buybackItem(index),

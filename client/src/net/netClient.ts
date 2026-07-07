@@ -147,6 +147,9 @@ interface Track {
 }
 
 const DEFAULT_RENDER_DELAY_MS = 150;
+/** Client drop spacing — a hair above the server's 250 ms gate so a sent drop is never rejected
+ *  there (which would strand the item: removed from the bag locally, never spawned server-side). */
+const DROP_MIN_INTERVAL_MS = 300;
 const SAMPLE_HISTORY_MS = 1000;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
@@ -185,6 +188,8 @@ export class NetClient {
   private readonly worldItemMap = new Map<string, NetWorldItem>();
   /** Item stacks granted to us (a ground-item pickup) since the game last drained them. */
   private readonly grantQueue: NetItemStack[] = [];
+  /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
+  private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
   private readonly killQueue: ServerKill[] = [];
   /** Authoritative combat visuals (floaters / sparks / death poofs) awaiting render. */
@@ -535,10 +540,20 @@ export class NetClient {
     this.send({ t: 'who' });
   }
 
-  /** Drop a bag stack onto the ground (the server spawns it at our authoritative position). */
-  sendDropItem(item: ItemDef, qty: number): void {
-    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+  /**
+   * Drop a bag stack onto the ground (the server spawns it at our authoritative position). Returns
+   * whether the frame was actually SENT — the caller removes the stack from the (client-authoritative)
+   * bag only on `true`, so a drop the server would reject never vanishes the item. Self-rate-limits a
+   * hair ABOVE the server's drop gate so a frame we send is never silently dropped by that gate.
+   */
+  sendDropItem(item: ItemDef, qty: number): boolean {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null)
+      return false;
+    const now = this.nowMs();
+    if (now - this.lastDropMs < DROP_MIN_INTERVAL_MS) return false;
+    this.lastDropMs = now;
     this.send({ t: 'dropItem', item, qty });
+    return true;
   }
 
   /** Ask to pick up a ground item by id (the server validates range + grants it if still there). */

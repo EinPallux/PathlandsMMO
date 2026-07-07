@@ -36,6 +36,16 @@ describe('net protocol codec', () => {
     expect(decodeClient(JSON.stringify({ t: 'dropItem', item, qty: 1.5 }))).toBeNull();
     expect(decodeClient(JSON.stringify({ t: 'dropItem', item: { id: 'x' }, qty: 1 }))).toBeNull();
     expect(decodeClient(JSON.stringify({ t: 'pickupItem', id: '' }))).toBeNull();
+    // A forged item with a non-finite stat is rejected — it must not reach another player's bag.
+    // `1e999` is valid JSON syntax that JSON.parse yields as Infinity (the real over-the-wire vector;
+    // NaN/Infinity have no JSON literal), so the raw string exercises the guard.
+    expect(
+      decodeClient('{"t":"dropItem","item":{"id":"hax","name":"Hax","might":1e999},"qty":1}'),
+    ).toBeNull();
+    // A pathologically deep item is rejected (depth cap).
+    let deep: Record<string, unknown> = { id: 'd', name: 'Deep' };
+    for (let i = 0; i < 12; i++) deep = { id: 'd', name: 'Deep', nested: deep };
+    expect(decodeClient(JSON.stringify({ t: 'dropItem', item: deep, qty: 1 }))).toBeNull();
     // Server → client: the interest-filtered world-items frame.
     const wi: ServerMessage = {
       t: 'worldItems',

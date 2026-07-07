@@ -1045,6 +1045,7 @@ export class CombatDirector {
       this.pushFloater(this.player, stack.item.name, 'heal');
     }
     audio.sfx('loot');
+    this.bagMutationHook?.(); // a pickup changed the bag — persist promptly (dupe-window shrink)
   }
 
   /** Whether the bag has room for one more stack — gates a ground-item pickup client-side so a
@@ -1059,15 +1060,36 @@ export class CombatDirector {
   }
 
   /**
-   * Drop a whole bag stack onto the world (the player-to-player trade action). Removes it from the
-   * bag and returns the removed stack so the caller can send it to the server, which spawns the
-   * authoritative ground item at our position. Returns null for an out-of-range / empty slot.
+   * A hook fired whenever a ground-item drop or pickup mutates the bag, so the client can persist
+   * immediately. This shrinks the drop-then-crash dupe window (a client-authoritative bag saved
+   * only every 30 s could roll back a drop while the server-side world item persists) from the
+   * autosave interval to the IndexedDB flush latency. The real fix is server-side inventory
+   * authority (the pending economy migration); this is the interim mitigation.
    */
-  dropInventory(index: number): ItemStackSave | null {
+  private bagMutationHook: (() => void) | null = null;
+  setBagMutationHook(fn: () => void): void {
+    this.bagMutationHook = fn;
+  }
+
+  /** Peek a bag stack WITHOUT removing it — the drop path sends to the server first and only
+   *  removes on a confirmed send (so a rate-limited / disconnected drop never loses the item). */
+  peekInventory(index: number): ItemStackSave | null {
+    if (index < 0 || index >= this.inventory.length) return null;
+    const s = this.inventory[index];
+    return s === undefined ? null : { item: s.item, qty: s.qty };
+  }
+
+  /**
+   * Remove a bag stack after its drop was confirmed sent (the server will spawn the authoritative
+   * ground item). Returns the removed stack, or null for an out-of-range slot. Fires the bag-mutation
+   * hook so the client persists the post-drop bag promptly.
+   */
+  removeInventoryAt(index: number): ItemStackSave | null {
     if (index < 0 || index >= this.inventory.length) return null;
     const removed = this.inventory.splice(index, 1)[0];
     if (removed === undefined) return null;
     this.pushFloater(this.player, `Dropped ${removed.item.name}`, 'miss');
+    this.bagMutationHook?.();
     return { item: removed.item, qty: removed.qty };
   }
 

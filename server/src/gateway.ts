@@ -611,6 +611,7 @@ export class GameServer {
       }
       case 'dropItem': {
         if (conn.id === null) return; // must be joined
+        if (this.combat.isDead(conn.id)) return; // a corpse can't drop loot (matches the move freeze)
         if (now - conn.lastDropMs < DROP_MIN_INTERVAL_MS) return; // anti-spam-drop gate
         const player = this.sim.players.get(conn.id);
         if (player === undefined) return;
@@ -630,6 +631,7 @@ export class GameServer {
       }
       case 'pickupItem': {
         if (conn.id === null) return; // must be joined
+        if (this.combat.isDead(conn.id)) return; // a corpse can't loot (matches the move freeze)
         const player = this.sim.players.get(conn.id);
         if (player === undefined) return;
         // Atomic authoritative removal (first-come-wins) if in range — the anti-dup guarantee.

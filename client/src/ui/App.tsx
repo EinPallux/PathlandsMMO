@@ -103,6 +103,9 @@ export function App(): JSX.Element {
       // Character + account persist together (Path Points/perks are account-wide).
       if (snap) void upsertCharacterAndAccount(snap, game.snapshotAccount());
     };
+    // Persist immediately after a ground-item drop/pickup so a crash can't roll the bag back to a
+    // pre-drop state while the server-side world item persists (the drop-then-crash dupe window).
+    game.onPersist = save;
     const autosave = window.setInterval(save, 30_000);
     window.addEventListener('beforeunload', save);
 

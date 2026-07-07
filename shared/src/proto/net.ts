@@ -631,6 +631,32 @@ function isBool(v: unknown): v is boolean {
 }
 
 /**
+ * Deep sanity check on an untrusted item object (a dropped `ItemDef`). Rejects any NON-FINITE
+ * number anywhere in the tree — a NaN/Infinity stat would poison a PICKER's character sheet and
+ * combat math once it flows drop → grant → equip — and bounds depth + node count so a pathological
+ * object can't blow the stack or memory. Boundary hardening, not full schema validation: a
+ * finite-but-absurd stat still passes here (that's closed by server-authoritative items in the
+ * economy migration), but the crash/corruption vector is shut.
+ */
+function isSafeItemTree(v: unknown, depth: number, budget: { n: number }): boolean {
+  if (depth > 8) return false;
+  if (--budget.n < 0) return false;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (typeof v === 'string' || typeof v === 'boolean' || v === null) return true;
+  if (Array.isArray(v)) {
+    for (const el of v) if (!isSafeItemTree(el, depth + 1, budget)) return false;
+    return true;
+  }
+  if (typeof v === 'object') {
+    for (const val of Object.values(v as Record<string, unknown>)) {
+      if (!isSafeItemTree(val, depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  return false; // functions / symbols / undefined — never valid JSON item data
+}
+
+/**
  * Structurally validate an untrusted intent. Only the shapes the sim can act on are
  * accepted; anything else is rejected at the boundary. This is a syntactic gate, not
  * the authority check — the sim still validates range/resource/cooldown/ownership.
@@ -782,6 +808,9 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (typeof o.item !== 'object' || o.item === null) return null;
       const item = o.item as Record<string, unknown>;
       if (!isString(item.id) || !isString(item.name)) return null;
+      // Reject NaN/Infinity anywhere in the item + bound its size — a forged item is re-broadcast
+      // to and stored by OTHER players, so a poisoned stat can't be allowed through.
+      if (!isSafeItemTree(o.item, 0, { n: 256 })) return null;
       if (!isNonNegInt(o.qty) || o.qty < 1) return null;
       return { t: 'dropItem', item: o.item as unknown as ItemDef, qty: o.qty };
     }
