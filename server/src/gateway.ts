@@ -18,14 +18,17 @@ import {
   findEmote,
   NET_PROTOCOL_VERSION,
   WORLD_SEED,
+  type ClientParty,
   type NetCombatEvent,
   type NetEntity,
+  type NetPartyMember,
   type NetPlayer,
   type ServerChat,
   type ServerMessage,
 } from '@pathlands/shared';
 import type { ServerSim, ServerPlayer } from './sim.js';
 import { ServerCombat } from './combat.js';
+import { PartyManager } from './party.js';
 import {
   buildCellIndex,
   buildEntityCellIndex,
@@ -122,6 +125,8 @@ export class GameServer {
   private readonly api: HttpApi;
   /** The world's authoritative enemy sim (spawns + AI + replication). */
   private readonly combat: ServerCombat;
+  /** Session-scoped party (group) state (Phase 6 §Social). */
+  private readonly party = new PartyManager();
 
   constructor(
     private readonly sim: ServerSim,
@@ -273,7 +278,10 @@ export class GameServer {
         void this.persistPosition(conn.accountId, player);
       }
       this.combat.removePlayer(conn.id); // drop its combat entity + any enemy threat on it
+      // Drop from any party (+ clear pending invites) and re-roster the survivors.
+      const partyChange = this.party.remove(conn.id);
       this.sim.remove(conn.id);
+      for (const m of partyChange.notify) if (m !== conn.id) this.sendPartyState(m);
       // The player's departure surfaces to peers as a `gone` on the next delta.
       this.membershipChanged = true;
     }
@@ -464,7 +472,115 @@ export class GameServer {
         this.broadcastChat(conn.id, player.name, text);
         return;
       }
+      case 'party': {
+        if (conn.id === null) return; // must be joined
+        this.handleParty(conn.id, msg);
+        return;
+      }
     }
+  }
+
+  // --- party (Phase 6 §Social) ---
+
+  /** Route a validated party action, then re-broadcast the affected rosters. */
+  private handleParty(meId: string, msg: ClientParty): void {
+    switch (msg.action) {
+      case 'invite': {
+        if (msg.target === undefined) return;
+        const target = this.resolvePlayerByName(msg.target);
+        if (target === null) {
+          this.partyNotice(meId, `No player named “${msg.target.slice(0, 24)}” is online.`);
+          return;
+        }
+        const res = this.party.invite(meId, target);
+        if (res !== 'ok') {
+          this.partyNotice(
+            meId,
+            res === 'full'
+              ? 'Your party is full.'
+              : res === 'targetBusy'
+                ? 'That player is already in a party.'
+                : 'You cannot invite yourself.',
+          );
+          return;
+        }
+        const meName = this.sim.players.get(meId)?.name ?? 'Someone';
+        const targetConn = this.connById(target);
+        if (targetConn !== null) {
+          this.send(targetConn.ws, { t: 'partyInvite', fromId: meId, fromName: meName });
+        }
+        this.partyNotice(
+          meId,
+          `Invited ${this.sim.players.get(target)?.name ?? 'them'} to the party.`,
+        );
+        break;
+      }
+      case 'accept': {
+        const res = this.party.accept(meId);
+        if (res === null) {
+          this.partyNotice(meId, 'That invite is no longer valid.');
+          return;
+        }
+        for (const m of res.notify) this.sendPartyState(m);
+        break;
+      }
+      case 'decline':
+        this.party.decline(meId);
+        break;
+      case 'leave': {
+        const res = this.party.leave(meId);
+        for (const m of res.notify) this.sendPartyState(m);
+        break;
+      }
+      case 'kick': {
+        if (msg.target === undefined) return;
+        const target = this.resolvePlayerByName(msg.target);
+        if (target === null) return;
+        const res = this.party.kick(meId, target);
+        if (res === null) return;
+        for (const m of res.notify) this.sendPartyState(m);
+        break;
+      }
+    }
+  }
+
+  /** Send a player their current party roster (empty ⇒ the client hides the party panel). */
+  private sendPartyState(id: string): void {
+    const conn = this.connById(id);
+    if (conn === null) return;
+    const party = this.party.partyOf(id);
+    const members: NetPartyMember[] = [];
+    let leaderId = '';
+    if (party !== null) {
+      leaderId = party.leaderId;
+      for (const mId of party.members) {
+        const p = this.sim.players.get(mId);
+        if (p !== undefined) members.push({ id: mId, name: p.name, cls: p.cls, level: p.level });
+      }
+    }
+    this.send(conn.ws, { t: 'partyState', leaderId, members });
+  }
+
+  /** A one-off system notice to a single player, on the chat channel (no real sender). */
+  private partyNotice(id: string, text: string): void {
+    const conn = this.connById(id);
+    if (conn !== null) {
+      this.send(conn.ws, { t: 'chat', fromId: '', from: 'Party', text, tick: this.sim.tick });
+    }
+  }
+
+  /** The connection whose session id is `id`, or null (small N — parties are ≤ 4). */
+  private connById(id: string): Conn | null {
+    for (const c of this.conns.values()) if (c.id === id) return c;
+    return null;
+  }
+
+  /** Resolve a player name (case-insensitive, server-authoritative) to a session id, or null. */
+  private resolvePlayerByName(name: string): string | null {
+    const lower = name.trim().toLowerCase();
+    if (lower.length === 0) return null;
+    for (const p of this.sim.players.values()) if (p.name.toLowerCase() === lower) return p.id;
+    return null;
   }
 
   /** Fan a sanitised chat/emote line out to every joined session (global chat for the playtest). */

@@ -27,9 +27,16 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v7 added server-authoritative XP progression (totalXp on NetCombatSelf);
  * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items);
  * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX);
- * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar).
+ * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar);
+ * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite).
  */
-export const NET_PROTOCOL_VERSION = 10;
+export const NET_PROTOCOL_VERSION = 11;
+
+/** Max players in one party (GDD §Party). */
+export const MAX_PARTY = 4;
+
+/** Valid party actions on the wire (validated at the boundary; the server enforces semantics). */
+const PARTY_ACTIONS = ['invite', 'accept', 'decline', 'leave', 'kick'];
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -182,7 +189,19 @@ export interface ClientChat {
   text: string;
 }
 
-export type ClientMessage = ClientHello | ClientIntent | ClientPing | ClientChat;
+/**
+ * A party control action. `invite` / `kick` carry a target player NAME (the server resolves it to
+ * a session, server-authoritatively); `accept` / `decline` act on the recipient's one pending
+ * invite; `leave` drops the sender from its party. All are validated server-side.
+ */
+export interface ClientParty {
+  t: 'party';
+  action: 'invite' | 'accept' | 'decline' | 'leave' | 'kick';
+  /** Target player name for `invite` / `kick`; ignored otherwise. */
+  target?: string;
+}
+
+export type ClientMessage = ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -360,6 +379,34 @@ export interface ServerChat {
   emote?: boolean;
 }
 
+/** One member of a party, as the client's party panel shows them. */
+export interface NetPartyMember {
+  /** Session id (matches NetPlayer.id — the client can cross-reference for position). */
+  id: string;
+  name: string;
+  /** CharacterClass value as a string. */
+  cls: string;
+  level: number;
+}
+
+/**
+ * The recipient's current party roster. `members` is empty (and `leaderId` '') when the recipient
+ * is solo — so this frame both forms and disbands the party panel. Sent to every affected member
+ * on any party change (join / leave / kick / disband / disconnect).
+ */
+export interface ServerPartyState {
+  t: 'partyState';
+  members: NetPartyMember[];
+  leaderId: string;
+}
+
+/** A pending party invite the recipient can accept / decline (from a server-authoritative name). */
+export interface ServerPartyInvite {
+  t: 'partyInvite';
+  fromId: string;
+  fromName: string;
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -368,6 +415,8 @@ export type ServerMessage =
   | ServerCombatSelf
   | ServerKill
   | ServerCombatEvents
+  | ServerPartyState
+  | ServerPartyInvite
   | ServerPong
   | ServerError
   | ServerChat;
@@ -518,6 +567,16 @@ export function decodeClient(raw: string): ClientMessage | null {
       // trims whitespace, collapses control chars, and rate-limits before rebroadcast.
       if (!isString(o.text) || o.text.length === 0 || o.text.length > MAX_CHAT_LEN) return null;
       return { t: 'chat', text: o.text };
+    }
+    case 'party': {
+      if (!isString(o.action) || !PARTY_ACTIONS.includes(o.action)) return null;
+      // A target name (invite / kick) is optional here; the server validates + caps it.
+      if (o.target !== undefined && (!isString(o.target) || o.target.length > MAX_CHAT_LEN)) {
+        return null;
+      }
+      const party: ClientParty = { t: 'party', action: o.action as ClientParty['action'] };
+      if (o.target !== undefined) party.target = o.target;
+      return party;
     }
     default:
       return null;
@@ -742,7 +801,26 @@ export function decodeServer(raw: string): ServerMessage | null {
       }
       return chat;
     }
+    case 'partyState': {
+      if (
+        !isString(o.leaderId) ||
+        !Array.isArray(o.members) ||
+        !o.members.every(isNetPartyMember)
+      ) {
+        return null;
+      }
+      return { t: 'partyState', leaderId: o.leaderId, members: o.members };
+    }
+    case 'partyInvite':
+      if (!isString(o.fromId) || !isString(o.fromName)) return null;
+      return { t: 'partyInvite', fromId: o.fromId, fromName: o.fromName };
     default:
       return null;
   }
+}
+
+function isNetPartyMember(v: unknown): v is NetPartyMember {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return isString(o.id) && isString(o.name) && isString(o.cls) && isFiniteNumber(o.level);
 }

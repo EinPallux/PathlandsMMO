@@ -4,6 +4,38 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 18 — Parties, server foundation (2026-07-06)
+
+The first slice of grouping: players can form a party (up to 4). Server-authoritative + fully
+headless-tested; the client UI + live ally frames are the next slice.
+
+#### Added
+
+- **`server/src/party.ts` (`PartyManager`)**: a pure, session-scoped party state machine over
+  player session ids — `invite` / `accept` / `decline` / `leave` / `kick` / `remove`. A
+  two-person party disbands on any leave; a departing leader hands off to the next member; a
+  disconnect clears the player's pending invites (in + out) and drops it from its party. Max
+  size `MAX_PARTY` = 4. Invites validate self / party-full / target-already-grouped, and accept
+  rejects a stale invite (inviter gone, party filled, or the recipient already grouped).
+- **Party channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **11**): `ClientParty`
+  (action + optional target NAME, resolved server-authoritatively — no client id is trusted),
+  `ServerPartyState` (roster: `NetPartyMember[]` + `leaderId`; empty ⇒ solo), `ServerPartyInvite`;
+  decoders + `MAX_PARTY` export.
+- **Gateway wiring** (`server/src/gateway.ts`): constructs the `PartyManager`, routes the `party`
+  message (`handleParty`), resolves invite/kick targets by name (`resolvePlayerByName`), sends the
+  invite to the target + a system-chat notice to the actor, and re-broadcasts each affected
+  member's roster (`sendPartyState`) after every change; `onClose` removes the player from its
+  party and re-rosters the survivors.
+
+#### Tests
+
+- **`server/test/party.test.ts`** (+9): the `PartyManager` state machine (formation, self/full/busy
+  rejection, stale-invite, disband, leader handoff, leader-only kick, disconnect cleanup) and
+  over-the-wire (two clients form a party by invite→accept and see the roster; it disbands on
+  leave; a member disconnecting disbands it for the other).
+- **`shared/test/net.test.ts`**: the v11 codec round-trips the party frames + rejects an unknown
+  action / a malformed member; version assertion updated to 11.
+
 ### Part 17 — Server-timeline enemy interpolation (2026-07-06)
 
 Server enemies now move smoothly instead of snapping at the ~10 Hz delta rate — a client-rendering

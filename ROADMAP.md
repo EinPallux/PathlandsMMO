@@ -6,6 +6,34 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 18: Parties, server foundation (Social layer).**
+> The first slice of **grouping** — players can now form a party (up to 4) so the shared world
+> becomes play-_with_, not just play-_near_. Server-authoritative + fully headless-tested; the
+> client UI (invite prompt + party panel + live ally frames) is the next slice. Landed:
+>
+> - **`PartyManager`** (`server/src/party.ts`) — a pure session-scoped state machine over player
+>   ids: `invite` (validates self / party-full / target-already-grouped), `accept` (joins the
+>   inviter's party or forms a fresh two-person one; rejects a stale invite — inviter gone /
+>   party filled / already grouped), `decline`, `leave` (a two-person party **disbands**, a
+>   departing leader **hands off** to the next member), `kick` (leader-only), and `remove`
+>   (disconnect: clears invites in + out, then leaves). Max size **4**.
+> - **Party channel** (`NET_PROTOCOL_VERSION` → **11**): `ClientParty`
+>   (invite/accept/decline/leave/kick + a target NAME the server resolves authoritatively —
+>   no client-supplied id is trusted), `ServerPartyState` (the recipient's roster —
+>   members + leader, empty ⇒ solo), `ServerPartyInvite`. The gateway routes the actions,
+>   delivers the invite, and re-broadcasts each affected member's roster on every change;
+>   feedback (invite sent / party full / …) rides the chat channel as a system line.
+> - **Tests** (+10): the `PartyManager` state machine (formation, self / full / busy rejection,
+>   stale-invite, disband, leader handoff, leader-only kick, disconnect cleanup) + over-the-wire
+>   (two clients form a party by invite→accept and see the roster; it disbands on leave; a
+>   member disconnecting disbands it for the other); the v11 codec round-trips the party frames.
+>
+> **384 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Next: the client
+> party UI (an invite toast, a party panel with **live ally HP/resource frames**), then shared
+> kill XP + loot round-robin for party members, then group scaling in Hollows._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 17: Server-timeline enemy interpolation (combat feel).**
 > Server enemies now **move smoothly** instead of snapping at the ~10 Hz delta rate — they get
 > the same server-timeline interpolation remote players already had. A client-rendering polish
@@ -1214,7 +1242,7 @@ _Status (2026-07-06): **feature-complete & launch-ready.** The automatable crite
 - [~] **Client netcode** — intent → server message pipeline (the Phase-1 abstraction pays off here), client-side prediction + reconciliation for own movement, entity interpolation for others, latency/connection UX (indicators, reconnect with session resume). _(Parts 1–2: opt-in `NetClient` streams intents up, **predicts + reconciles** own movement against the server (replay + smoothed correction), interpolates remotes on the server-tick timeline ~150 ms behind, measures RTT, and shows a connection HUD with auto-reconnect. Remaining: session **resume** on reconnect — currently a reconnect starts a fresh server session.)_
 - [~] **Accounts & persistence** — email+password auth (argon2, rate-limited), JWT sessions, PostgreSQL persistence of accounts/characters/inventory/quests/professions/Deeds/economy with the Phase-3 save schema migrated server-side; character migration tool for existing local saves (best-effort import). _(Part 4: scrypt password hashing + HS256 JWT sessions (rate-limited), a durable `FileStore` (JSON, atomic writes) behind a `Store` interface, `/auth/*` + `/character` REST endpoints (character cloud save), and ws token binding that loads the persisted character and writes its authoritative position back. Remaining: the PostgreSQL `Store` impl (interface staged), argon2id if warranted, and richer server-owned state once combat/quests move server-side.)_
 - [~] **Onboarding v2** — login/register screens in front of the character flow; server-side name uniqueness; character list per account (4 slots + Path-Point slot unlocks). _(Part 5: a `LoginScreen` + auth API client gate the flow when a server is configured, the token binds the ws session (server restores the character position), and the local character is cloud-save-uploaded on entry, with expired-token → re-login. Remaining: a per-account character list / multi-slot picker fed by the server, and email verification.)_
-- [~] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD). _(Part 6: **global chat** — a `ClientChat`/`ServerChat` protocol pair (proto v4), a server that rate-limits + sanitises (control-char/newline strip, length cap) + rebroadcasts under the **server-authoritative name** to every joined session, and a bottom-left `Chat.tsx` panel (Enter to open, Esc to cancel) that suspends gameplay input while typing. Part 7: **remote-player nameplates** (name + level floating over other players) and **emotes** — a 15-command set (`shared/data/emotes.ts`) that broadcasts a third-person action line ("Alia waves.") server-formatted under the authoritative name, client-validated for instant typo feedback. Remaining: channels (say/party/guild/whisper) + mute, parties, guilds, friends, emote animations, /inspect, trade, duels, group scaling.)_
+- [~] **Social layer** — chat (zone/say/party/guild/whisper + moderation mute), parties up to 4 (shared XP/loot rules, party frames, quest-kill sharing), guilds (create/roster/ranks/guild chat), friends list, /emotes, player nameplates & inspect, secure player-to-player trade window, duels; group scaling activates in Hollows (+HP/damage per nearby ally per GDD). _(Part 6: **global chat** — a `ClientChat`/`ServerChat` protocol pair (proto v4), a server that rate-limits + sanitises (control-char/newline strip, length cap) + rebroadcasts under the **server-authoritative name** to every joined session, and a bottom-left `Chat.tsx` panel (Enter to open, Esc to cancel) that suspends gameplay input while typing. Part 7: **remote-player nameplates** (name + level floating over other players) and **emotes** — a 15-command set (`shared/data/emotes.ts`) that broadcasts a third-person action line ("Alia waves.") server-formatted under the authoritative name, client-validated for instant typo feedback. Part 18: **parties, server foundation** — a session-scoped `PartyManager` (invite/accept/decline/leave/kick, up to 4, disband-on-empty + leader handoff), a party channel (proto v11: `ClientParty` / `ServerPartyState` / `ServerPartyInvite`) with server-authoritative name resolution + roster re-broadcast, fully headless-tested. Remaining: the client party UI + live ally frames, shared XP/loot round-robin, channels (say/party/guild/whisper) + mute, guilds, friends, emote animations, /inspect, trade, duels, group scaling.)_
 - [ ] **Multiplayer endgame** — weekly world boss at the restored final Waystone, group bounty variants, guild Deeds; anti-cheat essentials (server validates everything; speed/teleport/rate sanity checks; no client-trusted numbers).
 - [~] **Ops & launch** — VPS deployment via Docker Compose (server, PostgreSQL, nginx + TLS/wss, backups cron), GitHub Actions deploy pipeline, structured logging + metrics dashboard (CCU, tick time, DB health), load test at 200 simulated clients, GM tooling (kick/mute/teleport/item-grant), status page; launch checklist & rollback plan. _(Part 3: `server/Dockerfile` + `docker-compose.yml` (game + nginx TLS/wss; Postgres behind a profile) + `deploy/nginx/pathlands.conf` + a `/healthz` + `/status` endpoint + `docs/SERVER_DEPLOY.md` runbook — the movement slice is VPS-deployable now. Remaining: DB backups cron, CI deploy pipeline, metrics dashboard, 200-client load test, GM tooling, launch/rollback plan.)_
 

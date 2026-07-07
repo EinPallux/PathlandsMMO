@@ -14,6 +14,7 @@ import {
   type MoveIntent,
   type NetCombatSelf,
   type NetEntity,
+  type NetPartyMember,
   type NetPlayer,
   type NetSelf,
 } from '@pathlands/shared';
@@ -81,6 +82,10 @@ export class TestClient {
     tick: number;
     emote: boolean;
   }[] = [];
+  /** Latest party roster (members + leader); members empty when solo. */
+  lastParty: { members: NetPartyMember[]; leaderId: string } = { members: [], leaderId: '' };
+  /** Latest pending party invite received, or null. */
+  lastInvite: { fromId: string; fromName: string } | null = null;
   deltaCount = 0;
   private seq = 0;
 
@@ -131,6 +136,12 @@ export class TestClient {
           tick: msg.tick,
           emote: msg.emote === true,
         });
+        break;
+      case 'partyState':
+        this.lastParty = { members: msg.members, leaderId: msg.leaderId };
+        break;
+      case 'partyInvite':
+        this.lastInvite = { fromId: msg.fromId, fromName: msg.fromName };
         break;
       default:
         break;
@@ -184,6 +195,23 @@ export class TestClient {
 
   release(): void {
     this.combatIntent({ type: 'ReleaseSpirit' });
+  }
+
+  // --- party ---
+  partyInvite(name: string): void {
+    this.send({ t: 'party', action: 'invite', target: name });
+  }
+  partyAccept(): void {
+    this.send({ t: 'party', action: 'accept' });
+  }
+  partyDecline(): void {
+    this.send({ t: 'party', action: 'decline' });
+  }
+  partyLeave(): void {
+    this.send({ t: 'party', action: 'leave' });
+  }
+  partyKick(name: string): void {
+    this.send({ t: 'party', action: 'kick', target: name });
   }
 
   close(): void {

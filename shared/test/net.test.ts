@@ -20,8 +20,48 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 10 (self / token / chat / entities / combat-self / xp / loot / fx / enemy-cast)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(10);
+  it('is at protocol version 11 (…/ xp / loot / fx / enemy-cast / party)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(11);
+  });
+
+  it('round-trips + validates the party channel (client action + server roster/invite)', () => {
+    // Client → server actions.
+    for (const action of ['accept', 'decline', 'leave'] as const) {
+      const msg: ClientMessage = { t: 'party', action };
+      expect(decodeClient(encodeClient(msg))).toEqual(msg);
+    }
+    const invite: ClientMessage = { t: 'party', action: 'invite', target: 'Boro' };
+    expect(decodeClient(encodeClient(invite))).toEqual(invite);
+    // An unknown action is rejected.
+    expect(decodeClient(JSON.stringify({ t: 'party', action: 'nuke' }))).toBeNull();
+
+    // Server → client roster.
+    const state: ServerMessage = {
+      t: 'partyState',
+      leaderId: 'p1',
+      members: [
+        { id: 'p1', name: 'Alia', cls: 'ranger', level: 5 },
+        { id: 'p2', name: 'Boro', cls: 'warrior', level: 6 },
+      ],
+    };
+    expect(decodeServer(encodeServer(state))).toEqual(state);
+    // A solo roster (empty members, no leader) round-trips.
+    const solo: ServerMessage = { t: 'partyState', leaderId: '', members: [] };
+    expect(decodeServer(encodeServer(solo))).toEqual(solo);
+    // A malformed member (missing name) sinks the frame.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'partyState',
+          leaderId: 'p1',
+          members: [{ id: 'p1', cls: 'ranger', level: 5 }],
+        }),
+      ),
+    ).toBeNull();
+
+    // Server → client invite.
+    const inv: ServerMessage = { t: 'partyInvite', fromId: 'p1', fromName: 'Alia' };
+    expect(decodeServer(encodeServer(inv))).toEqual(inv);
   });
 
   it('round-trips + validates a ServerCombatEvents (fx) frame', () => {
