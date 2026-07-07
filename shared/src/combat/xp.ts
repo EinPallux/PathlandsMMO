@@ -154,12 +154,18 @@ export function partyXpRecipients(
   radius = PARTY_XP_SHARE_RADIUS,
 ): string[] {
   const out = [earnerId];
+  // Dedup by id (against the earner AND among members) so the result is unique even if the
+  // caller passes a duplicate — a repeated id would otherwise double the XP award downstream.
+  const seen = new Set([earnerId]);
   const r2 = radius * radius;
   for (const m of members) {
-    if (m.id === earnerId) continue;
+    if (seen.has(m.id)) continue;
     const dx = m.x - earner.x;
     const dz = m.z - earner.z;
-    if (dx * dx + dz * dz <= r2) out.push(m.id);
+    if (dx * dx + dz * dz <= r2) {
+      out.push(m.id);
+      seen.add(m.id);
+    }
   }
   return out;
 }

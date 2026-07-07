@@ -15,12 +15,11 @@ const CLASS_DOT: Record<string, string> = {
   mage: '#5a8fd0',
 };
 
-/** Resource-bar tint by kind (rage/mana/energy/focus); a neutral fallback for anything else. */
+/** Resource-bar tint by kind (the three in use: rage/focus/mana); a neutral fallback otherwise. */
 const RESOURCE_TINT: Record<string, string> = {
   rage: '#c0392b',
+  focus: '#d4b24a',
   mana: '#3d6fd0',
-  energy: '#d4b24a',
-  focus: '#6fa84e',
 };
 
 /** A thin horizontal bar filled to `frac` (0..1) in `color`, over a dark track. */

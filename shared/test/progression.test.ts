@@ -97,6 +97,15 @@ describe('Party kill-XP sharing (Phase 6 §Party)', () => {
     const justOutside = { id: 'C', x: 100 + PARTY_XP_SHARE_RADIUS + 0.1, z: 100 };
     expect(partyXpRecipients('A', earner, [justInside, justOutside])).toEqual(['A', 'B']);
   });
+
+  it('returns unique ids even if a member (or the earner) is passed twice', () => {
+    const members = [
+      { id: 'A', x: 100, z: 100 }, // the earner, repeated
+      { id: 'B', x: 105, z: 100 },
+      { id: 'B', x: 105, z: 100 }, // B repeated
+    ];
+    expect(partyXpRecipients('A', earner, members)).toEqual(['A', 'B']);
+  });
 });
 
 describe('Rested XP (GDD §5)', () => {
