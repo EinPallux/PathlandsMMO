@@ -579,7 +579,10 @@ export class Game {
         this.combat.closeVendor();
       } else if (store.nearbyLoot) {
         // A dropped item is the most immediate intent — the server validates range + grants it.
-        this.net?.sendPickupItem(store.nearbyLoot.id);
+        // Gate on bag room FIRST so a full-bag player never removes an item it can't hold (the
+        // server-side removal is authoritative, so an un-holdable grant would otherwise be lost).
+        if (this.combat.bagHasRoom()) this.net?.sendPickupItem(store.nearbyLoot.id);
+        else this.combat.notifyBagFull();
       } else if (
         !this.combat.interactWaystone() &&
         !this.gather.interact(px, this.controller.physics.y, pz)

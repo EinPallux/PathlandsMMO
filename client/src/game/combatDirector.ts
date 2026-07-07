@@ -1031,23 +1031,31 @@ export class CombatDirector {
   /**
    * Apply the server's item grants — the authoritative result of picking a ground item up (Part
    * 29). Unlike a kill this plays a loot cue (not a death cue) and never advances quest objectives:
-   * it's purely "these stacks entered your bag." Bag capacity is enforced here (the client is the
-   * aggregator); an overflow drops on the floor conceptually — surfaced as a "Bag full" floater.
+   * it's purely "these stacks entered your bag." The grant is ALWAYS accepted, even if it pushes the
+   * bag over capacity: the server has already atomically removed the item from the world, so refusing
+   * it here would LOSE it. A full-bag player is stopped BEFORE the pickup is ever sent (bagHasRoom
+   * gates the interact), so over-cap only happens in a rare double-pickup race and self-corrects the
+   * moment the player drops the excess.
    */
   private applyServerGrants(): void {
     const grants = this.netSink?.drainGrants();
     if (grants === undefined || grants.length === 0) return;
-    let added = false;
     for (const stack of grants) {
-      if (this.inventory.length >= this.bagCap()) {
-        this.pushFloater(this.player, 'Bag full', 'miss');
-        break;
-      }
       this.inventory.push({ item: stack.item, qty: stack.qty });
       this.pushFloater(this.player, stack.item.name, 'heal');
-      added = true;
     }
-    if (added) audio.sfx('loot');
+    audio.sfx('loot');
+  }
+
+  /** Whether the bag has room for one more stack — gates a ground-item pickup client-side so a
+   *  full-bag player never removes an item from the world it then can't hold. */
+  bagHasRoom(): boolean {
+    return this.inventory.length < this.bagCap();
+  }
+
+  /** Surface a "Bag full" floater when a pickup is refused for lack of room. */
+  notifyBagFull(): void {
+    this.pushFloater(this.player, 'Bag full', 'miss');
   }
 
   /**
