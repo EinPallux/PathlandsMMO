@@ -6,6 +6,16 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 24: `/who` online roster (Social layer).**
+> A small utility: `/who` lists everyone online (name · level · class), server-answered so it's
+> global. Protocol v14 (`ClientWho` / `ServerWho` with `NetWhoEntry`); the gateway caps the reply
+> at 100 entries + rate-gates it (2 s); the client prints `N online: …` as a system line. **402
+> tests green**; typecheck + lint + build (287 KB gzip) clean. _The social layer is now broad
+> (chat · emote · nameplate · party [form→vitals→XP→loot] · whisper · who). Next major systems:
+> friends list (persistent), guilds, player trade, duels, or PostgreSQL Store._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 23: Whispers (directed private messages) (Social layer).**
 > Adds `/w` (aliases `/tell` · `/whisper` · `/msg`): a private line to one player — the fourth chat
 > channel (say · emote · party · whisper). Landed:

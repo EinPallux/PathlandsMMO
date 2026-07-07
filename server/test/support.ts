@@ -90,6 +90,8 @@ export class TestClient {
   lastInvite: { fromId: string; fromName: string } | null = null;
   /** Latest party-vitals frame (member id → live hp/resource), or null before the first. */
   lastVitals: NetPartyVital[] | null = null;
+  /** Latest /who roster reply, or null before the first request. */
+  lastWho: { name: string; level: number; cls: string }[] | null = null;
   deltaCount = 0;
   private seq = 0;
 
@@ -151,6 +153,9 @@ export class TestClient {
       case 'partyVitals':
         this.lastVitals = msg.vitals;
         break;
+      case 'who':
+        this.lastWho = msg.players;
+        break;
       default:
         break;
     }
@@ -181,6 +186,10 @@ export class TestClient {
   /** Send a directed whisper to a session id. */
   whisper(toId: string, text: string): void {
     this.send({ t: 'chat', text, to: toId });
+  }
+  /** Request the online-player roster (/who). */
+  who(): void {
+    this.send({ t: 'who' });
   }
 
   /** Send a combat intent (target / cast / auto-attack / release) with an increasing seq. */

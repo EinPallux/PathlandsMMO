@@ -25,6 +25,7 @@ import {
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
+  type NetWhoEntry,
   type ServerChat,
   type ServerMessage,
 } from '@pathlands/shared';
@@ -64,6 +65,8 @@ interface Conn {
   lastChatMs: number;
   /** Wall-clock (ms) of this connection's last accepted party action — an invite-spam gate. */
   lastPartyMs: number;
+  /** Wall-clock (ms) of this connection's last /who — gates the (potentially large) roster reply. */
+  lastWhoMs: number;
 }
 
 export interface GatewayOptions {
@@ -97,6 +100,12 @@ const CHAT_MIN_INTERVAL_MS = 700;
 
 /** Minimum spacing between one connection's party actions (ms) — an invite-spam gate. */
 const PARTY_MIN_INTERVAL_MS = 500;
+
+/** Minimum spacing between one connection's /who queries (ms) — bounds the roster-reply cost. */
+const WHO_MIN_INTERVAL_MS = 2000;
+
+/** Cap on players listed in a /who reply, so the frame stays bounded in a crowded world. */
+const WHO_MAX_ENTRIES = 100;
 
 /** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
 const CHAT_BROADCAST_MAX = 200;
@@ -274,6 +283,7 @@ export class GameServer {
       accountId: null,
       lastChatMs: 0,
       lastPartyMs: 0,
+      lastWhoMs: 0,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
@@ -511,6 +521,18 @@ export class GameServer {
           conn.lastPartyMs = now;
         }
         this.handleParty(conn.id, msg);
+        return;
+      }
+      case 'who': {
+        if (conn.id === null) return; // must be joined
+        if (now - conn.lastWhoMs < WHO_MIN_INTERVAL_MS) return; // gate the roster reply
+        conn.lastWhoMs = now;
+        const players: NetWhoEntry[] = [];
+        for (const p of this.sim.players.values()) {
+          players.push({ name: p.name, level: p.level, cls: p.cls });
+          if (players.length >= WHO_MAX_ENTRIES) break;
+        }
+        this.send(conn.ws, { t: 'who', players });
         return;
       }
     }

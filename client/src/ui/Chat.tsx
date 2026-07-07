@@ -121,10 +121,15 @@ export function Chat(): JSX.Element | null {
         commands?.partyLeave();
         return;
       }
+      // Roster: /who lists the players currently online (server-answered).
+      if (cmd === 'who') {
+        commands?.who();
+        return;
+      }
       if (cmd === 'emote' || cmd === 'emotes' || cmd === 'help') {
         pushChat({
           from: '',
-          text: `Whisper: /w <name> <msg>  ·  Party: /invite <name> · /pleave  ·  Emotes: ${emoteCommands()
+          text: `/who  ·  Whisper: /w <name> <msg>  ·  Party: /invite <name> · /pleave  ·  Emotes: ${emoteCommands()
             .map((c) => '/' + c)
             .join('  ')}`,
           self: false,

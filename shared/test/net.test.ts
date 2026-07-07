@@ -20,8 +20,28 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 13 (…/ fx / enemy-cast / party / party-vitals / whisper)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(13);
+  it('is at protocol version 14 (…/ party / party-vitals / whisper / who)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(14);
+  });
+
+  it('round-trips the /who roster query + reply', () => {
+    expect(decodeClient(encodeClient({ t: 'who' }))).toEqual({ t: 'who' });
+    const roster: ServerMessage = {
+      t: 'who',
+      players: [
+        { name: 'Alia', level: 5, cls: 'ranger' },
+        { name: 'Boro', level: 6, cls: 'warrior' },
+      ],
+    };
+    expect(decodeServer(encodeServer(roster))).toEqual(roster);
+    // Empty roster round-trips; a malformed entry (missing level) sinks it.
+    expect(decodeServer(encodeServer({ t: 'who', players: [] }))).toEqual({
+      t: 'who',
+      players: [],
+    });
+    expect(
+      decodeServer(JSON.stringify({ t: 'who', players: [{ name: 'X', cls: 'mage' }] })),
+    ).toBeNull();
   });
 
   it('round-trips a whisper: ClientChat.to + ServerChat.whisper', () => {

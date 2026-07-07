@@ -4,6 +4,29 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 24 — `/who` online roster (2026-07-07)
+
+A small social utility for the shared world: `/who` lists everyone currently online (name, level,
+class) — answered by the server, so it's global (not just who's near you). Headless-tested.
+
+#### Added
+
+- **`/who` protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **14**): `ClientWho`
+  (empty request) + `ServerWho` (`NetWhoEntry[]` — name / level / class), with decoder validation.
+- **Gateway** (`server/src/gateway.ts`): a `who` frame replies with every joined player's identity,
+  capped at `WHO_MAX_ENTRIES` (100) so the frame stays bounded, and rate-gated per connection
+  (`WHO_MIN_INTERVAL_MS` 2 s) so the roster reply can't be spammed.
+- **Client** (`netClient.ts` `requestWho` + `onWho`; `game.ts` `who` command that prints
+  `N online: Alia (L5 Ranger), …` as a system line; `store.ts` `who` command; `Chat.tsx` `/who`).
+  `/help` lists it.
+
+#### Tests
+
+- **`shared/test/net.test.ts`**: the v14 codec round-trips the `/who` query + reply (empty roster
+  ok; a malformed entry rejected); version → 14.
+- **`server/test/chat.test.ts`** (+1): `/who` returns the joined roster (name/level/class) to the
+  requester only — a player who didn't ask gets no frame.
+
 ### Part 23 — Whispers (directed private messages) (2026-07-07)
 
 Adds `/w` (aliases `/tell`, `/whisper`, `/msg`): a private line to one player, routed server-side

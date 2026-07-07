@@ -287,6 +287,17 @@ export class Game {
         }),
       onInvite: (inv) => useStore.getState().setPartyInvite(inv),
       onPartyVitals: (vitals) => useStore.getState().setPartyVitals(vitals),
+      onWho: (players) => {
+        const cap = (c: string): string => c.charAt(0).toUpperCase() + c.slice(1);
+        const list = players.map((p) => `${p.name} (L${p.level} ${cap(p.cls)})`).join(', ');
+        useStore.getState().pushChat({
+          from: '',
+          text: `${players.length} online: ${list}`,
+          self: false,
+          system: true,
+          emote: false,
+        });
+      },
       ...(onAuthError !== undefined ? { onAuthError } : {}),
     });
     this.net = net;
@@ -435,6 +446,7 @@ export class Game {
       travelTo: (id) => this.combat.travelTo(id),
       sendChat: (text) => this.net?.sendChat(text),
       whisper: (name, text) => this.whisperByName(name, text),
+      who: () => this.net?.requestWho(),
       partyInvite: (name) => this.inviteByName(name),
       partyAccept: () => this.net?.partyAccept(),
       partyDecline: () => this.net?.partyDecline(),

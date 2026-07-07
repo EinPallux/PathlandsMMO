@@ -32,6 +32,7 @@ import {
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
+  type NetWhoEntry,
   type ServerKill,
   type ServerSelf,
 } from '@pathlands/shared';
@@ -109,6 +110,8 @@ export interface NetClientOptions {
   onInvite?: (invite: InviteEvent | null) => void;
   /** Called at broadcast cadence with our party's live vitals (empty when solo / on disconnect). */
   onPartyVitals?: (vitals: NetPartyVital[]) => void;
+  /** Called with the online-player roster in reply to a `/who` (requestWho). */
+  onWho?: (players: NetWhoEntry[]) => void;
 }
 
 interface Sample {
@@ -319,6 +322,9 @@ export class NetClient {
       case 'partyVitals':
         this.opts.onPartyVitals?.(msg.vitals);
         break;
+      case 'who':
+        this.opts.onWho?.(msg.players);
+        break;
       default:
         break;
     }
@@ -488,6 +494,12 @@ export class NetClient {
   sendWhisper(toId: string, text: string): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'chat', text, to: toId });
+  }
+
+  /** Ask the server for the current online-player roster (answered via onWho). */
+  requestWho(): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'who' });
   }
 
   // --- party (Phase 6 §Social) ---

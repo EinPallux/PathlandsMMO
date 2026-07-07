@@ -340,6 +340,8 @@ export interface GameCommands {
   sendChat(text: string): void;
   /** Whisper a nearby / party player by name (resolved to a session id client-side). */
   whisper(name: string, text: string): void;
+  /** Request the online-player roster (`/who`); the reply prints to chat. */
+  who(): void;
   /** Party: invite a nearby player by name (resolved to a session id client-side), accept /
    *  decline a pending invite, leave the party, kick a member (leader-only) by session id. */
   partyInvite(name: string): void;

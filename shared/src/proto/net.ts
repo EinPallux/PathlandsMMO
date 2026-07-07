@@ -30,9 +30,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar);
  * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite);
  * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide);
- * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag).
+ * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag);
+ * v14 added the online roster query (ClientWho / ServerWho).
  */
-export const NET_PROTOCOL_VERSION = 13;
+export const NET_PROTOCOL_VERSION = 14;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -211,7 +212,13 @@ export interface ClientParty {
   target?: string;
 }
 
-export type ClientMessage = ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty;
+/** A request for the current online-player roster (answered with a ServerWho). No payload. */
+export interface ClientWho {
+  t: 'who';
+}
+
+export type ClientMessage =
+  ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty | ClientWho;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -447,6 +454,20 @@ export interface ServerPartyVitals {
   vitals: NetPartyVital[];
 }
 
+/** One online player in the /who roster (identity only — no position). */
+export interface NetWhoEntry {
+  name: string;
+  level: number;
+  /** CharacterClass value as a string. */
+  cls: string;
+}
+
+/** The current online-player roster, in reply to a ClientWho (capped server-side). */
+export interface ServerWho {
+  t: 'who';
+  players: NetWhoEntry[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -458,6 +479,7 @@ export type ServerMessage =
   | ServerPartyState
   | ServerPartyInvite
   | ServerPartyVitals
+  | ServerWho
   | ServerPong
   | ServerError
   | ServerChat;
@@ -613,6 +635,8 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (o.to !== undefined) chat.to = o.to;
       return chat;
     }
+    case 'who':
+      return { t: 'who' };
     case 'party': {
       if (!isString(o.action) || !PARTY_ACTIONS.includes(o.action)) return null;
       // A target name (invite / kick) is optional here; the server validates + caps it.
@@ -869,6 +893,10 @@ export function decodeServer(raw: string): ServerMessage | null {
       }
       return { t: 'partyVitals', tick: o.tick, vitals: o.vitals };
     }
+    case 'who': {
+      if (!Array.isArray(o.players) || !o.players.every(isNetWhoEntry)) return null;
+      return { t: 'who', players: o.players };
+    }
     default:
       return null;
   }
@@ -892,4 +920,10 @@ function isNetPartyVital(v: unknown): v is NetPartyVital {
     isString(o.resourceKind) &&
     isBool(o.dead)
   );
+}
+
+function isNetWhoEntry(v: unknown): v is NetWhoEntry {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return isString(o.name) && isFiniteNumber(o.level) && isString(o.cls);
 }

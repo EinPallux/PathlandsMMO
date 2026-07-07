@@ -184,4 +184,19 @@ describe('chat', () => {
     a.close();
     b.close();
   });
+
+  it('/who returns the online roster (name + level + class) to the requester', async () => {
+    const [a, b] = await twoJoined();
+    a.who();
+    await until(() => a.lastWho !== null, 3000, 'roster arrives');
+    expect(new Set(a.lastWho!.map((p) => p.name))).toEqual(new Set(['Alia', 'Boro']));
+    const boro = a.lastWho!.find((p) => p.name === 'Boro')!;
+    expect(boro.cls).toBe('warrior');
+    expect(boro.level).toBe(5);
+    // Only the requester is answered — B didn't ask, so it gets no roster frame.
+    await sleep(150);
+    expect(b.lastWho).toBeNull();
+    a.close();
+    b.close();
+  });
 });
