@@ -270,6 +270,18 @@ export class Game {
           system: false,
           emote: line.emote,
         }),
+      onParty: (st) =>
+        useStore.getState().setParty({
+          leaderId: st.leaderId,
+          selfId: st.selfId,
+          members: st.members.map((m) => ({
+            id: m.id,
+            name: m.name,
+            cls: m.cls,
+            level: m.level,
+          })),
+        }),
+      onInvite: (inv) => useStore.getState().setPartyInvite(inv),
       ...(onAuthError !== undefined ? { onAuthError } : {}),
     });
     this.net = net;
@@ -283,8 +295,8 @@ export class Game {
       drainFx: () => net.drainFx(),
       send: (intent) => net.sendIntent(intent),
     });
-    // Fresh session: clear any scrollback left from a previous game instance.
-    useStore.setState({ chat: [], chatTyping: false });
+    // Fresh session: clear any scrollback + party state left from a previous game instance.
+    useStore.setState({ chat: [], chatTyping: false, party: null, partyInvite: null });
     net.connect();
 
     this.effectiveVD = viewDist;
@@ -304,6 +316,28 @@ export class Game {
     this.controller.teleport(x, y, z);
     this.camera.syncFreeToPlayer(x, y, z);
     this.accumulator = 0;
+  }
+
+  /**
+   * Invite a player to the party by (case-insensitive) name. We resolve the name against the
+   * players currently visible to us (interest-filtered — you invite people near you) to get the
+   * unambiguous SESSION id the wire uses, then send it. An unmatched name gets a local notice.
+   */
+  private inviteByName(name: string): void {
+    const query = name.trim().toLowerCase();
+    if (query.length === 0 || this.net === null) return;
+    const match = this.net.remotePlayers().find((p) => p.name.toLowerCase() === query);
+    if (match === undefined) {
+      useStore.getState().pushChat({
+        from: '',
+        text: `No player named “${name.trim().slice(0, 24)}” is nearby to invite.`,
+        self: false,
+        system: true,
+        emote: false,
+      });
+      return;
+    }
+    this.net.partyInvite(match.id);
   }
 
   private onCanvasClick = (e: MouseEvent): void => {
@@ -362,6 +396,11 @@ export class Game {
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
       sendChat: (text) => this.net?.sendChat(text),
+      partyInvite: (name) => this.inviteByName(name),
+      partyAccept: () => this.net?.partyAccept(),
+      partyDecline: () => this.net?.partyDecline(),
+      partyLeave: () => this.net?.partyLeave(),
+      partyKick: (id) => this.net?.partyKick(id),
     };
     useStore.getState().setCommands(commands);
   }

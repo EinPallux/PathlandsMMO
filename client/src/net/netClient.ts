@@ -29,6 +29,7 @@ import {
   type NetCombatEvent,
   type NetCombatSelf,
   type NetEntity,
+  type NetPartyMember,
   type NetPlayer,
   type ServerKill,
   type ServerSelf,
@@ -60,6 +61,21 @@ export interface ChatEvent {
   emote: boolean;
 }
 
+/** The party roster as the UI needs it: the leader, the members, and which member is us. */
+export interface PartyEvent {
+  leaderId: string;
+  /** Empty ⇒ we are solo (the UI hides the party panel). */
+  members: NetPartyMember[];
+  /** Our own session id, so the UI can flag "you" + gate leader-only controls. */
+  selfId: string;
+}
+
+/** A pending party invite awaiting our accept/decline, or null once resolved/cleared. */
+export interface InviteEvent {
+  fromId: string;
+  fromName: string;
+}
+
 /** Connection status surfaced to the UI (indicator, reconnect notice, latency). */
 export interface NetStatus {
   phase: NetPhase;
@@ -84,6 +100,10 @@ export interface NetClientOptions {
   onAuthError?: () => void;
   /** Called for every chat line the server broadcasts (our own included). */
   onChat?: (line: ChatEvent) => void;
+  /** Called whenever our party roster changes (empty members ⇒ we went solo). */
+  onParty?: (state: PartyEvent) => void;
+  /** Called when a party invite arrives (payload) or is cleared on disconnect (null). */
+  onInvite?: (invite: InviteEvent | null) => void;
 }
 
 interface Sample {
@@ -280,6 +300,16 @@ export class NetClient {
           emote: msg.emote === true,
         });
         break;
+      case 'partyState':
+        this.opts.onParty?.({
+          leaderId: msg.leaderId,
+          members: msg.members,
+          selfId: this.you ?? '',
+        });
+        break;
+      case 'partyInvite':
+        this.opts.onInvite?.({ fromId: msg.fromId, fromName: msg.fromName });
+        break;
       default:
         break;
     }
@@ -366,6 +396,10 @@ export class NetClient {
     this.lastCombatSelf = null;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
+    // Parties are session-scoped: a dropped session is out of its party (a reconnect is a
+    // fresh session the server won't re-group), so clear the UI's roster + any pending invite.
+    this.opts.onParty?.({ leaderId: '', members: [], selfId: '' });
+    this.opts.onInvite?.(null);
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
       this.scheduleReconnect();
@@ -438,6 +472,34 @@ export class NetClient {
   sendChat(text: string): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'chat', text });
+  }
+
+  // --- party (Phase 6 §Social) ---
+
+  /** Send a party control action (dropped if not connected). invite/kick target a SESSION id. */
+  private sendParty(
+    action: 'invite' | 'accept' | 'decline' | 'leave' | 'kick',
+    target?: string,
+  ): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'party', action, ...(target !== undefined ? { target } : {}) });
+  }
+  /** Invite a player (by their session id, which we hold from the roster/snapshot) to the party. */
+  partyInvite(id: string): void {
+    this.sendParty('invite', id);
+  }
+  partyAccept(): void {
+    this.sendParty('accept');
+  }
+  partyDecline(): void {
+    this.sendParty('decline');
+  }
+  partyLeave(): void {
+    this.sendParty('leave');
+  }
+  /** Kick a member (leader-only, enforced server-side) by their session id. */
+  partyKick(id: string): void {
+    this.sendParty('kick', id);
   }
 
   /** The newest authoritative self-state (consumed once), or null if none pending. */

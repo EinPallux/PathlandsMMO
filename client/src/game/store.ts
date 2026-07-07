@@ -338,6 +338,36 @@ export interface GameCommands {
   travelTo(id: string): void;
   /** Multiplayer chat: send a line to the server (no-op in single-player). */
   sendChat(text: string): void;
+  /** Party: invite a nearby player by name (resolved to a session id client-side), accept /
+   *  decline a pending invite, leave the party, kick a member (leader-only) by session id. */
+  partyInvite(name: string): void;
+  partyAccept(): void;
+  partyDecline(): void;
+  partyLeave(): void;
+  partyKick(id: string): void;
+}
+
+/** One party member as the roster panel renders it (Phase 6 §Social). */
+export interface PartyMemberUi {
+  id: string;
+  name: string;
+  cls: string;
+  level: number;
+}
+
+/** The local player's party. `null` ⇒ solo (the panel is hidden). */
+export interface PartyUi {
+  /** Session id of the leader (the only member who may kick). */
+  leaderId: string;
+  /** Our own session id — flags "you" in the list and gates the leader-only controls. */
+  selfId: string;
+  members: PartyMemberUi[];
+}
+
+/** A pending invite awaiting the player's accept/decline (drives the invite toast). */
+export interface PartyInviteUi {
+  fromId: string;
+  fromName: string;
 }
 
 /** Multiplayer connection phase for the HUD indicator (Phase 6). */
@@ -379,6 +409,10 @@ export interface UiState {
   chat: ChatLine[];
   /** True while the chat input is focused — the game loop suspends keyboard gameplay input. */
   chatTyping: boolean;
+  /** The local player's party (Phase 6 §Social); null ⇒ solo. */
+  party: PartyUi | null;
+  /** A pending party invite awaiting accept/decline; null ⇒ none. Drives the invite toast. */
+  partyInvite: PartyInviteUi | null;
 
   fps: number;
   drawCalls: number;
@@ -458,6 +492,10 @@ export interface UiState {
   pushChat: (line: Omit<ChatLine, 'key'>) => void;
   /** Set the chat-input-focused flag that gates gameplay keyboard input. */
   setChatTyping: (typing: boolean) => void;
+  /** Replace the party roster (empty members ⇒ solo → stored as null, clearing any invite). */
+  setParty: (p: PartyUi) => void;
+  /** Set (or clear, with null) the pending party invite. */
+  setPartyInvite: (i: PartyInviteUi | null) => void;
   toggleMap: () => void;
   toggleDev: () => void;
   toggleChar: () => void;
@@ -510,6 +548,8 @@ export const useStore = create<UiState>((set) => ({
   net: null,
   chat: [],
   chatTyping: false,
+  party: null,
+  partyInvite: null,
   ready: false,
   loadProgress: 0,
 
@@ -590,6 +630,11 @@ export const useStore = create<UiState>((set) => ({
       return { chat: next };
     }),
   setChatTyping: (chatTyping) => set({ chatTyping }),
+  setParty: (p) =>
+    // Empty roster ⇒ solo. Forming/refreshing a real party also dismisses any stale invite
+    // (you can't hold a pending invite while grouped — the server rejects that).
+    set(p.members.length > 0 ? { party: p, partyInvite: null } : { party: null }),
+  setPartyInvite: (partyInvite) => set({ partyInvite }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
   toggleChar: () => set((st) => ({ showChar: !st.showChar })),

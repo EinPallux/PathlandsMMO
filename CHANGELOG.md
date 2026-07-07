@@ -4,6 +4,37 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 19 — Parties, client UI (2026-07-07)
+
+The client half of grouping: you can now form, see, and manage a party in-game. Verified on
+the VPS (client-visual slice; no protocol change — it rides the Part 18 party channel).
+
+#### Added
+
+- **Party ingestion + senders** (`client/src/net/netClient.ts`): the client now decodes the
+  `partyState` (→ `onParty`) and `partyInvite` (→ `onInvite`) frames and exposes `partyInvite(id)`
+  / `partyAccept()` / `partyDecline()` / `partyLeave()` / `partyKick(id)` senders. A disconnect
+  clears the roster + any pending invite (parties are session-scoped — a reconnect is a fresh,
+  ungrouped session).
+- **Store party slice** (`client/src/game/store.ts`): `party: PartyUi | null` (leader + members +
+  our own id; empty roster ⇒ solo ⇒ `null`) and `partyInvite: PartyInviteUi | null`. Forming a
+  party dismisses any stale pending invite. Five new `GameCommands` (`partyInvite` by name /
+  `partyAccept` / `partyDecline` / `partyLeave` / `partyKick` by id).
+- **`client/src/ui/PartyPanel.tsx`**: a compact roster under the connection pill — a class-tinted
+  dot, name, level, and the leader's crown per member, with a **Leave** control and a **✕ kick**
+  beside each other member when you are the leader. Hidden when solo. (Live ally HP/resource
+  frames are the next slice — those need the server to replicate members' vitals to each other;
+  only your OWN combat state is sent today. The row is built to grow a vitals bar.)
+- **`client/src/ui/PartyInvite.tsx`**: an invite toast above the hotbar (`"<name> invites you to a
+party."`) with Accept / Decline; acting sends the choice and clears the prompt.
+- **Chat party commands** (`client/src/ui/Chat.tsx`): `/invite <name>` (alias `/pinvite`) and
+  `/pleave`, handled locally (never a raw command hits the wire). `/invite` resolves the name
+  against the players currently visible to us (interest-filtered) to the unambiguous SESSION id
+  the wire uses; an unmatched name gets a local notice. `/help` now lists the party commands.
+- **Wiring** (`client/src/game/game.ts`, `client/src/ui/App.tsx`): the `NetClient` `onParty` /
+  `onInvite` callbacks feed the store; `inviteByName` does the name→id resolution; the two panels
+  mount in the HUD; a fresh session clears the party slice.
+
 ### Part 18 — Parties, server foundation (2026-07-06)
 
 The first slice of grouping: players can form a party (up to 4). Server-authoritative + fully

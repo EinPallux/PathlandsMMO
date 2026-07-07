@@ -6,6 +6,28 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 19: Parties, client UI (Social layer).**
+> The client half of grouping: you can now **form, see, and manage a party in-game**. It rides the
+> Part 18 party channel unchanged (no protocol change) — a client-visual slice, VPS-tested. Landed:
+>
+> - **Party ingestion + senders** (`client/src/net/netClient.ts`): decodes `partyState` (→ `onParty`)
+>   and `partyInvite` (→ `onInvite`); exposes `partyInvite(id)` / `partyAccept` / `partyDecline` /
+>   `partyLeave` / `partyKick(id)`. A disconnect clears the roster + pending invite (parties are
+>   session-scoped — a reconnect is a fresh, ungrouped session).
+> - **Store slice + panels**: `party` (leader + members + our id; solo ⇒ `null`) and `partyInvite`.
+>   **`PartyPanel`** shows the roster under the connection pill (class dot, name, level, leader crown)
+>   with **Leave** and a leader-only **✕ kick** per member; **`PartyInvite`** is an accept/decline
+>   toast above the hotbar.
+> - **Chat commands** (`Chat.tsx`): `/invite <name>` (alias `/pinvite`) + `/pleave`, resolved
+>   locally; `/invite` maps the name → the unambiguous SESSION id the wire uses against the players
+>   currently visible to us (interest-filtered), with a local notice on no match. `/help` lists them.
+>
+> **386 tests green**; `pnpm typecheck` + `lint` + `build` (287 KB gzip) clean. _Next: the server
+> replicates party members' **vitals** to each other → live ally HP/resource frames in the panel;
+> then shared kill XP + loot round-robin for party members; then group scaling in Hollows._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 18: Parties, server foundation (Social layer).**
 > The first slice of **grouping** — players can now form a party (up to 4) so the shared world
 > becomes play-_with_, not just play-_near_. Server-authoritative + fully headless-tested; the
@@ -18,11 +40,11 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >   departing leader **hands off** to the next member), `kick` (leader-only), and `remove`
 >   (disconnect: clears invites in + out, then leaves). Max size **4**.
 > - **Party channel** (`NET_PROTOCOL_VERSION` → **11**): `ClientParty`
->   (invite/accept/decline/leave/kick + a target NAME the server resolves authoritatively —
->   no client-supplied id is trusted), `ServerPartyState` (the recipient's roster —
->   members + leader, empty ⇒ solo), `ServerPartyInvite`. The gateway routes the actions,
->   delivers the invite, and re-broadcasts each affected member's roster on every change;
->   feedback (invite sent / party full / …) rides the chat channel as a system line.
+>   (invite/accept/decline/leave/kick; invite/kick carry the target's **session id** — unambiguous
+>   where display names are not — validated server-side), `ServerPartyState` (the recipient's roster
+>   — members + leader, empty ⇒ solo), `ServerPartyInvite`. The gateway routes the actions,
+>   delivers the invite (rate-gating invites, the amplification vector), and re-broadcasts each
+>   affected member's roster on every change; feedback rides the chat channel as a system line.
 > - **Tests** (+10): the `PartyManager` state machine (formation, self / full / busy rejection,
 >   stale-invite, disband, leader handoff, leader-only kick, disconnect cleanup) + over-the-wire
 >   (two clients form a party by invite→accept and see the roster; it disbands on leave; a

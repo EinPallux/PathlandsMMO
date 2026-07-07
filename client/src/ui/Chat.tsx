@@ -74,17 +74,38 @@ export function Chat(): JSX.Element | null {
     inputRef.current?.blur();
   };
 
-  // Route a line: a `/command` is an emote (or the /emotes help). Validate against the
-  // shared table locally so a typo gets instant feedback and never hits the server; a
-  // valid emote or plain say line goes out (the server re-validates + formats emotes).
+  // Route a line: a `/command` is a party action, an emote, or the help listing. Party +
+  // emote commands are handled locally (instant feedback, never a raw command hits the wire);
+  // a valid emote or plain say line goes out (the server re-validates + formats emotes).
   const send = (text: string): void => {
     const capped = text.slice(0, MAX_CHAT_LEN);
     if (capped.startsWith('/')) {
-      const cmd = (capped.slice(1).split(/\s+/)[0] ?? '').toLowerCase();
+      const raw = capped.slice(1).split(/\s+/)[0] ?? '';
+      const cmd = raw.toLowerCase();
+      // Party: /invite <name> (alias /pinvite) forms/adds; /pleave drops you from the party.
+      if (cmd === 'invite' || cmd === 'pinvite') {
+        const name = capped.slice(1 + raw.length).trim();
+        if (name.length === 0) {
+          pushChat({
+            from: '',
+            text: 'Usage: /invite <player name>',
+            self: false,
+            system: true,
+            emote: false,
+          });
+          return;
+        }
+        commands?.partyInvite(name);
+        return;
+      }
+      if (cmd === 'pleave') {
+        commands?.partyLeave();
+        return;
+      }
       if (cmd === 'emote' || cmd === 'emotes' || cmd === 'help') {
         pushChat({
           from: '',
-          text: `Emotes: ${emoteCommands()
+          text: `Party: /invite <name> · /pleave  ·  Emotes: ${emoteCommands()
             .map((c) => '/' + c)
             .join('  ')}`,
           self: false,
@@ -96,7 +117,7 @@ export function Chat(): JSX.Element | null {
       if (findEmote(cmd) === null) {
         pushChat({
           from: '',
-          text: `Unknown command "/${cmd}". Type /emotes for the list.`,
+          text: `Unknown command "/${cmd}". Type /help for the list.`,
           self: false,
           system: true,
           emote: false,
@@ -196,7 +217,7 @@ export function Chat(): JSX.Element | null {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             onBlur={() => setActive(false)}
-            placeholder="Say something…  (/emotes · Enter to send, Esc to cancel)"
+            placeholder="Say something…  (/help · Enter to send, Esc to cancel)"
             style={{
               width: '100%',
               boxSizing: 'border-box',
