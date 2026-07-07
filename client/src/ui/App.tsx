@@ -25,7 +25,6 @@ import { GatherPrompt } from './GatherPrompt.js';
 import { ProfessionsPanel } from './ProfessionsPanel.js';
 import { CraftingPanel } from './CraftingPanel.js';
 import { Journal } from './Journal.js';
-import { BankPanel } from './BankPanel.js';
 import { BountyBoard } from './BountyBoard.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { FirstTimeTips } from './FirstTimeTips.js';
@@ -155,7 +154,6 @@ export function App(): JSX.Element {
         {ready && <ProfessionsPanel />}
         {ready && <CraftingPanel />}
         {ready && <Journal />}
-        {ready && <BankPanel />}
         {ready && <BountyBoard />}
         {ready && <SettingsPanel />}
         {ready && <FirstTimeTips />}

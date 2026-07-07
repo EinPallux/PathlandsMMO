@@ -8,9 +8,24 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 > **Scope change (2026-07-07):** the launch plan is refocused. **DESCOPED (cut from 1.0):** guilds,
 > friends list, duels, the 200-client load test, password reset / email verification, character
-> import. **NEW launch priorities:** everything (player data + all content — items/enemies/NPCs/
+> import. **Also scrapped entirely:** the Waymeet **Bank**, **Mail**, and any dedicated
+> player-to-player **trade window** — players exchange goods by **dropping items on the ground**
+> (a dropped stack is a world item anyone nearby can pick up; it despawns after 10 minutes).
+> **NEW launch priorities:** everything (player data + all content — items/enemies/NPCs/
 > quests) in **PostgreSQL** so a future **admin/map editor** can edit the world; **GM tooling**;
-> server-authoritative **quests / professions / economy**; **player trade**; **shared quest credit**.
+> server-authoritative **quests / professions / economy**; **droppable ground items**; **shared quest credit**.
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 28: Scrap Bank, Mail & Trading.**
+> Owner call: the Waymeet Bank (item vault + mail inbox) and any dedicated trade window are
+> **removed**. There is no item storage beyond the character's bag; player exchange happens by
+> **dropping items on the ground** (world items, 10-minute despawn — implemented next). Deleted
+> `shared/data/mail.ts`, `client/ui/BankPanel.tsx`, the `toggleBank` keybind, `BANK_SIZE`, and all
+> bank/mail state + commands from the client store, game loop, and `CombatDirector`. Save v8's
+> `bank`/`mail` fields are dropped on load (the version marker stays as an inert migration step).
+> **410 tests green.** _Next: droppable ground items (the trade replacement), then the
+> quests / professions / economy server-authority migration + shared quest turn-in credit._
 >
 > ---
 >

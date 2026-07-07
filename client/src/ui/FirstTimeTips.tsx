@@ -60,7 +60,7 @@ const TIPS: Tip[] = [
   {
     title: 'The wider world',
     body: (k) =>
-      `Open the map with ${keyLabel(k.toggleMap ?? 'KeyM')}. Attune glowing Waystones (press ${keyLabel(k.interact ?? 'KeyE')}) to unlock fast travel between them. Everything else — professions, the bank, mounts — you'll meet as you go. Press ${keyLabel('Escape')} for Settings.`,
+      `Open the map with ${keyLabel(k.toggleMap ?? 'KeyM')}. Attune glowing Waystones (press ${keyLabel(k.interact ?? 'KeyE')}) to unlock fast travel between them. Everything else — professions, mounts, bounties — you'll meet as you go. Press ${keyLabel('Escape')} for Settings.`,
   },
 ];
 

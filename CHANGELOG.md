@@ -5,9 +5,37 @@ All notable changes to Pathlands are documented here, per working session. Forma
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
 > **Scope change (2026-07-07):** cut from 1.0 — guilds, friends, duels, 200-client load test,
-> password reset / email verification, character import. Refocused on: everything (player data +
+> password reset / email verification, character import. **Also scrapped: Bank, Mail & Trading**
+> (players trade by dropping items on the ground). Refocused on: everything (player data +
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
-> **quests / professions / economy**, **player trade**, **shared quest credit**.
+> **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
+
+### Part 28 — Scrap Bank, Mail & Trading (2026-07-07)
+
+Owner call: the Waymeet **Bank** (item vault) and **Mail** inbox are removed, and no dedicated
+player-to-player **trade window** will ship. Player exchange happens by **dropping items on the
+ground** — a dropped stack becomes a world item any nearby player can pick up, despawning after
+**10 minutes** (the ground-items system lands in the next part).
+
+#### Removed
+
+- **`shared/data/mail.ts`** and its test — the `MailLetter` schema, `STARTER_MAIL`, and the
+  level-5 `WAYMEET_WELCOME` letter are gone.
+- **`client/src/ui/BankPanel.tsx`** — the Vault/Mail panel and its **B** toggle.
+- **`BANK_SIZE`** (`shared/data/items.ts`), the **`toggleBank`** keybind (`shared/data/keybinds.ts`),
+  and the bank/mail state, setters, and commands (`depositItem` / `withdrawItem` / `claimMail`,
+  `bank` / `mail` / `showBank`, `setBank` / `setMail` / `toggleBank`) from `client/game/store.ts`.
+- **`CombatDirector`** bank/mail internals: the `bank`/`mail` fields, the `characterBank`/
+  `characterMail` getters, `depositItem`/`withdrawItem`/`claimMail`/`deliverMail`/`publishBankMail`,
+  the welcome-mail delivery on level-up, and the `bank`/`mail` snapshot fields in `game.ts`.
+
+#### Changed
+
+- **Save v8** is now an inert migration step: a stored character's stale `bank`/`mail` fields are
+  ignored on load (`CharacterSaveV8 = CharacterSaveV7`), so old saves upgrade cleanly with no data
+  loss for anything else. `SAVE_VERSION` is unchanged.
+- Docs (GDD §14, ARCHITECTURE §3, WORLD §3.6, ROADMAP) updated to describe ground-drop trading and
+  mark the old bank/mailbox buildings as decorative geometry only.
 
 ### Part 27 — Game content in PostgreSQL (2026-07-07)
 

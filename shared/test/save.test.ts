@@ -57,17 +57,6 @@ describe('save schema', () => {
           deeds: { progress: { d_first_blood: 4 }, completed: ['d_wayfarer'] },
           mounts: ['wolf', 'frostWolf'],
           activeMount: 'frostWolf',
-          bank: [{ item: { id: 'stored', name: 'Stored Blade' } as never, qty: 1 }],
-          mail: [
-            {
-              id: 'mail_welcome',
-              sender: 'Elder Rowan of Brookhollow',
-              subject: 'The Road Awaits',
-              body: 'Take this purse.',
-              gold: 25,
-              claimed: false,
-            },
-          ],
           bounties: {
             day: 20275,
             active: [{ id: 'bh_boars', count: 3 }],
@@ -99,7 +88,7 @@ describe('save schema', () => {
     const s = migrate(old).settings;
     expect(s.viewDistance).toBe(6);
     expect(s.keybinds.toggleMap).toBe('KeyN'); // saved override kept
-    expect(s.keybinds.toggleBank).toBe(DEFAULT_KEYBINDS.toggleBank); // rest defaulted
+    expect(s.keybinds.toggleBounties).toBe(DEFAULT_KEYBINDS.toggleBounties); // rest defaulted
   });
 
   it('migrates a pre-v12 save, defaulting an empty learned-recipes list (keeping any saved)', () => {
@@ -120,24 +109,28 @@ describe('save schema', () => {
     const v8 = {
       version: 8,
       account: { pathPoints: 0 },
-      characters: [{ name: 'Idle', class: 'priest', bank: [], mail: [] }],
+      characters: [{ name: 'Idle', class: 'priest' }],
     };
     const c = migrate(v8).characters[0]!;
     expect(c.bounties).toEqual({ day: 0, active: [], completed: [] });
   });
 
-  it('migrates a v7 (pre-bank/mail) save, defaulting a vault + starter inbox', () => {
-    const v7 = {
-      version: 7,
+  it('drops stale bank/mail fields from an old save (both features scrapped)', () => {
+    const v8 = {
+      version: 8,
       account: { pathPoints: 0 },
-      characters: [{ name: 'Vaultless', class: 'mage', mounts: ['wolf'], activeMount: 'wolf' }],
+      characters: [
+        {
+          name: 'Hoarder',
+          class: 'mage',
+          bank: [{ item: { id: 'stored' }, qty: 1 }],
+          mail: [{ id: 'mail_welcome', gold: 25, claimed: false }],
+        },
+      ],
     };
-    const c = migrate(v7).characters[0]!;
-    expect(c.bank).toEqual([]);
-    // Pre-mail saves receive the starter inbox on upgrade.
-    expect(c.mail.length).toBeGreaterThan(0);
-    expect(c.mail.every((m) => m.claimed === false)).toBe(true);
-    expect(c.mail.some((m) => m.id === 'mail_welcome')).toBe(true);
+    const c = migrate(v8).characters[0]! as unknown as Record<string, unknown>;
+    expect(c.bank).toBeUndefined();
+    expect(c.mail).toBeUndefined();
   });
 
   it('migrates a v6 (pre-mount) save, defaulting no mounts', () => {

@@ -193,8 +193,6 @@ export class Game {
             inventory: character.inventory,
             equipment: character.equipment,
             discoveredWaystones: character.discoveredWaystones,
-            bank: character.bank,
-            mail: character.mail,
           }
         : undefined,
     );
@@ -439,9 +437,6 @@ export class Game {
       buyMount: () => this.mount.buyMount(),
       toggleMount: () => this.mount.toggle(),
       selectMount: (id) => this.mount.selectMount(id),
-      depositItem: (index) => this.combat.depositItem(index),
-      withdrawItem: (index) => this.combat.withdrawItem(index),
-      claimMail: (id) => this.combat.claimMail(id),
       acceptBounty: (id) => this.bounties.accept(id),
       turnInBounty: (id) => this.bounties.turnIn(id),
       interactWaystone: () => void this.combat.interactWaystone(),
@@ -540,7 +535,6 @@ export class Game {
     if (tapped('toggleProfessions')) store.toggleProfessions();
     if (tapped('toggleCrafting')) store.toggleCrafting();
     if (tapped('toggleJournal')) store.toggleJournal();
-    if (tapped('toggleBank')) store.toggleBank();
     if (tapped('toggleBounties')) {
       const p = this.controller.physics;
       this.bounties.toggle(p.x, p.z);
@@ -916,8 +910,6 @@ export class Game {
       deeds: this.meta.state.deeds,
       mounts: this.mount.state.mounts,
       activeMount: this.mount.state.activeMount,
-      bank: this.combat.characterBank,
-      mail: this.combat.characterMail,
       bounties: this.bounties.state,
       x: ph.x,
       y: ph.y,

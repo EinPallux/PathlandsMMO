@@ -236,11 +236,6 @@ export interface JournalUi {
   }>;
 }
 
-export interface BankUi {
-  size: number;
-  items: ItemStackSave[];
-}
-
 export interface BountyUi {
   hub: string;
   day: number;
@@ -255,19 +250,6 @@ export interface BountyUi {
     state: 'available' | 'active' | 'ready' | 'done';
   }>;
   activeCount: number;
-}
-
-export interface MailUi {
-  letters: Array<{
-    id: string;
-    sender: string;
-    subject: string;
-    body: string;
-    gold: number;
-    claimed: boolean;
-  }>;
-  /** Letters with an unclaimed gold gift (drives the mail badge). */
-  unread: number;
 }
 
 export interface MountUi {
@@ -320,10 +302,6 @@ export interface GameCommands {
   buyMount(): void;
   toggleMount(): void;
   selectMount(id: string): void;
-  /** Bank + mail: deposit a bag item, withdraw a vault item, claim a letter's gift. */
-  depositItem(index: number): void;
-  withdrawItem(index: number): void;
-  claimMail(id: string): void;
   /** Bounties: accept a posted bounty, turn a completed one in. */
   acceptBounty(id: string): void;
   turnInBounty(id: string): void;
@@ -501,9 +479,6 @@ export interface UiState {
   journal: JournalUi | null;
   showJournal: boolean;
   mount: MountUi | null;
-  bank: BankUi | null;
-  mail: MailUi | null;
-  showBank: boolean;
   bounties: BountyUi | null;
   showBounties: boolean;
   /** Rebindable action → KeyboardEvent.code (read live by the game each frame). */
@@ -553,9 +528,6 @@ export interface UiState {
   setJournal: (j: JournalUi) => void;
   toggleJournal: () => void;
   setMount: (m: MountUi) => void;
-  setBank: (b: BankUi) => void;
-  setMail: (m: MailUi) => void;
-  toggleBank: () => void;
   setBounties: (b: BountyUi) => void;
   toggleBounties: () => void;
   setKeybinds: (k: Record<string, string>) => void;
@@ -643,9 +615,6 @@ export const useStore = create<UiState>((set) => ({
   journal: null,
   showJournal: false,
   mount: null,
-  bank: null,
-  mail: null,
-  showBank: false,
   bounties: null,
   showBounties: false,
   keybinds: defaultKeybinds(),
@@ -711,9 +680,6 @@ export const useStore = create<UiState>((set) => ({
   setJournal: (journal) => set({ journal }),
   toggleJournal: () => set((st) => ({ showJournal: !st.showJournal })),
   setMount: (mount) => set({ mount }),
-  setBank: (bank) => set({ bank }),
-  setMail: (mail) => set({ mail }),
-  toggleBank: () => set((st) => ({ showBank: !st.showBank })),
   setBounties: (bounties) => set({ bounties }),
   toggleBounties: () => set((st) => ({ showBounties: !st.showBounties })),
   setKeybinds: (keybinds) => set({ keybinds }),
