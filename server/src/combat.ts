@@ -354,6 +354,16 @@ export class ServerCombat {
       rebuilt.yaw = e.yaw;
       rebuilt.targetId = e.targetId;
       rebuilt.autoAttack = e.autoAttack;
+      // A player can cross a level boundary WHILE DEAD (a lingering DoT lands a killing blow
+      // after they died). `makePlayerEntity` returns a fresh, ALIVE entity — so preserve the
+      // death state, or the rebuild would silently resurrect them in place and bypass the whole
+      // Waystone-respawn/freeze flow (reviveReleasedPlayers only acts on a `dead` entity). The
+      // new-level max HP is applied when they actually revive.
+      if (e.dead) {
+        rebuilt.dead = true;
+        rebuilt.hp = 0;
+        rebuilt.respawnTick = e.respawnTick;
+      }
       this.state.entities.set(e.id, rebuilt);
     }
   }

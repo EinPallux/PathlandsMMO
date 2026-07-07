@@ -241,6 +241,25 @@ describe('server-authoritative player combat — ServerCombat', () => {
     expect(combat.isDead('P')).toBe(false);
   });
 
+  it('does not resurrect a dead player who levels up mid-death (lingering-DoT kill)', () => {
+    // Regression (Stage 2c-4 review): a player can cross a level threshold WHILE DEAD when a DoT
+    // they applied before dying lands the killing blow. The level-up entity rebuild must NOT
+    // resurrect them in place (which would bypass the Waystone respawn + freeze).
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.addPlayer('P', 'Boro', 'warrior', 1, boar.x, boar.y, boar.z, totalXpToReachLevel(2) - 1);
+    const p = combat.state.entities.get('P')!;
+    p.hp = 0;
+    p.dead = true;
+    // A kill credited to the dead player awards enough XP to cross the threshold (the wire form
+    // of a lingering DoT's killing blow — an `xp` event with the dead player as the earner).
+    combat.state.events.push({ type: 'xp', entityId: 'P', amount: 100_000, enemyLevel: 1 });
+    combat.step();
+    expect(combat.progressionOf('P')!.level).toBeGreaterThan(1); // XP awarded (leveled up)
+    expect(combat.isDead('P')).toBe(true); // …but still a corpse — no in-place resurrection
+    expect(combat.state.entities.get('P')!.hp).toBe(0);
+  });
+
   it('freezes a dead player’s movement so a corpse can’t walk (Stage 2c-4)', () => {
     const sim = new ServerSim(createServerWorld());
     const p = sim.join('Boro', 'warrior', 6);
