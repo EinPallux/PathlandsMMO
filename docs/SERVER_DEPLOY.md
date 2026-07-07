@@ -1,24 +1,26 @@
-# Deploying the Pathlands Game Server (Phase 6)
+# Deploying Pathlands (Phase 6)
 
-This runs the **authoritative multiplayer server** on an Ubuntu VPS (e.g. Hostinger),
-behind nginx with TLS so browsers can reach it over `wss://`. Pathlands is **MMO-only** —
-the client always connects to a server. When nginx serves the static client **and**
-reverse-proxies the WebSocket on the same host (the setup below), the client's default
-server URL is its own origin, so no build-time configuration is needed. You only set
-`VITE_PATHLANDS_SERVER` when the client is hosted **separately** from the server (e.g. on
-Vercel, pointed at `wss://play.yourdomain.com`).
+This runs the whole game on an Ubuntu VPS (e.g. Hostinger): the **authoritative multiplayer
+server** plus **nginx with TLS** that serves the static client **and** reverse-proxies the
+WebSocket + account API on the **same origin**. One `docker compose up` builds and starts
+everything — the VPS needs only Docker (the client is built inside the image, no host Node).
 
-> Scope: as of Phase 6 Parts 1–4 the server is authoritative over **player movement**
-> (two players see each other move, reconciled + interest-managed) and has **accounts +
-> durable character persistence** (register/login, cloud-saved characters). Server-side
-> combat and the client login UI land in later parts — this deploy is what you need for the
-> first multiplayer movement test.
+Pathlands is **MMO-only** — the client always connects to a server. Because the same nginx
+serves the client and proxies the WebSocket, the client defaults its server URL to its own
+origin, so **no build config is needed**. You only set `VITE_PATHLANDS_SERVER` when the client
+is hosted **separately** (e.g. on Vercel, pointed at `wss://play.yourdomain.com`).
+
+> Scope: the server is authoritative over **movement + combat** (enemies, casts, XP, loot,
+> death/respawn), has **accounts + durable character persistence** (register/login, cloud-saved
+> characters), and a full **social layer** (chat, emotes, parties, whispers, `/who`). This deploy
+> is the current multiplayer build.
 
 ---
 
 ## 0. Prerequisites
 
-- An Ubuntu VPS with a public IP, ports **80** and **443** open.
+- An Ubuntu VPS with a public IP, ports **80** and **443** open, and ideally **≥ 2 GB RAM**
+  (the client build runs Vite in the image; on a 1 GB box add swap — see the note in step 5).
 - A domain or subdomain pointed at the VPS — an **A record** like
   `play.yourdomain.com → <VPS IP>`.
 - Docker Engine + Compose plugin, and certbot on the host:
@@ -64,13 +66,24 @@ Accounts and characters persist in the `gamedata` Docker volume (the server's `F
 `/data/pathlands.json`), so they survive restarts and redeploys. Back it up with
 `docker run --rm -v pathlandsmmo_gamedata:/d -v "$PWD":/b alpine tar czf /b/gamedata.tgz -C /d .`.
 
-## 5. Start the server + nginx
+## 5. Build + start everything
+
+One command builds the client (inside the `web` image), starts the game server, and starts
+nginx:
 
 ```bash
-sudo docker compose up -d --build
+sudo AUTH_SECRET=$(cat .env | cut -d= -f2-) docker compose up -d --build
+# (or just `sudo docker compose up -d --build` — compose reads .env automatically)
 ```
 
-Verify the server is healthy end-to-end:
+The first build compiles the client with Vite and can take a few minutes. On a **1 GB** VPS
+that step may run out of memory — add a swap file first:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+```
+
+Verify it's healthy end-to-end:
 
 ```bash
 curl https://play.yourdomain.com/healthz     # → ok
@@ -80,33 +93,24 @@ curl https://play.yourdomain.com/status      # → {"status":"ok","players":0,..
 `docker compose logs -f game` should show
 `[pathlands] server listening on ws://0.0.0.0:8080 (20 Hz sim ...)`.
 
-## 6. Build the client
+## 6. Play
 
-The client is a **static build**. When the **same** nginx serves the client and proxies the
-WebSocket (this guide's topology), you need **no** build config — the client defaults its
-server URL to its own origin:
+Open **`https://play.yourdomain.com`** in a browser — the login screen appears. Register an
+account, create a character, and you're in the world. Open a second browser (or an incognito
+window / another device), register a second account, and the two of you should see each other
+move, fight, party (`/invite <name>`), whisper (`/w <name> …`), and chat.
 
-```bash
-pnpm build
-```
+That's the whole test — no separate client build or upload. The client is served by the same
+nginx on the same origin, so it connects back to `wss://play.yourdomain.com` automatically.
 
-Only when the client is hosted **separately** from the server (e.g. on Vercel) do you bake
-in the server URL. It must be `wss://` (an `https://` page cannot open an insecure `ws://`):
-
-```bash
-VITE_PATHLANDS_SERVER=wss://play.yourdomain.com pnpm build
-```
-
-> Accounts are live on the server — `POST /auth/register` and `/auth/login` return a token,
-> and `GET`/`PUT /character` is the bearer-authenticated cloud save. The **client login UI**
-> that uses them ships in the next part; until then the client connects as a guest, and you
-> can exercise accounts directly against the REST API
-> (e.g. `curl -X POST https://play.yourdomain.com/auth/register -d '{"email":"…","password":"…"}'`).
-
-Deploy the resulting `dist/` to the VPS nginx (or Vercel, if built with the server URL —
-see `docs/DEPLOY.md`). Open it in two browsers, register/log in and create a character in
-each, and walk around — each should see the other move and chat.
-
+> **Hosting the client elsewhere (optional).** If you'd rather serve the client from Vercel/CDN
+> and use the VPS only for the server, build the client with the server URL baked in — it must
+> be `wss://` (an `https://` page cannot open an insecure `ws://`) — and deploy the `dist/`:
+>
+> ```bash
+> VITE_PATHLANDS_SERVER=wss://play.yourdomain.com pnpm build   # → dist/  (see docs/DEPLOY.md)
+> ```
+>
 > Pathlands is **MMO-only**: there is no standalone single-player build. The client always
 > requires a reachable server and an account login.
 
@@ -129,14 +133,14 @@ each, and walk around — each should see the other move and chat.
 
 ### TLS renewal
 
-certbot standalone needs port 80 free, so stop nginx for the renewal and restart it after.
-Add a host cron (as root):
+certbot standalone needs port 80 free, so stop the `web` container for the renewal and restart
+it after. Add a host cron (as root):
 
 ```cron
-0 3 * * 1 cd /path/to/PathlandsMMO && docker compose stop nginx && certbot renew --standalone && docker compose start nginx
+0 3 * * 1 cd /path/to/PathlandsMMO && docker compose stop web && certbot renew --standalone && docker compose start web
 ```
 
-(nginx is down for a few seconds once a week during renewal — acceptable for a game server;
+(the site is down for a few seconds once a week during renewal — acceptable for a game server;
 switch to the webroot challenge later if you want zero-downtime renewal.)
 
 ### PostgreSQL (accounts phase, later)

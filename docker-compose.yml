@@ -1,7 +1,8 @@
-# Pathlands MMO — Phase-6 server deployment (ARCH §8). Fronts the Node game server with
-# nginx TLS/wss. See docs/SERVER_DEPLOY.md for the full runbook.
+# Pathlands MMO — Phase-6 deployment (ARCH §8). The `web` tier builds the static client and
+# serves it with nginx (TLS), which also reverse-proxies the `game` server's wss + HTTP API on
+# the same origin. One command brings up the whole stack. See docs/SERVER_DEPLOY.md.
 #
-#   docker compose up -d --build      # start the game server + nginx
+#   docker compose up -d --build      # build the client + start the game server + nginx
 #   docker compose --profile db up -d # also start PostgreSQL (for the accounts phase)
 
 services:
@@ -30,8 +31,13 @@ services:
     expose:
       - '8080'
 
-  nginx:
-    image: nginx:1.27-alpine
+  web:
+    # Builds the static client (three/react/vite) and serves it with nginx, which also
+    # reverse-proxies the game server. Multi-stage — the VPS needs only Docker, no host Node.
+    build:
+      context: .
+      dockerfile: deploy/web/Dockerfile
+    image: pathlands-web
     restart: unless-stopped
     depends_on:
       - game
@@ -39,6 +45,7 @@ services:
       - '80:80'
       - '443:443'
     volumes:
+      # The site config (edit the domain here; a restart re-reads it, no rebuild needed).
       - ./deploy/nginx/pathlands.conf:/etc/nginx/conf.d/default.conf:ro
       # certbot on the host writes certs here; mounted read-only for TLS termination.
       - /etc/letsencrypt:/etc/letsencrypt:ro
