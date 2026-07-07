@@ -6,6 +6,30 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 17: Server-timeline enemy interpolation (combat feel).**
+> Server enemies now **move smoothly** instead of snapping at the ~10 Hz delta rate — they get
+> the same server-timeline interpolation remote players already had. A client-rendering polish
+> (no protocol / server change). Landed:
+>
+> - **`NetClient` buffers enemy position samples** (`enemySamples`, one per enemy on the server
+>   timeline) alongside the latest full state (`enemyMap`). `enemies()` now returns each enemy
+>   with **x/y/z/yaw interpolated** to `serverNow − renderDelay` (≈150 ms behind) via the same
+>   `sampleAt` used for remote players, while **hp / cast / state / identity stay the latest**
+>   (never interpolated). No extrapolation past the last sample, so an idle enemy (which sends no
+>   deltas) rests at its last position; the sample buffers are pruned + cleared in lockstep with
+>   `enemyMap` (snapshot / gone / disconnect).
+> - **Reused machinery**: the mirrored enemy in the client `CombatState` reads the interpolated
+>   position, so the existing render + nameplate + targeting code smooths for free. The ~150 ms
+>   position lag is the same cosmetic trade already accepted for remote players (combat outcomes
+>   are server-authoritative regardless).
+>
+> **374 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _(Client-visual, so
+> its smoothness is what the VPS test shows.)_ _Remaining Phase-6: the client re-seeding its
+> character from the server on login (multi-device), then quests/professions on the server tick
+> pipeline._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 16: Enemy cast-bar replication (Stage 2d — combat feel).**
 > The target frame now shows a server enemy **winding up a cast** — see a boss telegraph a big
 > hit and react / interrupt. A first polish pass on the server-authoritative enemies (their

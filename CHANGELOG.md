@@ -4,6 +4,24 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 17 — Server-timeline enemy interpolation (2026-07-06)
+
+Server enemies now move smoothly instead of snapping at the ~10 Hz delta rate — a client-rendering
+polish (no protocol / server change). Verified on the VPS combat test.
+
+#### Changed
+
+- **`client/src/net/netClient.ts`**: enemy MOVEMENT is interpolated on the server timeline like
+  remote players. A new `enemySamples` map buffers each enemy's position samples (via
+  `ingestEnemy`, filled on snapshot/delta, pruned >1 s old keeping ≥2, cleared in lockstep with
+  `enemyMap` on snapshot/gone/disconnect). `enemies()` returns each enemy with x/y/z/yaw
+  interpolated to `serverNow − renderDelay` (≈150 ms behind, via the existing `sampleAt`) and
+  every other field — hp / cast / state / identity — taken from the latest snapshot (never
+  interpolated). No extrapolation past the last sample, so an idle enemy rests at its last
+  position. The mirrored combat entity reads the interpolated position, so the existing
+  render/nameplate/targeting code smooths for free; the ~150 ms position lag is the same cosmetic
+  trade already accepted for remote players (combat outcomes stay server-authoritative).
+
 ### Part 16 — Enemy cast-bar replication (Stage 2d) (2026-07-06)
 
 The target frame now shows a server enemy winding up a cast — a first combat-feel polish pass on

@@ -132,6 +132,10 @@ export class NetClient {
   private readonly tracks = new Map<string, Track>();
   /** Latest server-authoritative state of each visible enemy (Stage 2b), keyed by id. */
   private readonly enemyMap = new Map<string, NetEntity>();
+  /** Position samples per enemy on the SERVER timeline, so enemy MOVEMENT interpolates smoothly
+   * ~renderDelay behind (like remote players) instead of snapping at the ~10 Hz delta rate. The
+   * non-positional fields (hp / cast / state) still come from enemyMap (latest, not interpolated). */
+  private readonly enemySamples = new Map<string, Sample[]>();
   /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
   private lastCombatSelf: NetCombatSelf | null = null;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
@@ -219,7 +223,8 @@ export class NetClient {
         this.updateClock(msg.tick);
         for (const p of msg.players) this.ingest(p, msg.tick);
         this.enemyMap.clear();
-        for (const e of msg.entities) this.enemyMap.set(e.id, e);
+        this.enemySamples.clear();
+        for (const e of msg.entities) this.ingestEnemy(e, msg.tick);
         this.emitStatus();
         break;
       }
@@ -227,8 +232,11 @@ export class NetClient {
         this.updateClock(msg.tick);
         for (const p of msg.players) this.ingest(p, msg.tick);
         for (const id of msg.gone) this.tracks.delete(id);
-        for (const e of msg.entities) this.enemyMap.set(e.id, e);
-        for (const id of msg.goneEntities) this.enemyMap.delete(id);
+        for (const e of msg.entities) this.ingestEnemy(e, msg.tick);
+        for (const id of msg.goneEntities) {
+          this.enemyMap.delete(id);
+          this.enemySamples.delete(id);
+        }
         this.emitStatus();
         break;
       }
@@ -315,6 +323,28 @@ export class NetClient {
     while (track.samples.length > 2 && track.samples[0]!.tMs < cutoff) track.samples.shift();
   }
 
+  /** Record an enemy's latest full state + append a position sample on the server timeline. */
+  private ingestEnemy(e: NetEntity, serverTick: number): void {
+    this.enemyMap.set(e.id, e);
+    let samples = this.enemySamples.get(e.id);
+    if (samples === undefined) {
+      samples = [];
+      this.enemySamples.set(e.id, samples);
+    }
+    // `move` is unused for enemies (their anim is driven by render-position delta); reuse the
+    // Sample shape so the same `sampleAt` interpolator serves players and enemies.
+    samples.push({
+      tMs: serverTick * TICK_DURATION_MS,
+      x: e.x,
+      y: e.y,
+      z: e.z,
+      yaw: e.yaw,
+      move: 'idle',
+    });
+    const cutoff = this.serverNowMs() - SAMPLE_HISTORY_MS;
+    while (samples.length > 2 && samples[0]!.tMs < cutoff) samples.shift();
+  }
+
   private onClose(): void {
     this.connected = false;
     this.ws = null;
@@ -332,6 +362,7 @@ export class NetClient {
     this.pendingSelf = null;
     this.clockInit = false;
     this.enemyMap.clear();
+    this.enemySamples.clear();
     this.lastCombatSelf = null;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
@@ -426,9 +457,25 @@ export class NetClient {
 
   // --- server-authoritative combat (Stage 2b) ---
 
-  /** The latest server-authoritative state of every visible enemy (raw, not interpolated). */
+  /**
+   * Every visible enemy, with POSITION interpolated to (serverNow − renderDelay) on the server
+   * timeline (smooth movement despite the ~10 Hz wire, like remote players) and every other field
+   * — hp / cast / state / identity — taken from the latest snapshot (never interpolated). No
+   * extrapolation past the last sample, so an idle enemy (no deltas) rests at its last position.
+   */
   enemies(): NetEntity[] {
-    return [...this.enemyMap.values()];
+    const target = this.serverNowMs() - this.renderDelayMs;
+    const out: NetEntity[] = [];
+    for (const [id, ne] of this.enemyMap) {
+      const samples = this.enemySamples.get(id);
+      if (samples === undefined || samples.length === 0) {
+        out.push(ne);
+        continue;
+      }
+      const s = this.sampleAt(samples, target);
+      out.push({ ...ne, x: s.x, y: s.y, z: s.z, yaw: s.yaw });
+    }
+    return out;
   }
 
   /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
