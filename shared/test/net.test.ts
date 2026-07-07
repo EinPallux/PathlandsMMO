@@ -20,8 +20,40 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 16 (…/ whisper / who / gm / ground items)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(16);
+  it('is at protocol version 17 (…/ gm / ground items / inventory)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(17);
+  });
+
+  it('round-trips the server-authoritative inventory frame', () => {
+    const item = { id: 'ring_of_x', name: 'Ring of X' } as unknown as never;
+    const inv: ServerMessage = {
+      t: 'inventory',
+      tick: 7,
+      bag: [{ item, qty: 1 }],
+      gold: 250,
+      equipment: { ring1: item },
+    };
+    expect(decodeServer(encodeServer(inv))).toEqual(inv);
+    // Empty bag + no equipment round-trips.
+    const empty: ServerMessage = { t: 'inventory', tick: 0, bag: [], gold: 0, equipment: {} };
+    expect(decodeServer(encodeServer(empty))).toEqual(empty);
+    // A malformed equipment value (missing name) sinks the frame; so does a non-number gold.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'inventory',
+          tick: 1,
+          bag: [],
+          gold: 0,
+          equipment: { ring1: { id: 'x' } },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({ t: 'inventory', tick: 1, bag: [], gold: 'lots', equipment: {} }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips ground-item drop / pickup / replication / grant frames', () => {

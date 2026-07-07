@@ -6,6 +6,26 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 30: Server-authoritative inventory, Stage 1a (foundation).**
+> The economy migration begins: the player's **bag / gold / equipment** become server state. The
+> `Inventories` model (`server/src/inventory.ts`) seeds each player from their persisted character on
+> join, and the authoritative paths mutate it — kill loot and ground pickups **add**, drops **remove**
+> (content-matched this stage). It replicates to the owner as a `ServerInventory` frame (proto **v17**,
+> owner-only, on change). This stage runs the server model **in parallel** with the still-client-owned
+> bag (the client ignores the frame yet), so nothing changes for players while the foundation +
+> replication + tests land safely. **425 tests green** (8 new: the full model — seed/cap/gold/drop/
+> equip/sell/buyback — + the wire seed-and-drop path + the v17 codec).
+> _Economy migration plan (server becomes the single inventory authority — no cheat-proof sub-slice
+> is smaller, since gold/bag are coupled through vendors/loot/quests):_
+>
+> - **1a (done):** server inventory model + seed + loot/ground routing + `ServerInventory` replication.
+> - **1b:** flip the client to render the server frame; port **equip / unequip / sell / buy / buyback**
+>   to server intents validated against the authoritative model; persist inventory server-side.
+> - **1c:** bridge the not-yet-migrated gold/bag sources (quest reward, travel fee, crafting output) as
+>   trusted server grants, then validate each as its own system migrates (quests #138, professions #139).
+>
+> ---
+>
 > **Scope change (2026-07-07):** the launch plan is refocused. **DESCOPED (cut from 1.0):** guilds,
 > friends list, duels, the 200-client load test, password reset / email verification, character
 > import. **Also scrapped entirely:** the Waymeet **Bank**, **Mail**, and any dedicated

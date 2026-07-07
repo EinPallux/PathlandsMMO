@@ -21,8 +21,11 @@ import {
   WORLD_SEED,
   type ClientGm,
   type ClientParty,
+  type ItemDef,
+  type ItemStackSave,
   type NetCombatEvent,
   type NetEntity,
+  type NetItemStack,
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
@@ -35,6 +38,7 @@ import type { ServerSim, ServerPlayer } from './sim.js';
 import { ServerCombat } from './combat.js';
 import { PartyManager } from './party.js';
 import { GroundItems } from './groundItems.js';
+import { Inventories } from './inventory.js';
 import {
   buildCellIndex,
   buildEntityCellIndex,
@@ -172,6 +176,8 @@ export class GameServer {
   private readonly party = new PartyManager();
   /** The world's authoritative dropped items (the player-to-player trade surface). */
   private readonly groundItems = new GroundItems();
+  /** Server-authoritative player inventories (bag / gold / equipment) — the economy migration. */
+  private readonly inventories = new Inventories();
   /** Ground-item lifetime in SIM TICKS (from GROUND_ITEM_TTL_MS ÷ tick duration). */
   private readonly groundItemTtlTicks: number;
   /** Set when a ground item was dropped / picked up / despawned — forces a replication pass. */
@@ -352,6 +358,7 @@ export class GameServer {
         void this.persistPosition(conn.accountId, player);
       }
       this.combat.removePlayer(conn.id); // drop its combat entity + any enemy threat on it
+      this.inventories.remove(conn.id); // drop its authoritative inventory
       // Drop from any party (+ clear pending invites) and re-roster the survivors.
       const partyChange = this.party.remove(conn.id);
       this.sim.remove(conn.id);
@@ -431,6 +438,10 @@ export class GameServer {
         let level = msg.level;
         let totalXp = 0;
         let spawn: { x: number; y: number; z: number; yaw: number } | undefined;
+        // Economy state to seed the authoritative inventory from (empty for a guest).
+        let seedInventory: ItemStackSave[] = [];
+        let seedGold = 0;
+        let seedEquipment: Record<string, ItemDef> = {};
         if (msg.token !== undefined) {
           const claims = this.auth.verify(msg.token, Math.floor(Date.now() / 1000));
           if (claims === null) {
@@ -458,6 +469,9 @@ export class GameServer {
             level = ch.level;
             totalXp = ch.xp;
             spawn = { x: ch.x, y: ch.y, z: ch.z, yaw: ch.yaw };
+            seedInventory = ch.inventory;
+            seedGold = ch.gold;
+            seedEquipment = ch.equipment;
           }
         }
         // The socket may have closed while we awaited the store; bail if so.
@@ -475,6 +489,15 @@ export class GameServer {
           player.phys.z,
           totalXp,
         );
+        // Seed the authoritative inventory from the persisted character (empty for a guest). The
+        // client still drives its own bag this stage; the server model runs in parallel + replicates.
+        this.inventories.seed(player.id, {
+          cls: player.cls,
+          level: player.level,
+          inventory: seedInventory,
+          gold: seedGold,
+          equipment: seedEquipment,
+        });
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);
           conn.helloTimer = null;
@@ -626,6 +649,9 @@ export class GameServer {
           player.phys.z,
           this.sim.tick,
         );
+        // Mirror the removal in the authoritative inventory (matched by content this stage; the
+        // index-validated drop lands when the client cedes bag authority in the next slice).
+        this.inventories.removeMatchingStack(conn.id, msg.item.id, qty);
         this.groundChanged = true; // force a replication pass so nearby players see it
         return;
       }
@@ -647,6 +673,8 @@ export class GameServer {
           tick: this.sim.tick,
           items: [{ item: picked.item, qty: picked.qty }],
         });
+        // Mirror the grant into the authoritative inventory (parallel with the client bag this stage).
+        this.inventories.addStack(conn.id, picked.item, picked.qty);
         this.groundChanged = true; // the stack left the world — replicate its removal
         return;
       }
@@ -956,6 +984,23 @@ export class GameServer {
         this.send(conn.ws, { t: 'combatSelf', tick: this.sim.tick, self: combatSelf });
       }
 
+      // 1b-i) Own authoritative inventory (bag / gold / equipment) — owner-only, sent when it
+      //        changed since the last broadcast (economy migration). Also interest-independent.
+      if (this.inventories.isDirty(conn.id)) {
+        const inv = this.inventories.get(conn.id);
+        if (inv !== null) {
+          const bag: NetItemStack[] = inv.bag.map((s) => ({ item: s.item, qty: s.qty }));
+          this.send(conn.ws, {
+            t: 'inventory',
+            tick: this.sim.tick,
+            bag,
+            gold: inv.gold,
+            equipment: { ...inv.equipment },
+          });
+          this.inventories.markClean(conn.id);
+        }
+      }
+
       // 1b-ii) Party vitals for the ally frames (Part 20): every party member's live hp/resource,
       //        including the viewer's own. NOT interest-filtered — you see your party's health
       //        across the whole world (apart or together). Solo players get no frame.
@@ -979,6 +1024,10 @@ export class GameServer {
           gold: kill.gold,
           items: kill.items,
         });
+        // Credit the same loot to the authoritative inventory (the client still aggregates it
+        // locally this stage; the server model runs in parallel toward becoming the source of truth).
+        this.inventories.addGold(conn.id, kill.gold);
+        for (const stack of kill.items) this.inventories.addStack(conn.id, stack.item, stack.qty);
       }
 
       // 1d) Authoritative combat visuals near this viewer (Stage 2c-3): incoming hits, other

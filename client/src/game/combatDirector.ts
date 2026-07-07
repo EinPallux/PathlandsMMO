@@ -42,6 +42,7 @@ import {
   travelFee,
   vendorStock,
   sellPrice,
+  BAG_SIZE,
   SETTLEMENT_TIER,
   DEFAULT_VENDOR_TIER,
   SETTLEMENTS,
@@ -84,7 +85,6 @@ const PLAYER_ID = 'player';
 const START_LEVEL = 6;
 const DYING_SECONDS = 1.2;
 const PICK_SCREEN_RADIUS = 0.22; // NDC distance for crosshair target picking
-const BAG_SIZE = 24;
 
 const WAYSTONE_RANGE = 7; // metres to attune / use a Waystone
 // A spawn region is live only while the player is within (radius + margin); enemies

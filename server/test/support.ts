@@ -106,6 +106,9 @@ export class TestClient {
   readonly worldItems = new Map<string, NetWorldItem>();
   /** Item stacks from the most recent pickup grant, appended in arrival order. */
   readonly grants: NetItemStack[] = [];
+  /** Latest server-authoritative inventory (bag / gold / equipment), or null before the first. */
+  lastInventory: { bag: NetItemStack[]; gold: number; equipment: Record<string, unknown> } | null =
+    null;
   deltaCount = 0;
   private seq = 0;
 
@@ -183,6 +186,9 @@ export class TestClient {
         break;
       case 'grant':
         for (const s of msg.items) this.grants.push(s);
+        break;
+      case 'inventory':
+        this.lastInventory = { bag: msg.bag, gold: msg.gold, equipment: msg.equipment };
         break;
       default:
         break;

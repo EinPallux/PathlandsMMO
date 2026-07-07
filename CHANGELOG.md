@@ -10,6 +10,29 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 30 — Server-authoritative inventory, Stage 1a (2026-07-07)
+
+The economy migration begins: the player's **bag, gold, and worn equipment** start becoming server
+state, closing the item-dupe / gold-mint vectors a client-authoritative bag left open. Stage 1a is
+the foundation — the model + replication run in parallel with the still-client-owned bag, so nothing
+changes for players yet while it lands safely.
+
+#### Added
+
+- **`server/src/inventory.ts` (`Inventories`)**: the authoritative per-player bag / gold / equipment,
+  with the same logic the client ran ported for server-side validation — seed from a character,
+  bag-cap add, gold credit/spend, drop removal (by index or content match), equip/unequip swap
+  (ring auto-slot), sell + buyback, and dirty tracking.
+- **Protocol v17** (`shared/proto/net.ts`): the `ServerInventory` owner-only frame (bag / gold /
+  equipment) + its decoder and an equipment-map guard. `BAG_SIZE` lifted to `shared/data/items.ts`
+  (was a client-local const) so the server shares the base cap.
+- **Gateway wiring**: seeds the inventory from the persisted character on join (empty for a guest),
+  drops it on disconnect, routes kill loot + ground pickups (add) and drops (remove) through it, and
+  replicates the frame to the owner at broadcast cadence when it changes.
+- **Tests** (+8): `server/test/inventory.test.ts` — the model (seed, cap, gold, drop, equip/unequip,
+  sell/buyback) and the wire path (a joiner's seeded bag/gold replicated; a drop empties it);
+  `shared/test/net.test.ts` — the v17 inventory round-trip.
+
 ### Part 29 — Droppable ground items (2026-07-07)
 
 The player-to-player trade surface that replaces bank / mail / a trade window: **drop items on the

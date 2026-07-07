@@ -39,6 +39,10 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
 /** The two interchangeable ring slots (for auto-placing a ring). */
 export const RING_SLOTS: readonly EquipSlot[] = [EquipSlot.Ring1, EquipSlot.Ring2];
 
+/** Base bag capacity in stacks (GDD §6). Path perks add slots on top (client-side bagBonus);
+ *  the server uses this base as the authoritative inventory cap (Phase-6 economy migration). */
+export const BAG_SIZE = 24;
+
 export enum Rarity {
   Common = 'common',
   Uncommon = 'uncommon',

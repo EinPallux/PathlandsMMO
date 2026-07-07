@@ -34,9 +34,11 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v14 added the online roster query (ClientWho / ServerWho);
  * v15 added GM tooling (ClientGm + ServerWelcome.gm);
  * v16 added droppable ground items (ClientDropItem / ClientPickupItem / ServerWorldItems /
- *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped.
+ *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped;
+ * v17 added the server-authoritative inventory channel (ServerInventory — the owner's bag / gold /
+ *     equipment) as the economy migration begins moving inventory authority server-side.
  */
-export const NET_PROTOCOL_VERSION = 16;
+export const NET_PROTOCOL_VERSION = 17;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -567,6 +569,21 @@ export interface ServerItemGranted {
   items: NetItemStack[];
 }
 
+/**
+ * The recipient's OWN authoritative inventory — bag stacks, gold, and worn equipment — sent to the
+ * owner only (like ServerSelf / ServerCombatSelf), at broadcast cadence when it changes. As the
+ * economy migrates server-side, this becomes the single source of truth the client's bag / gold /
+ * character sheet render from; the client stops locally aggregating loot into a client-owned bag.
+ */
+export interface ServerInventory {
+  t: 'inventory';
+  tick: number;
+  bag: NetItemStack[];
+  gold: number;
+  /** Equip slot id → the worn item (a full ItemDef, same shape as the save's equipment map). */
+  equipment: Record<string, ItemDef>;
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -581,6 +598,7 @@ export type ServerMessage =
   | ServerWho
   | ServerWorldItems
   | ServerItemGranted
+  | ServerInventory
   | ServerPong
   | ServerError
   | ServerChat;
@@ -917,6 +935,23 @@ function isNetItemStack(v: unknown): v is NetItemStack {
   return isString(item.id) && isString(item.name);
 }
 
+/**
+ * A worn-equipment map on the wire (slot id → ItemDef) for ServerInventory. SERVER→client (trusted),
+ * so a structural check: an object whose every value is an item with a string id + name. Returns the
+ * validated map, or null on a malformed shape.
+ */
+function decodeEquipment(v: unknown): Record<string, ItemDef> | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const out: Record<string, ItemDef> = {};
+  for (const [slot, item] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof item !== 'object' || item === null) return null;
+    const it = item as Record<string, unknown>;
+    if (!isString(it.id) || !isString(it.name)) return null;
+    out[slot] = item as unknown as ItemDef;
+  }
+  return out;
+}
+
 /** A ground item on the wire (SERVER→client; trusted source, so a structural sanity check). */
 function isNetWorldItem(v: unknown): v is NetWorldItem {
   if (typeof v !== 'object' || v === null) return false;
@@ -1102,6 +1137,13 @@ export function decodeServer(raw: string): ServerMessage | null {
         return null;
       }
       return { t: 'grant', tick: o.tick, items: o.items };
+    }
+    case 'inventory': {
+      if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.gold)) return null;
+      if (!Array.isArray(o.bag) || !o.bag.every(isNetItemStack)) return null;
+      const equipment = decodeEquipment(o.equipment);
+      if (equipment === null) return null;
+      return { t: 'inventory', tick: o.tick, bag: o.bag, gold: o.gold, equipment };
     }
     default:
       return null;
