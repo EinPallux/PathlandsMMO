@@ -198,7 +198,7 @@ function TargetFrame(): JSX.Element | null {
       </div>
       {target.castSkill && (
         <div style={{ marginTop: 4 }}>
-          <Bar frac={0.5} color="#d8b24a" height={8} label={target.castSkill} />
+          <Bar frac={target.castFrac} color="#d8b24a" height={8} label={target.castSkill} />
         </div>
       )}
     </div>

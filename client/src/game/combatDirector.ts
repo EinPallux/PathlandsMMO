@@ -20,6 +20,7 @@ import {
   makeEnemyById,
   buildEnemyModel,
   enemyById,
+  skillById,
   skillsKnownAt,
   levelProgressFromTotalXp,
   totalXpToReachLevel,
@@ -184,6 +185,9 @@ export class CombatDirector {
   private dying: Dying[] = [];
   private worldFloaters: WorldFloater[] = [];
   private floaterId = 1;
+  /** Server-reported cast progress of each mirrored enemy (Stage 2d) — the target-frame cast
+   * bar reads this, since the mirrored enemy's synthetic `cast` has no meaningful endTick. */
+  private readonly serverCastFrac = new Map<string, number>();
 
   private readonly ctx: { heightAt: (x: number, z: number) => number };
   private readonly tmp = new THREE.Vector3();
@@ -329,6 +333,19 @@ export class CombatDirector {
    * can't walk — matching the server's authoritative freeze, so prediction never fights it. */
   isPlayerDead(): boolean {
     return this.player.dead;
+  }
+
+  /** Progress 0..1 of the target's cast bar. A mirrored server enemy carries the server's frac
+   * (its synthetic `cast` has no real endTick); a local single-player cast is computed from its
+   * own endTick. */
+  private targetCastFrac(targetEnt: CombatEntity): number {
+    if (targetEnt.cast === null) return 0;
+    const server = this.serverCastFrac.get(targetEnt.id);
+    if (server !== undefined) return Math.max(0, Math.min(1, server));
+    const skill = skillById(targetEnt.cast.skillId);
+    if (skill === undefined || skill.castTicks <= 0) return 0;
+    const remaining = targetEnt.cast.endTick - this.state.tick;
+    return Math.max(0, Math.min(1, 1 - remaining / skill.castTicks));
   }
 
   /** Debit gold if affordable (mount purchase). Returns whether it was paid. */
@@ -947,9 +964,22 @@ export class CombatDirector {
       e.spawnX = ne.x;
       e.spawnZ = ne.z;
       e.bossPhaseIdx = undefined;
+      // Mirror the server's cast (Stage 2d): a synthetic `cast` (endTick far in the future so
+      // the local stepCombat never RESOLVES it — the server owns that) drives the wind-up
+      // animation + the target-frame cast bar's skill name; the progress rides serverCastFrac.
+      if (ne.castSkill !== null) {
+        e.cast = { skillId: ne.castSkill, targetId: null, endTick: this.state.tick + 1_000_000 };
+        this.serverCastFrac.set(ne.id, ne.castFrac);
+      } else {
+        e.cast = null;
+        this.serverCastFrac.delete(ne.id);
+      }
     }
     for (const [id, e] of this.state.entities) {
-      if (e.faction === 'enemy' && !seen.has(id)) this.state.entities.delete(id);
+      if (e.faction === 'enemy' && !seen.has(id)) {
+        this.state.entities.delete(id);
+        this.serverCastFrac.delete(id);
+      }
     }
   }
 
@@ -1321,7 +1351,7 @@ export class CombatDirector {
             maxHP: targetEnt.maxHP,
             hostile: targetEnt.faction === 'enemy',
             castSkill: targetEnt.cast ? targetEnt.cast.skillId : null,
-            castFrac: 0,
+            castFrac: this.targetCastFrac(targetEnt),
           }
         : null;
 

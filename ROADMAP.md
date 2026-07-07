@@ -6,6 +6,31 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 16: Enemy cast-bar replication (Stage 2d — combat feel).**
+> The target frame now shows a server enemy **winding up a cast** — see a boss telegraph a big
+> hit and react / interrupt. A first polish pass on the server-authoritative enemies (their
+> combat now _reads_ as well as it _resolves_). Landed:
+>
+> - **`NetEntity` carries the cast** (`castSkill` + `castFrac`, `NET_PROTOCOL_VERSION` → **10**).
+>   A shared `castProgress(e, tick)` helper (reused by the player's combat-self, the enemy wire
+>   projection, and the change digest) computes the skill + 0..1 progress; the digest includes a
+>   quantised frac so a filling bar replicates as UPDATE deltas (idle enemies still cost nothing).
+> - **Client shows it.** `mirrorServerEnemies` gives the mirrored enemy a **synthetic cast**
+>   (endTick far in the future, so the local `stepCombat` never _resolves_ an enemy cast — the
+>   server owns that) that drives the wind-up animation + the target-frame skill name, with the
+>   progress carried in a side map; `CombatHud` fills the target cast bar from `castFrac` (it was
+>   a hardcoded half-fill). Single-player target cast bars now fill too (computed from the real
+>   cast) instead of showing a static half-bar.
+> - **Tests** (+2, codec updated): a casting enemy's `NetEntity` reports the skill + a 0..1 frac;
+>   the v10 codec round-trips an enemy mid-cast and rejects a non-string `castSkill`.
+>
+> **374 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Remaining Phase-6
+> (separate from the combat migration, now complete): server-timeline enemy interpolation
+> (smoother enemy movement), the client re-seeding its character from the server on login
+> (multi-device), then quests/professions on the server tick pipeline._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 15: Server-authoritative combat, Stage 2c-4 (death → Waystone respawn).**
 > Death is now the server's: a slain player who releases their spirit revives at the nearest
 > Waystone, and a corpse can't walk. This closes the combat-authority migration — **enemies,

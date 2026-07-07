@@ -211,6 +211,19 @@ describe('server-authoritative player combat — ServerCombat', () => {
     expect(Math.hypot(death!.x - boar.x, death!.z - boar.z)).toBeLessThan(2);
   });
 
+  it('replicates an enemy’s cast on its NetEntity (Stage 2d — target-frame cast bar)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    const e = combat.state.entities.get(boar.id)!;
+    expect(combat.netEntity(boar.id)!.castSkill).toBeNull(); // not casting
+    // Force the enemy into a 2 s cast, ~halfway done.
+    e.cast = { skillId: 'mend', targetId: null, endTick: combat.state.tick + 20 };
+    const ne = combat.netEntity(boar.id)!;
+    expect(ne.castSkill).toBe('mend');
+    expect(ne.castFrac).toBeGreaterThan(0);
+    expect(ne.castFrac).toBeLessThan(1);
+  });
+
   it('respawns a released spirit at the nearest Waystone (Stage 2c-4)', () => {
     const combat = new ServerCombat(createServerWorld());
     const boar = spawnBoar(combat);

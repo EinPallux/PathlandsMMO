@@ -75,8 +75,19 @@ function toClass(raw: string): CharacterClass {
     : CharacterClass.Warrior;
 }
 
+/** An entity's cast, projected to the wire: the skill id being cast (or null) + progress 0..1.
+ * Shared by the player's combat-self and an enemy's NetEntity (the target-frame cast bar). */
+function castProgress(e: CombatEntity, tick: number): { skill: string | null; frac: number } {
+  if (e.cast === null) return { skill: null, frac: 0 };
+  const skill = skillById(e.cast.skillId);
+  if (skill === undefined || skill.castTicks <= 0) return { skill: e.cast.skillId, frac: 0 };
+  const remaining = e.cast.endTick - tick;
+  return { skill: e.cast.skillId, frac: Math.max(0, Math.min(1, 1 - remaining / skill.castTicks)) };
+}
+
 /** Project an authoritative enemy `CombatEntity` onto its replication wire shape. */
-function toNetEntity(e: CombatEntity): NetEntity {
+function toNetEntity(e: CombatEntity, tick: number): NetEntity {
+  const cast = castProgress(e, tick);
   return {
     id: e.id,
     enemyId: e.enemyId ?? '',
@@ -89,17 +100,21 @@ function toNetEntity(e: CombatEntity): NetEntity {
     hp: e.hp,
     maxHP: e.maxHP,
     state: e.aiState ?? 'idle',
+    castSkill: cast.skill,
+    castFrac: cast.frac,
   };
 }
 
 /**
  * A compact digest of the fields that appear on the wire, so we only flag an enemy as
  * changed (an UPDATE delta) when something a client would render actually moved. Quantised
- * to the same precision a client interpolates at, so idle enemies produce no traffic.
+ * to the same precision a client interpolates at, so idle enemies produce no traffic. The
+ * cast (skill + quantised progress) is included so a wind-up's bar replicates as it fills.
  */
-function digest(e: CombatEntity): string {
+function digest(e: CombatEntity, tick: number): string {
   const q = (n: number): number => Math.round(n * 100);
-  return `${q(e.x)},${q(e.y)},${q(e.z)},${Math.round(e.yaw * 1000)},${e.hp},${e.aiState ?? 'idle'}`;
+  const cast = castProgress(e, tick);
+  return `${q(e.x)},${q(e.y)},${q(e.z)},${Math.round(e.yaw * 1000)},${e.hp},${e.aiState ?? 'idle'},${cast.skill ?? ''},${Math.round(cast.frac * 20)}`;
 }
 
 export class ServerCombat {
@@ -193,16 +208,7 @@ export class ServerCombat {
   combatSelf(id: string): NetCombatSelf | null {
     const e = this.state.entities.get(id);
     if (e === undefined || e.faction !== 'player') return null;
-    let castSkill: string | null = null;
-    let castFrac = 0;
-    if (e.cast !== null) {
-      castSkill = e.cast.skillId;
-      const skill = skillById(e.cast.skillId);
-      if (skill !== undefined && skill.castTicks > 0) {
-        const remaining = e.cast.endTick - this.state.tick;
-        castFrac = Math.max(0, Math.min(1, 1 - remaining / skill.castTicks));
-      }
-    }
+    const cast = castProgress(e, this.state.tick);
     return {
       hp: e.hp,
       maxHP: e.maxHP,
@@ -212,8 +218,8 @@ export class ServerCombat {
       level: e.level,
       totalXp: this.progress.get(id)?.totalXp ?? 0,
       targetId: e.targetId,
-      castSkill,
-      castFrac,
+      castSkill: cast.skill,
+      castFrac: cast.frac,
       dead: e.dead,
       inCombat: e.inCombatUntil > this.state.tick,
     };
@@ -447,7 +453,7 @@ export class ServerCombat {
     for (const e of this.state.entities.values()) {
       if (e.faction !== 'enemy') continue;
       seen.add(e.id);
-      const d = digest(e);
+      const d = digest(e, this.state.tick);
       if (this.shadow.get(e.id) !== d) {
         this.dirtyIds.add(e.id); // new (ENTER) or moved/damaged (UPDATE)
         this.shadow.set(e.id, d);
@@ -465,7 +471,7 @@ export class ServerCombat {
   netEntities(): NetEntity[] {
     const out: NetEntity[] = [];
     for (const e of this.state.entities.values()) {
-      if (e.faction === 'enemy' && !e.dead) out.push(toNetEntity(e));
+      if (e.faction === 'enemy' && !e.dead) out.push(toNetEntity(e, this.state.tick));
     }
     return out;
   }
@@ -473,7 +479,9 @@ export class ServerCombat {
   /** The wire projection of one live enemy by id, or null if it isn't a live enemy. */
   netEntity(id: string): NetEntity | null {
     const e = this.state.entities.get(id);
-    return e !== undefined && e.faction === 'enemy' && !e.dead ? toNetEntity(e) : null;
+    return e !== undefined && e.faction === 'enemy' && !e.dead
+      ? toNetEntity(e, this.state.tick)
+      : null;
   }
 
   /** Did this enemy's replicated state change on the last step? (drives UPDATE deltas). */

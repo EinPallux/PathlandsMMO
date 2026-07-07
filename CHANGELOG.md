@@ -4,6 +4,35 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 16 — Enemy cast-bar replication (Stage 2d) (2026-07-06)
+
+The target frame now shows a server enemy winding up a cast — a first combat-feel polish pass on
+the server-authoritative enemies. Server half is headless-proven; the cast bar is verified on the
+VPS combat test.
+
+#### Added
+
+- **`NetEntity` cast fields** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **10**):
+  `castSkill: string | null` + `castFrac: number`, validated by `isNetEntity`. A shared
+  `castProgress(e, tick)` helper (`server/src/combat.ts`) computes `{ skill, frac }` and is reused
+  by the player's `combatSelf`, the enemy `toNetEntity`, and the change `digest` (which now takes
+  the tick and includes a 20-step-quantised frac, so a filling cast bar replicates as UPDATE
+  deltas while idle enemies still produce no traffic).
+- **Client cast rendering** (`client/src/game/combatDirector.ts`, `client/src/ui/CombatHud.tsx`):
+  `mirrorServerEnemies` gives a casting mirrored enemy a synthetic `cast` (endTick far in the
+  future so the local `stepCombat` never resolves an enemy cast — the server owns that) that
+  drives the wind-up animation + the target-frame skill name, with the progress in a
+  `serverCastFrac` side map; `targetCastFrac` reads that for a networked enemy, else computes from
+  a real local endTick (so single-player target cast bars now fill too); `CombatHud` fills the
+  target cast bar from `castFrac` (previously a hardcoded half-fill).
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+1): a casting enemy's `NetEntity` reports the skill id + a
+  0..1 cast fraction (null when not casting).
+- **`shared/test/net.test.ts`**: the v10 codec round-trips an enemy mid-cast and rejects a
+  non-string `castSkill`; the version assertion updated to 10.
+
 ### Part 15 — Server-authoritative combat, Stage 2c-4: death → Waystone respawn (2026-07-06)
 
 Death moves server-side, closing the combat-authority migration: enemies, player combat, XP,

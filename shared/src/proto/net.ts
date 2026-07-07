@@ -26,9 +26,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v6 added the per-connection combat-self channel (ServerCombatSelf);
  * v7 added server-authoritative XP progression (totalXp on NetCombatSelf);
  * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items);
- * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX).
+ * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX);
+ * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar).
  */
-export const NET_PROTOCOL_VERSION = 9;
+export const NET_PROTOCOL_VERSION = 10;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -71,6 +72,11 @@ export interface NetEntity {
   maxHP: number;
   /** AI state for animation: 'idle' | 'aggro' | 'leash'. */
   state: string;
+  /** Skill id the enemy is currently casting, or null — drives the target-frame cast bar +
+   * the wind-up animation. Server-authoritative (the client never simulates enemy casts). */
+  castSkill: string | null;
+  /** Cast progress 0..1 (0 when not casting). */
+  castFrac: number;
 }
 
 /**
@@ -548,7 +554,9 @@ function isNetEntity(v: unknown): v is NetEntity {
     isFiniteNumber(o.yaw) &&
     isFiniteNumber(o.hp) &&
     isFiniteNumber(o.maxHP) &&
-    isString(o.state)
+    isString(o.state) &&
+    (o.castSkill === null || isString(o.castSkill)) &&
+    isFiniteNumber(o.castFrac)
   );
 }
 

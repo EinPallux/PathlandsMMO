@@ -20,8 +20,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 9 (self / token / chat / entities / combat-self / xp / loot / fx)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(9);
+  it('is at protocol version 10 (self / token / chat / entities / combat-self / xp / loot / fx / enemy-cast)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(10);
   });
 
   it('round-trips + validates a ServerCombatEvents (fx) frame', () => {
@@ -258,6 +258,8 @@ describe('net protocol codec', () => {
       hp: 60,
       maxHP: 60,
       state: 'idle',
+      castSkill: null,
+      castFrac: 0,
     };
     // Snapshot carries entities.
     expect(
@@ -295,6 +297,22 @@ describe('net protocol codec', () => {
       players: [],
       entities: [],
     });
+    // An enemy mid-cast round-trips its cast fields (drives the target-frame cast bar).
+    const caster = { ...enemy, castSkill: 'gore', castFrac: 0.42 };
+    expect(
+      decodeServer(encodeServer({ t: 'snapshot', tick: 5, players: [], entities: [caster] })),
+    ).toEqual({ t: 'snapshot', tick: 5, players: [], entities: [caster] });
+    // A non-string castSkill (not null) is rejected.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'snapshot',
+          tick: 1,
+          players: [],
+          entities: [{ ...enemy, castSkill: 3 }],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips + validates client frames (hello / intent / ping)', () => {
