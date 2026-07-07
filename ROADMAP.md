@@ -14,6 +14,19 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >
 > ---
 >
+> **Phase 6 (2026-07-07) — Part 27: Game content in PostgreSQL.**
+> Enemies, quests, NPCs (quest-givers) and recipes now live as **editable Postgres rows** (a
+> `content` table, one JSONB `data` row per entity + promoted id/name), seeded from `shared/data`
+> on first boot **idempotently** — so a future admin/map editor writes to the DB, not to TypeScript.
+> `ContentStore` (`getAll`/`get`/`upsert`/`count`/`seedFromShared`). Items are procedurally
+> generated, so there's no fixed item catalog — an editor changes drops via enemy/loot data. The
+> sim still reads `shared/data` (kept identical by the seed); each system's server migration
+> reroutes to this store. **414 tests green** (pg-mem). _Next: the quests/professions/economy
+> server-authority migration (reads content from this store) + shared quest turn-in credit, then
+> player trade._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 26: GM tooling.**
 > Live-server moderation, server-authoritative + GM-gated (`accounts.is_gm`, never client-trusted).
 > A GM (flagged in the DB, or bootstrapped via `GM_EMAILS`) gets a `gm` welcome that unlocks

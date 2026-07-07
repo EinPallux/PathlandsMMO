@@ -34,4 +34,18 @@ CREATE TABLE IF NOT EXISTS characters (
   data       jsonb NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Game content — the source of truth for enemies / quests / NPCs (quest-givers) / recipes, so a
+-- future admin/map editor edits ROWS here instead of TypeScript. One row per authored entity: the
+-- full typed def in \`data\` (JSONB — editable), the id + a human name promoted for browsing. Items
+-- are procedurally generated (loot rolls), so there is no fixed item catalog — an editor changes
+-- drops by editing the enemy/loot data. Seeded from shared/data on first boot (see contentStore).
+CREATE TABLE IF NOT EXISTS content (
+  kind       text NOT NULL,      -- 'enemy' | 'quest' | 'npc' | 'recipe'
+  id         text NOT NULL,
+  name       text,
+  data       jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, id)
+);
 `;

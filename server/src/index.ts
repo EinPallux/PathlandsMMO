@@ -8,9 +8,11 @@ import { config } from './config.js';
 import { createServerWorld } from './world.js';
 import { ServerSim } from './sim.js';
 import { GameServer } from './gateway.js';
+import pg from 'pg';
 import { Auth } from './auth.js';
 import { FileStore, type Store } from './store.js';
-import { PgStore } from './db/pgStore.js';
+import { PgStore, type Queryable } from './db/pgStore.js';
+import { ContentStore } from './db/contentStore.js';
 
 async function main(): Promise<void> {
   const world = createServerWorld();
@@ -27,13 +29,23 @@ async function main(): Promise<void> {
     );
   }
   const auth = new Auth(secret);
-  // Postgres is the production store (all player data — and content as it migrates). Falls back
-  // to the durable FileStore when DATABASE_URL is unset (local dev without a database).
-  const store: Store =
-    config.databaseUrl !== ''
-      ? await PgStore.open(config.databaseUrl)
-      : await FileStore.open(config.dataFile);
-  const storeLabel = config.databaseUrl !== '' ? 'postgres' : config.dataFile;
+  // Postgres is the production store: all player data, plus the game content (enemies/quests/
+  // NPCs/recipes) seeded from shared/data on first boot so a future admin editor edits DB rows.
+  // Falls back to the durable FileStore when DATABASE_URL is unset (local dev without a database).
+  let store: Store;
+  let storeLabel: string;
+  if (config.databaseUrl !== '') {
+    const pool = new pg.Pool({ connectionString: config.databaseUrl }) as unknown as Queryable;
+    store = await PgStore.fromPool(pool); // applies the schema (incl. the content table)
+    const seeded = await new ContentStore(pool).seedFromShared();
+    const total = Object.values(seeded).reduce((a, b) => a + b, 0);
+    if (total > 0)
+      console.log(`[pathlands] seeded content into Postgres: ${JSON.stringify(seeded)}`);
+    storeLabel = 'postgres';
+  } else {
+    store = await FileStore.open(config.dataFile);
+    storeLabel = config.dataFile;
+  }
 
   const server = new GameServer(
     sim,

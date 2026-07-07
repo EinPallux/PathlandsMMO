@@ -9,6 +9,35 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **player trade**, **shared quest credit**.
 
+### Part 27 — Game content in PostgreSQL (2026-07-07)
+
+The marquee storage move: **enemies, quests, NPCs (quest-givers) and recipes live as editable
+Postgres rows**, so a future admin/map editor writes to the DB instead of TypeScript.
+
+#### Added
+
+- **`content` table** (`server/src/db/schema.ts`): one row per authored entity — `kind`
+  (`enemy`/`quest`/`npc`/`recipe`) + `id` (composite PK) + a promoted `name` + the full typed def in
+  a `jsonb data` column (editable). Items are procedurally generated (loot rolls), so there's no
+  fixed item catalog — an editor changes drops by editing enemy/loot data.
+- **`server/src/db/contentStore.ts` (`ContentStore`)**: `getAll` / `get` / `upsert` (the editor's
+  save path) / `count`, plus `seedFromShared()` — on first boot it populates each kind from the
+  `ENEMIES` / `QUESTS` / `QUEST_GIVERS` / `RECIPES` registries, **idempotently** (skips a kind that
+  already has rows, so a restart never clobbers an editor's edits). Seeded from `shared/` so
+  Postgres starts identical to the shipped content, then becomes the source of truth.
+- **Startup wiring** (`index.ts`): with `DATABASE_URL` set, the server shares one pool between the
+  `PgStore` (schema apply) and the `ContentStore` (seed), logging the seed counts on first boot.
+
+> The running sim still reads `shared/data` (the seed keeps them identical); each system's
+> server-authority migration reroutes its content reads to this store, and the editor's write API
+> lands with the editor. This slice makes **all authored content live + editable in Postgres**.
+
+#### Tests
+
+- **`server/test/content.test.ts`** (+3, pg-mem): the seed populates every kind at the right
+  counts + round-trips a def through jsonb; a re-seed adds nothing (idempotent); an `upsert` edits
+  an entity in place (one row, updated).
+
 ### Part 26 — GM tooling (2026-07-07)
 
 Live-server moderation: kick, mute, ban, teleport, and gold-grant — server-authoritative and
