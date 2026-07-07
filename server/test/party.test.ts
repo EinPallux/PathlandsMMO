@@ -208,6 +208,38 @@ describe('party — over the wire', () => {
     twin2.close();
   });
 
+  it('a party receives live vitals for every member (world-wide, not interest-filtered)', async () => {
+    const a = new TestClient(wsUrl);
+    const b = new TestClient(wsUrl);
+    await Promise.all([a.opened(), b.opened()]);
+    a.hello('Alia', 'ranger', 5);
+    b.hello('Boro', 'warrior', 6);
+    await until(() => a.you !== null && b.you !== null, 3000, 'welcomed');
+    a.partyInvite(b.you!);
+    await until(() => b.lastInvite !== null, 3000, 'invite');
+    b.partyAccept();
+    await until(() => a.lastParty.members.length === 2, 3000, 'formed');
+
+    // Both members get a vitals frame covering the whole party (including themselves), with
+    // positive hp/maxHP — proving the server projects each member's combat state.
+    await until(
+      () => a.lastVitals !== null && a.lastVitals.length === 2,
+      3000,
+      'Alia sees party vitals',
+    );
+    await until(() => b.lastVitals !== null && b.lastVitals.length === 2, 3000, 'Boro too');
+    const ids = new Set(a.lastVitals!.map((v) => v.id));
+    expect(ids).toEqual(new Set([a.you, b.you]));
+    for (const v of a.lastVitals!) {
+      expect(v.maxHP).toBeGreaterThan(0);
+      expect(v.hp).toBeGreaterThan(0);
+      expect(v.dead).toBe(false);
+    }
+
+    a.close();
+    b.close();
+  });
+
   it('an invite to an offline / unknown session id is rejected, forming no party', async () => {
     const a = new TestClient(wsUrl);
     await a.opened();

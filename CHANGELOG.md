@@ -4,6 +4,41 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 20 — Parties, live ally vitals (2026-07-07)
+
+The party panel now shows **live HP + resource bars** for every member — the server replicates
+each member's combat vitals to the others at broadcast cadence, **world-wide** (not interest-
+filtered), so you watch an ally's health whether you're fighting side-by-side or a zone apart.
+
+#### Added
+
+- **Party vitals channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **12**):
+  `NetPartyVital` (hp / maxHP / resource / maxResource / resourceKind / dead, keyed by session id)
+  - `ServerPartyVitals` (`t:'partyVitals'`), with a decoder guard (`isNetPartyVital`).
+- **`ServerCombat.vitalsOf(id)`** (`server/src/combat.ts`): a player's live vitals projected for
+  the ally frames — lighter than `combatSelf` (no cast / xp / target).
+- **Gateway broadcast** (`server/src/gateway.ts`): each broadcast, a player in a party is sent a
+  `partyVitals` frame covering **all** its members (including itself). Not interest-filtered —
+  party health is visible across the whole world. Solo players get no frame.
+- **Client** (`client/src/net/netClient.ts`, `store.ts`, `game.ts`, `ui/PartyPanel.tsx`): the
+  `partyVitals` frame ingests via a new `onPartyVitals` callback into a `partyVitals` store map
+  (keyed by id); `PartyPanel` draws an HP bar (green → red under 30 %, grey when dead) and a
+  resource bar (tinted by kind) under each member row. Going solo / disconnecting clears the map.
+
+#### Fixed
+
+- **Part 19 review** (`server/src/gateway.ts`): the invite guard now gives an accurate message for
+  the (crafted-client-only) self-invite case and drops the unreachable `'self'` branch — the id
+  guard already excludes self before `PartyManager.invite` runs, so it can only return
+  `full` / `targetBusy` there.
+
+#### Tests
+
+- **`shared/test/net.test.ts`**: the v12 codec round-trips the party-vitals frame (incl. a dead
+  member + an empty batch) and rejects a non-finite hp / a missing `dead` flag; version → 12.
+- **`server/test/party.test.ts`** (+1): two grouped players each receive a `partyVitals` frame
+  covering the whole party with positive hp/maxHP.
+
 ### Part 19 — Parties, client UI (2026-07-07)
 
 The client half of grouping: you can now form, see, and manage a party in-game. Verified on

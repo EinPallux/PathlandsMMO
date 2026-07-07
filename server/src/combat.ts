@@ -36,6 +36,7 @@ import {
   type NetCombatSelf,
   type NetEntity,
   type NetItemStack,
+  type NetPartyVital,
   type SpawnerState,
   type SpawnRegion,
 } from '@pathlands/shared';
@@ -222,6 +223,22 @@ export class ServerCombat {
       castFrac: cast.frac,
       dead: e.dead,
       inCombat: e.inCombatUntil > this.state.tick,
+    };
+  }
+
+  /** A player's live vitals for the party ally frames (hp / resource / dead), or null. Lighter
+   *  than combatSelf — no cast/xp/target — and used world-wide (not interest-filtered). */
+  vitalsOf(id: string): NetPartyVital | null {
+    const e = this.state.entities.get(id);
+    if (e === undefined || e.faction !== 'player') return null;
+    return {
+      id,
+      hp: e.hp,
+      maxHP: e.maxHP,
+      resource: e.resource,
+      maxResource: e.maxResource,
+      resourceKind: e.resourceKind,
+      dead: e.dead,
     };
   }
 

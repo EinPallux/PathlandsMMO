@@ -22,6 +22,7 @@ import {
   type NetCombatEvent,
   type NetEntity,
   type NetPartyMember,
+  type NetPartyVital,
   type NetPlayer,
   type ServerChat,
   type ServerMessage,
@@ -503,18 +504,21 @@ export class GameServer {
         // from the roster/snapshot). Validate it names a joined player, and not the sender.
         const target = msg.target;
         if (target === undefined || target === meId || !this.sim.players.has(target)) {
-          this.partyNotice(meId, 'That player is no longer online.');
+          // A self-invite is only reachable via a crafted client (you're not in your own roster);
+          // give it an accurate message and reserve the offline notice for a genuinely-gone id.
+          this.partyNotice(
+            meId,
+            target === meId ? 'You cannot invite yourself.' : 'That player is no longer online.',
+          );
           return;
         }
+        // `party.invite` can only return 'ok' / 'full' / 'targetBusy' here — the guard above
+        // already excluded the self case, so 'self' is unreachable through the gateway.
         const res = this.party.invite(meId, target);
         if (res !== 'ok') {
           this.partyNotice(
             meId,
-            res === 'full'
-              ? 'Your party is full.'
-              : res === 'targetBusy'
-                ? 'That player is already in a party.'
-                : 'You cannot invite yourself.',
+            res === 'full' ? 'Your party is full.' : 'That player is already in a party.',
           );
           return;
         }
@@ -670,6 +674,19 @@ export class GameServer {
       const combatSelf = this.combat.combatSelf(conn.id);
       if (combatSelf !== null) {
         this.send(conn.ws, { t: 'combatSelf', tick: this.sim.tick, self: combatSelf });
+      }
+
+      // 1b-ii) Party vitals for the ally frames (Part 20): every party member's live hp/resource,
+      //        including the viewer's own. NOT interest-filtered — you see your party's health
+      //        across the whole world (apart or together). Solo players get no frame.
+      const party = this.party.partyOf(conn.id);
+      if (party !== null) {
+        const vitals: NetPartyVital[] = [];
+        for (const mId of party.members) {
+          const v = this.combat.vitalsOf(mId);
+          if (v !== null) vitals.push(v);
+        }
+        this.send(conn.ws, { t: 'partyVitals', tick: this.sim.tick, vitals });
       }
 
       // 1c) Kills credited to this player since the last broadcast — server-authoritative loot

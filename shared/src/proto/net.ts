@@ -28,9 +28,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items);
  * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX);
  * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar);
- * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite).
+ * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite);
+ * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide).
  */
-export const NET_PROTOCOL_VERSION = 11;
+export const NET_PROTOCOL_VERSION = 12;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -408,6 +409,30 @@ export interface ServerPartyInvite {
   fromName: string;
 }
 
+/** One party member's live combat vitals, for the ally frames (keyed by session id). */
+export interface NetPartyVital {
+  id: string;
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  /** ResourceKind value as a string (e.g. 'rage', 'mana') — tints the resource bar. */
+  resourceKind: string;
+  /** True when the member is dead (grey out the frame). */
+  dead: boolean;
+}
+
+/**
+ * Live vitals for the recipient's whole party (including themselves), sent at broadcast cadence.
+ * Unlike entity replication this is NOT interest-filtered — you see your party's health across the
+ * world, apart or together. Sent only to players who are in a party; solo players get none.
+ */
+export interface ServerPartyVitals {
+  t: 'partyVitals';
+  tick: number;
+  vitals: NetPartyVital[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -418,6 +443,7 @@ export type ServerMessage =
   | ServerCombatEvents
   | ServerPartyState
   | ServerPartyInvite
+  | ServerPartyVitals
   | ServerPong
   | ServerError
   | ServerChat;
@@ -815,6 +841,12 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'partyInvite':
       if (!isString(o.fromId) || !isString(o.fromName)) return null;
       return { t: 'partyInvite', fromId: o.fromId, fromName: o.fromName };
+    case 'partyVitals': {
+      if (!isFiniteNumber(o.tick) || !Array.isArray(o.vitals) || !o.vitals.every(isNetPartyVital)) {
+        return null;
+      }
+      return { t: 'partyVitals', tick: o.tick, vitals: o.vitals };
+    }
     default:
       return null;
   }
@@ -824,4 +856,18 @@ function isNetPartyMember(v: unknown): v is NetPartyMember {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
   return isString(o.id) && isString(o.name) && isString(o.cls) && isFiniteNumber(o.level);
+}
+
+function isNetPartyVital(v: unknown): v is NetPartyVital {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.id) &&
+    isFiniteNumber(o.hp) &&
+    isFiniteNumber(o.maxHP) &&
+    isFiniteNumber(o.resource) &&
+    isFiniteNumber(o.maxResource) &&
+    isString(o.resourceKind) &&
+    isBool(o.dead)
+  );
 }

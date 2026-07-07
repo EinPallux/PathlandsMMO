@@ -15,6 +15,7 @@ import {
   type NetCombatSelf,
   type NetEntity,
   type NetPartyMember,
+  type NetPartyVital,
   type NetPlayer,
   type NetSelf,
 } from '@pathlands/shared';
@@ -86,6 +87,8 @@ export class TestClient {
   lastParty: { members: NetPartyMember[]; leaderId: string } = { members: [], leaderId: '' };
   /** Latest pending party invite received, or null. */
   lastInvite: { fromId: string; fromName: string } | null = null;
+  /** Latest party-vitals frame (member id → live hp/resource), or null before the first. */
+  lastVitals: NetPartyVital[] | null = null;
   deltaCount = 0;
   private seq = 0;
 
@@ -142,6 +145,9 @@ export class TestClient {
         break;
       case 'partyInvite':
         this.lastInvite = { fromId: msg.fromId, fromName: msg.fromName };
+        break;
+      case 'partyVitals':
+        this.lastVitals = msg.vitals;
         break;
       default:
         break;

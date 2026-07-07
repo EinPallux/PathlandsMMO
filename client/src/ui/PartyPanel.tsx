@@ -1,11 +1,8 @@
-// Party roster panel (Phase 6 §Social). A compact list under the connection pill showing
-// each member (class dot, name, level), the leader's crown, and controls: "Leave" for
-// yourself and "Kick" beside each other member when you are the leader. It renders nothing
-// when solo (store.party === null), so the single-player / ungrouped view is unchanged.
-//
-// Live ally HP/resource frames are a later slice — those need the server to replicate party
-// members' vitals to each other (only your OWN combat state is sent today). This slice is the
-// roster + membership controls; the panel is built to grow a vitals bar per row.
+// Party roster panel (Phase 6 §Social). A compact list under the connection pill showing each
+// member (class dot, name, level), the leader's crown, live HP + resource bars (Part 20 —
+// server-replicated vitals, world-wide so you see allies' health apart or together), and
+// controls: "Leave" for yourself and "✕ kick" beside each other member when you are the leader.
+// It renders nothing when solo (store.party === null), so the ungrouped view is unchanged.
 
 import { useStore } from '../game/store.js';
 import { colors, panel } from './theme.js';
@@ -18,8 +15,43 @@ const CLASS_DOT: Record<string, string> = {
   mage: '#5a8fd0',
 };
 
+/** Resource-bar tint by kind (rage/mana/energy/focus); a neutral fallback for anything else. */
+const RESOURCE_TINT: Record<string, string> = {
+  rage: '#c0392b',
+  mana: '#3d6fd0',
+  energy: '#d4b24a',
+  focus: '#6fa84e',
+};
+
+/** A thin horizontal bar filled to `frac` (0..1) in `color`, over a dark track. */
+function Bar({
+  frac,
+  color,
+  height,
+}: {
+  frac: number;
+  color: string;
+  height: number;
+}): JSX.Element {
+  const clamped = Math.max(0, Math.min(1, frac));
+  return (
+    <div
+      style={{
+        width: '100%',
+        height,
+        borderRadius: 3,
+        background: 'rgba(0,0,0,0.45)',
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ width: `${clamped * 100}%`, height: '100%', background: color }} />
+    </div>
+  );
+}
+
 export function PartyPanel(): JSX.Element | null {
   const party = useStore((s) => s.party);
+  const vitals = useStore((s) => s.partyVitals);
   const commands = useStore((s) => s.commands);
   if (party === null) return null; // solo — nothing to show
 
@@ -37,16 +69,10 @@ export function PartyPanel(): JSX.Element | null {
         padding: '8px 10px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 6,
+        gap: 8,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-        }}
-      >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span style={{ color: colors.gold, fontWeight: 700, fontSize: 12 }}>
           Party · {party.members.length}/4
         </span>
@@ -70,58 +96,72 @@ export function PartyPanel(): JSX.Element | null {
       {party.members.map((m) => {
         const isYou = m.id === party.selfId;
         const isLeader = m.id === party.leaderId;
+        const v = vitals[m.id];
+        const hpFrac = v !== undefined && v.maxHP > 0 ? v.hp / v.maxHP : 0;
+        const resFrac = v !== undefined && v.maxResource > 0 ? v.resource / v.maxResource : 0;
+        const hpColor = v?.dead ? '#6b6b6b' : hpFrac < 0.3 ? '#d0503f' : '#5fbf50';
         return (
-          <div
-            key={m.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 7,
-              fontSize: 13,
-            }}
-          >
-            <span
-              title={m.cls}
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: '50%',
-                flex: '0 0 auto',
-                background: CLASS_DOT[m.cls] ?? colors.inkDim,
-              }}
-            />
-            <span
-              style={{
-                color: isYou ? colors.accent : colors.ink,
-                fontWeight: isYou ? 700 : 500,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                flex: '1 1 auto',
-              }}
-            >
-              {isLeader && <span title="Party leader">👑 </span>}
-              {m.name}
-            </span>
-            <span style={{ color: colors.inkDim, fontSize: 11, flex: '0 0 auto' }}>L{m.level}</span>
-            {youAreLeader && !isYou && (
-              <button
-                type="button"
-                title={`Remove ${m.name} from the party`}
-                onClick={() => commands?.partyKick(m.id)}
+          <div key={m.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13 }}>
+              <span
+                title={m.cls}
                 style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#e0736a',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  lineHeight: 1,
-                  padding: 0,
+                  width: 9,
+                  height: 9,
+                  borderRadius: '50%',
                   flex: '0 0 auto',
+                  background: CLASS_DOT[m.cls] ?? colors.inkDim,
+                }}
+              />
+              <span
+                style={{
+                  color: isYou ? colors.accent : colors.ink,
+                  fontWeight: isYou ? 700 : 500,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  flex: '1 1 auto',
+                  opacity: v?.dead ? 0.55 : 1,
                 }}
               >
-                ✕
-              </button>
+                {isLeader && <span title="Party leader">👑 </span>}
+                {m.name}
+              </span>
+              <span style={{ color: colors.inkDim, fontSize: 11, flex: '0 0 auto' }}>
+                L{m.level}
+              </span>
+              {youAreLeader && !isYou && (
+                <button
+                  type="button"
+                  title={`Remove ${m.name} from the party`}
+                  onClick={() => commands?.partyKick(m.id)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#e0736a',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    lineHeight: 1,
+                    padding: 0,
+                    flex: '0 0 auto',
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {/* Live vitals — hidden until the first vitals frame arrives for this member. */}
+            {v !== undefined && (
+              <>
+                <Bar frac={hpFrac} color={hpColor} height={7} />
+                {v.maxResource > 0 && (
+                  <Bar
+                    frac={resFrac}
+                    color={RESOURCE_TINT[v.resourceKind] ?? '#8a7fa0'}
+                    height={4}
+                  />
+                )}
+              </>
             )}
           </div>
         );

@@ -20,8 +20,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 11 (…/ xp / loot / fx / enemy-cast / party)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(11);
+  it('is at protocol version 12 (…/ loot / fx / enemy-cast / party / party-vitals)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(12);
   });
 
   it('round-trips + validates the party channel (client action + server roster/invite)', () => {
@@ -30,7 +30,8 @@ describe('net protocol codec', () => {
       const msg: ClientMessage = { t: 'party', action };
       expect(decodeClient(encodeClient(msg))).toEqual(msg);
     }
-    const invite: ClientMessage = { t: 'party', action: 'invite', target: 'Boro' };
+    // invite/kick target the recipient's SESSION id (not a name).
+    const invite: ClientMessage = { t: 'party', action: 'invite', target: 'sess-2' };
     expect(decodeClient(encodeClient(invite))).toEqual(invite);
     // An unknown action is rejected.
     expect(decodeClient(JSON.stringify({ t: 'party', action: 'nuke' }))).toBeNull();
@@ -62,6 +63,71 @@ describe('net protocol codec', () => {
     // Server → client invite.
     const inv: ServerMessage = { t: 'partyInvite', fromId: 'p1', fromName: 'Alia' };
     expect(decodeServer(encodeServer(inv))).toEqual(inv);
+  });
+
+  it('round-trips + validates the party-vitals frame (live ally HP/resource)', () => {
+    const vitals: ServerMessage = {
+      t: 'partyVitals',
+      tick: 42,
+      vitals: [
+        {
+          id: 'p1',
+          hp: 120,
+          maxHP: 200,
+          resource: 30,
+          maxResource: 100,
+          resourceKind: 'rage',
+          dead: false,
+        },
+        {
+          id: 'p2',
+          hp: 0,
+          maxHP: 260,
+          resource: 0,
+          maxResource: 0,
+          resourceKind: 'rage',
+          dead: true,
+        },
+      ],
+    };
+    expect(decodeServer(encodeServer(vitals))).toEqual(vitals);
+    // An empty batch round-trips (a party with no live members projected this tick).
+    expect(decodeServer(encodeServer({ t: 'partyVitals', tick: 1, vitals: [] }))).toEqual({
+      t: 'partyVitals',
+      tick: 1,
+      vitals: [],
+    });
+    // Malformed: a non-finite hp, and a missing dead flag, each sink the frame.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'partyVitals',
+          tick: 1,
+          vitals: [
+            {
+              id: 'p1',
+              hp: null,
+              maxHP: 10,
+              resource: 0,
+              maxResource: 0,
+              resourceKind: 'mana',
+              dead: false,
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'partyVitals',
+          tick: 1,
+          vitals: [
+            { id: 'p1', hp: 5, maxHP: 10, resource: 0, maxResource: 0, resourceKind: 'mana' },
+          ],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips + validates a ServerCombatEvents (fx) frame', () => {

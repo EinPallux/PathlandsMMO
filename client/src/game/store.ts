@@ -370,6 +370,16 @@ export interface PartyInviteUi {
   fromName: string;
 }
 
+/** One party member's live vitals for the ally frames (arrives at broadcast cadence). */
+export interface PartyVitalUi {
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  resourceKind: string;
+  dead: boolean;
+}
+
 /** Multiplayer connection phase for the HUD indicator (Phase 6). */
 export type NetPhase = 'connecting' | 'connected' | 'reconnecting';
 
@@ -413,6 +423,8 @@ export interface UiState {
   party: PartyUi | null;
   /** A pending party invite awaiting accept/decline; null ⇒ none. Drives the invite toast. */
   partyInvite: PartyInviteUi | null;
+  /** Live vitals of each party member, keyed by session id (Part 20 ally frames). */
+  partyVitals: Record<string, PartyVitalUi>;
 
   fps: number;
   drawCalls: number;
@@ -496,6 +508,8 @@ export interface UiState {
   setParty: (p: PartyUi) => void;
   /** Set (or clear, with null) the pending party invite. */
   setPartyInvite: (i: PartyInviteUi | null) => void;
+  /** Replace the party vitals map from a vitals frame (keyed by member session id). */
+  setPartyVitals: (vitals: Array<PartyVitalUi & { id: string }>) => void;
   toggleMap: () => void;
   toggleDev: () => void;
   toggleChar: () => void;
@@ -550,6 +564,7 @@ export const useStore = create<UiState>((set) => ({
   chatTyping: false,
   party: null,
   partyInvite: null,
+  partyVitals: {},
   ready: false,
   loadProgress: 0,
 
@@ -632,9 +647,25 @@ export const useStore = create<UiState>((set) => ({
   setChatTyping: (chatTyping) => set({ chatTyping }),
   setParty: (p) =>
     // Empty roster ⇒ solo. Forming/refreshing a real party also dismisses any stale invite
-    // (you can't hold a pending invite while grouped — the server rejects that).
-    set(p.members.length > 0 ? { party: p, partyInvite: null } : { party: null }),
+    // (you can't hold a pending invite while grouped — the server rejects that). Going solo
+    // drops any lingering vitals so a rejoin never shows a stale bar.
+    set(p.members.length > 0 ? { party: p, partyInvite: null } : { party: null, partyVitals: {} }),
   setPartyInvite: (partyInvite) => set({ partyInvite }),
+  setPartyVitals: (vitals) =>
+    set(() => {
+      const map: Record<string, PartyVitalUi> = {};
+      for (const v of vitals) {
+        map[v.id] = {
+          hp: v.hp,
+          maxHP: v.maxHP,
+          resource: v.resource,
+          maxResource: v.maxResource,
+          resourceKind: v.resourceKind,
+          dead: v.dead,
+        };
+      }
+      return { partyVitals: map };
+    }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
   toggleChar: () => set((st) => ({ showChar: !st.showChar })),

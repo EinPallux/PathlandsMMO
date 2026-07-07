@@ -282,6 +282,7 @@ export class Game {
           })),
         }),
       onInvite: (inv) => useStore.getState().setPartyInvite(inv),
+      onPartyVitals: (vitals) => useStore.getState().setPartyVitals(vitals),
       ...(onAuthError !== undefined ? { onAuthError } : {}),
     });
     this.net = net;
@@ -296,7 +297,13 @@ export class Game {
       send: (intent) => net.sendIntent(intent),
     });
     // Fresh session: clear any scrollback + party state left from a previous game instance.
-    useStore.setState({ chat: [], chatTyping: false, party: null, partyInvite: null });
+    useStore.setState({
+      chat: [],
+      chatTyping: false,
+      party: null,
+      partyInvite: null,
+      partyVitals: {},
+    });
     net.connect();
 
     this.effectiveVD = viewDist;

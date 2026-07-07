@@ -6,6 +6,26 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 20: Parties, live ally vitals (Social layer).**
+> The party panel now shows **live HP + resource bars** for every member. The server replicates
+> each member's combat vitals to the others at broadcast cadence, **world-wide** (NOT interest-
+> filtered), so you watch an ally's health apart or together. Landed:
+>
+> - **Vitals channel** (`NET_PROTOCOL_VERSION` → **12**): `NetPartyVital` (hp / maxHP / resource /
+>   maxResource / resourceKind / dead, keyed by session id) + `ServerPartyVitals`, with a decoder
+>   guard. `ServerCombat.vitalsOf(id)` projects a player's live vitals (lighter than `combatSelf`).
+> - **Gateway**: each broadcast, a grouped player gets a `partyVitals` frame covering all its
+>   members (self included), un-interest-filtered; solo players get none.
+> - **Client**: a new `onPartyVitals` callback fills a `partyVitals` store map; `PartyPanel` draws
+>   an HP bar (green → red under 30 %, grey when dead) + a kind-tinted resource bar per row. Going
+>   solo / disconnecting clears it. Also folded the Part 19 review fix (accurate self-invite
+>   message; dropped the unreachable `'self'` branch in the gateway invite handler).
+>
+> **388 tests green**; `pnpm typecheck` + `lint` + `build` (287 KB gzip) clean. _Next: shared kill
+> XP + loot round-robin for party members, then group scaling in Hollows._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 19: Parties, client UI (Social layer).**
 > The client half of grouping: you can now **form, see, and manage a party in-game**. It rides the
 > Part 18 party channel unchanged (no protocol change) — a client-visual slice, VPS-tested. Landed:

@@ -30,6 +30,7 @@ import {
   type NetCombatSelf,
   type NetEntity,
   type NetPartyMember,
+  type NetPartyVital,
   type NetPlayer,
   type ServerKill,
   type ServerSelf,
@@ -104,6 +105,8 @@ export interface NetClientOptions {
   onParty?: (state: PartyEvent) => void;
   /** Called when a party invite arrives (payload) or is cleared on disconnect (null). */
   onInvite?: (invite: InviteEvent | null) => void;
+  /** Called at broadcast cadence with our party's live vitals (empty when solo / on disconnect). */
+  onPartyVitals?: (vitals: NetPartyVital[]) => void;
 }
 
 interface Sample {
@@ -310,6 +313,9 @@ export class NetClient {
       case 'partyInvite':
         this.opts.onInvite?.({ fromId: msg.fromId, fromName: msg.fromName });
         break;
+      case 'partyVitals':
+        this.opts.onPartyVitals?.(msg.vitals);
+        break;
       default:
         break;
     }
@@ -400,6 +406,7 @@ export class NetClient {
     // fresh session the server won't re-group), so clear the UI's roster + any pending invite.
     this.opts.onParty?.({ leaderId: '', members: [], selfId: '' });
     this.opts.onInvite?.(null);
+    this.opts.onPartyVitals?.([]);
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
       this.scheduleReconnect();
