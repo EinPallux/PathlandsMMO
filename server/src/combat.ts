@@ -20,6 +20,7 @@ import {
   levelProgressFromTotalXp,
   makePlayerEntity,
   nearestWaystone,
+  partyXpRecipients,
   rollLoot,
   skillById,
   SPAWN_X,
@@ -39,6 +40,7 @@ import {
   type NetPartyVital,
   type SpawnerState,
   type SpawnRegion,
+  type XpShareMember,
 } from '@pathlands/shared';
 import type { ServerWorld } from './world.js';
 
@@ -131,6 +133,10 @@ export class ServerCombat {
   private removedIds: string[] = [];
   /** Per-player authoritative progression (Stage 2c): total lifetime XP. */
   private readonly progress = new Map<string, { totalXp: number }>();
+  /** Resolves a player id → its party's member ids (incl. self), or [] when solo. Injected by
+   *  the gateway (which owns the session-scoped `PartyManager`) so a kill can share XP with the
+   *  killer's nearby party (Part 21). Null until set — kills then credit only the killer. */
+  private partyProvider: ((id: string) => readonly string[]) | null = null;
   /** Per-player queue of kills to credit (loot + quest-objective enemy id), drained by the
    * gateway each broadcast and sent to that player as ServerKill frames (Stage 2c-2). */
   private readonly killFeed = new Map<string, KillCredit[]>();
@@ -187,6 +193,12 @@ export class ServerCombat {
     const e = this.state.entities.get(id);
     if (pr === undefined || e === undefined || e.faction !== 'player') return null;
     return { totalXp: pr.totalXp, level: e.level };
+  }
+
+  /** Inject the party lookup (id → co-member ids incl. self, or [] when solo) so a kill can
+   *  share XP with the killer's nearby party (Part 21). The gateway owns the party state. */
+  setPartyProvider(fn: (id: string) => readonly string[]): void {
+    this.partyProvider = fn;
   }
 
   /** Write a player's authoritative movement position into its combat entity (pre-step). */
@@ -261,12 +273,30 @@ export class ServerCombat {
   /** Apply the shared sim's combat events to server-authoritative progression + loot (Stage 2c). */
   private processEvents(): void {
     for (const ev of drainEvents(this.state)) {
-      if (ev.type === 'xp') this.awardXp(ev.entityId, ev.amount);
+      if (ev.type === 'xp') this.awardKillXp(ev.entityId, ev.amount);
       else if (ev.type === 'death' && ev.killerId !== null && ev.enemyId !== undefined) {
         this.creditKill(ev.killerId, ev.enemyId, ev.level);
       }
       this.collectFx(ev); // authoritative floaters / hit sparks / death poofs (Stage 2c-3)
     }
+  }
+
+  /**
+   * Award a kill's XP with party sharing (Part 21): the earner always, plus every OTHER party
+   * member within the share radius of the earner — each getting the FULL amount (grouping scales
+   * rewards up, never splits). Solo (no provider / empty party) reduces to crediting the earner.
+   */
+  private awardKillXp(earnerId: string, amount: number): void {
+    const earner = this.state.entities.get(earnerId);
+    if (earner === undefined || earner.faction !== 'player') return;
+    const memberIds = this.partyProvider?.(earnerId) ?? [];
+    const members: XpShareMember[] = [];
+    for (const id of memberIds) {
+      if (id === earnerId) continue;
+      const m = this.state.entities.get(id);
+      if (m !== undefined && m.faction === 'player') members.push({ id, x: m.x, z: m.z });
+    }
+    for (const id of partyXpRecipients(earnerId, earner, members)) this.awardXp(id, amount);
   }
 
   /**

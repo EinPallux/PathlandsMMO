@@ -140,6 +140,9 @@ export class GameServer {
     deps: GatewayDeps = {},
   ) {
     this.combat = new ServerCombat(sim.world);
+    // Let the combat sim share a kill's XP with the killer's nearby party (Part 21): it looks up
+    // the party's member ids and range-gates them itself. Solo players resolve to an empty list.
+    this.combat.setPartyProvider((id) => this.party.partyOf(id)?.members ?? []);
     this.auth = deps.auth ?? new Auth('dev-insecure-secret-change-me');
     this.store = deps.store ?? new MemoryStore();
     this.api = new HttpApi(this.auth, this.store, {

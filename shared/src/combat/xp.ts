@@ -123,3 +123,43 @@ export function applyRested(baseKillXp: number, restedPool: number): RestedAward
   const bonus = Math.min(Math.max(0, restedPool), baseKillXp);
   return { xp: baseKillXp + bonus, restedSpent: bonus };
 }
+
+// --- Party kill-XP sharing (GDD §Party; Phase-6 grouping) ---
+// Grouping scales rewards up, never gates: every party member close enough to "be in the
+// fight" gets the FULL kill XP (no split), so playing together is strictly better than apart.
+// The radius matches the boss-ally "in the fight" distance so the two group rules agree.
+// TODO(tuning): a level-difference share penalty could curb trivial power-leveling; for the
+// level-30 solo-first game this generous rule is fine and simpler.
+
+/** Distance (metres) within which a party member shares a kill's XP — same as the boss-ally range. */
+export const PARTY_XP_SHARE_RADIUS = 40;
+
+/** A party member's id + planar position, for the XP-share range check. */
+export interface XpShareMember {
+  id: string;
+  x: number;
+  z: number;
+}
+
+/**
+ * Which players receive a kill's XP: the earner always, plus every OTHER party member within
+ * `radius` of the earner. Pure + deterministic (no split — each recipient gets the full amount).
+ * `members` may include the earner (skipped) and is otherwise the earner's party; an empty list
+ * (solo) yields just the earner. The returned ids are unique and lead with the earner.
+ */
+export function partyXpRecipients(
+  earnerId: string,
+  earner: { x: number; z: number },
+  members: readonly XpShareMember[],
+  radius = PARTY_XP_SHARE_RADIUS,
+): string[] {
+  const out = [earnerId];
+  const r2 = radius * radius;
+  for (const m of members) {
+    if (m.id === earnerId) continue;
+    const dx = m.x - earner.x;
+    const dz = m.z - earner.z;
+    if (dx * dx + dz * dz <= r2) out.push(m.id);
+  }
+  return out;
+}

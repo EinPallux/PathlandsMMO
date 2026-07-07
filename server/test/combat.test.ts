@@ -138,6 +138,35 @@ describe('server-authoritative player combat — ServerCombat', () => {
     expect(combat.combatSelf('P')!.totalXp).toBe(xp); // replicated on the combat-self channel
   });
 
+  it('shares a kill’s XP (full, no split) with a nearby party member (Part 21)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.setPartyProvider(() => ['P', 'Q']); // P and Q are partied
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    combat.addPlayer('Q', 'Cleric', 'priest', 6, boar.x + 5, boar.y, boar.z, 0); // ~5 m away
+    combat.state.entities.get(boar.id)!.hp = 1; // one Fire Blast kills it
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+    const xpP = combat.progressionOf('P')!.totalXp;
+    expect(xpP).toBeGreaterThan(0);
+    expect(combat.progressionOf('Q')!.totalXp).toBe(xpP); // full share, not divided
+  });
+
+  it('does not share a kill’s XP with a party member out of range', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.setPartyProvider(() => ['P', 'Q']);
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    combat.addPlayer('Q', 'Cleric', 'priest', 6, boar.x + 200, boar.y, boar.z, 0); // far away
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+    expect(combat.progressionOf('P')!.totalXp).toBeGreaterThan(0);
+    expect(combat.progressionOf('Q')!.totalXp).toBe(0); // out of range → no share
+  });
+
   it('levels a player up when a kill crosses the XP threshold', () => {
     const combat = new ServerCombat(createServerWorld());
     const boar = spawnBoar(combat);

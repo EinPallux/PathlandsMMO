@@ -4,6 +4,34 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 21 — Parties, shared kill XP (2026-07-07)
+
+Grouping now **rewards**, not just shows health: a party kill grants the **full** XP to every
+member close enough to be in the fight — no split, so playing together is strictly better than
+apart (grouping scales rewards up, never gates — GDD §Party). Server-authoritative + tested.
+
+#### Added
+
+- **`partyXpRecipients` + `PARTY_XP_SHARE_RADIUS`** (`shared/src/combat/xp.ts`): a pure,
+  deterministic rule — given the earner and its party's positions, returns the earner plus every
+  other member within the share radius (**40 m**, matching the boss-ally "in the fight" distance).
+  Each recipient gets the full amount (no division).
+- **`ServerCombat.setPartyProvider` + `awardKillXp`** (`server/src/combat.ts`): the combat sim's
+  `xp` event now routes through `awardKillXp`, which resolves the killer's party (via the injected
+  provider), range-gates members against the earner, and awards each the full kill XP. Solo (no
+  provider / empty party) reduces to crediting only the killer, exactly as before.
+- **Gateway wiring** (`server/src/gateway.ts`): injects the provider
+  (`id → this.party.partyOf(id)?.members ?? []`) so combat can see the session-scoped party state.
+  Each member's client adopts its own XP delta on the existing `combatSelf.totalXp` channel — the
+  "client is the XP aggregator" model is unchanged; only who the server credits per kill expands.
+
+#### Tests
+
+- **`shared/test/progression.test.ts`** (+3): `partyXpRecipients` — solo credits only the earner;
+  in-range members share (earner leads the list); a member past the radius is excluded.
+- **`server/test/combat.test.ts`** (+2): a nearby partied player gains the **same** XP as the
+  killer on a kill; a party member 200 m away gains nothing.
+
 ### Part 20 — Parties, live ally vitals (2026-07-07)
 
 The party panel now shows **live HP + resource bars** for every member — the server replicates

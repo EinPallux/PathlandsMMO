@@ -6,6 +6,8 @@ import {
   levelProgressFromTotalXp,
   killXp,
   killXpMultiplier,
+  partyXpRecipients,
+  PARTY_XP_SHARE_RADIUS,
   applyRested,
   restedCap,
   baseStatsAtLevel,
@@ -71,6 +73,29 @@ describe('Kill XP with level delta (GDD §4)', () => {
     expect(killXp(10, 4)).toBe(0);
     expect(killXp(10, 5)).toBeGreaterThan(0);
     expect(killXp(10, 5)).toBeLessThan(killXp(10, 10));
+  });
+});
+
+describe('Party kill-XP sharing (Phase 6 §Party)', () => {
+  const earner = { x: 100, z: 100 };
+
+  it('solo (no party members) credits only the earner', () => {
+    expect(partyXpRecipients('A', earner, [])).toEqual(['A']);
+  });
+
+  it('shares full XP with in-range members and leads with the earner', () => {
+    const members = [
+      { id: 'A', x: 100, z: 100 }, // the earner itself (skipped — no duplicate)
+      { id: 'B', x: 110, z: 100 }, // 10 m away — in range
+      { id: 'C', x: 100, z: 130 }, // 30 m away — in range
+    ];
+    expect(partyXpRecipients('A', earner, members)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('excludes a member beyond the share radius', () => {
+    const justInside = { id: 'B', x: 100 + PARTY_XP_SHARE_RADIUS, z: 100 };
+    const justOutside = { id: 'C', x: 100 + PARTY_XP_SHARE_RADIUS + 0.1, z: 100 };
+    expect(partyXpRecipients('A', earner, [justInside, justOutside])).toEqual(['A', 'B']);
   });
 });
 

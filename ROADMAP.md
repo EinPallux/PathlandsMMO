@@ -6,6 +6,25 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 21: Parties, shared kill XP (Social layer).**
+> Grouping now **rewards**, not just shows health: a party kill grants the **full** XP to every
+> member within the "in the fight" radius (**40 m**) — no split, so playing together is strictly
+> better than apart (GDD §Party; groups scale rewards up, never gate). Landed:
+>
+> - **`partyXpRecipients` + `PARTY_XP_SHARE_RADIUS`** (`shared/combat/xp.ts`): a pure rule —
+>   earner + every other party member in range, each getting the full amount. Radius matches the
+>   boss-ally distance so the two group rules agree.
+> - **`ServerCombat.awardKillXp` + `setPartyProvider`**: the sim's `xp` event routes through the
+>   party-aware award, which resolves the killer's party (via a gateway-injected provider),
+>   range-gates members, and credits each. Solo reduces to the old behaviour. Each member's client
+>   still adopts its own XP delta on `combatSelf.totalXp` — the "client is the XP aggregator" model
+>   is unchanged; only the set of players the server credits per kill widens.
+>
+> **393 tests green** (+3 shared rule, +2 server integration); `pnpm typecheck` + `lint` + `build`
+> (287 KB gzip) clean. _Next: party loot round-robin, then group scaling in Hollows._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 20: Parties, live ally vitals (Social layer).**
 > The party panel now shows **live HP + resource bars** for every member. The server replicates
 > each member's combat vitals to the others at broadcast cadence, **world-wide** (NOT interest-
