@@ -1302,7 +1302,10 @@ export class CombatDirector {
       const y = this.ctx.heightAt(ix, iz);
       r.obj.setTransform(ix, y, iz, lerpAngleLocal(r.prevYaw, r.curYaw, alpha));
       const moving = Math.hypot(r.curX - r.prevX, r.curZ - r.prevZ) > 0.02;
-      r.obj.setClip(e.cast ? 'attack' : moving ? 'run' : 'idle');
+      // A cast plays the wind-up clip ('cast' reads as a telegraph); quadrupeds lack it, so fall
+      // back to 'attack'. Movement → run, else idle.
+      const clip = e.cast ? (r.obj.hasClip('cast') ? 'cast' : 'attack') : moving ? 'run' : 'idle';
+      r.obj.setClip(clip);
       r.obj.update(dt);
     }
   }
