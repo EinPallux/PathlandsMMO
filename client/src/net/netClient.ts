@@ -60,6 +60,8 @@ export interface ChatEvent {
   self: boolean;
   /** True when `text` is a third-person emote phrase (render `${from} ${text}`). */
   emote: boolean;
+  /** True for a directed whisper — `from` is the other party; render `To/From ${from}:`. */
+  whisper: boolean;
 }
 
 /** The party roster as the UI needs it: the leader, the members, and which member is us. */
@@ -301,6 +303,7 @@ export class NetClient {
           text: msg.text,
           self: msg.fromId === this.you,
           emote: msg.emote === true,
+          whisper: msg.whisper === true,
         });
         break;
       case 'partyState':
@@ -479,6 +482,12 @@ export class NetClient {
   sendChat(text: string): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'chat', text });
+  }
+
+  /** Send a directed whisper to a player's session id (the server routes it privately). */
+  sendWhisper(toId: string, text: string): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'chat', text, to: toId });
   }
 
   // --- party (Phase 6 §Social) ---

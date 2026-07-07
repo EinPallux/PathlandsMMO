@@ -20,8 +20,41 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 12 (…/ loot / fx / enemy-cast / party / party-vitals)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(12);
+  it('is at protocol version 13 (…/ fx / enemy-cast / party / party-vitals / whisper)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(13);
+  });
+
+  it('round-trips a whisper: ClientChat.to + ServerChat.whisper', () => {
+    const w: ClientMessage = { t: 'chat', text: 'hey', to: 'sess-9' };
+    expect(decodeClient(encodeClient(w))).toEqual(w);
+    // A plain say line has no `to` (and the decoder doesn't add one).
+    expect(decodeClient(encodeClient({ t: 'chat', text: 'hi' }))).toEqual({
+      t: 'chat',
+      text: 'hi',
+    });
+    // Server whisper frame round-trips with the flag.
+    const s: ServerMessage = {
+      t: 'chat',
+      fromId: 'p1',
+      from: 'Alia',
+      text: 'hey',
+      tick: 3,
+      whisper: true,
+    };
+    expect(decodeServer(encodeServer(s))).toEqual(s);
+    // A non-boolean whisper flag sinks the frame.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'chat',
+          fromId: 'p1',
+          from: 'Alia',
+          text: 'x',
+          tick: 1,
+          whisper: 'yes',
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips + validates the party channel (client action + server roster/invite)', () => {

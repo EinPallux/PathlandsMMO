@@ -480,6 +480,13 @@ export class GameServer {
         conn.lastChatMs = now;
         const player = this.sim.players.get(conn.id);
         if (player === undefined) return;
+        // A directed whisper (msg.to set) is a private line to one player — routed to them + an
+        // echo to the sender, both under server-authoritative names. No emote resolution (plain
+        // text), and it never reaches the global broadcast.
+        if (msg.to !== undefined) {
+          this.whisper(conn.id, player.name, msg.to, text);
+          return;
+        }
         // A leading `/` is an emote command: resolve it against the shared table and, if
         // known, broadcast the third-person action phrase under the player's authoritative
         // name (`Alia waves.`). An unknown command is dropped (the client validates first
@@ -521,7 +528,7 @@ export class GameServer {
         if (target === undefined || target === meId || !this.sim.players.has(target)) {
           // A self-invite is only reachable via a crafted client (you're not in your own roster);
           // give it an accurate message and reserve the offline notice for a genuinely-gone id.
-          this.partyNotice(
+          this.systemNotice(
             meId,
             target === meId ? 'You cannot invite yourself.' : 'That player is no longer online.',
           );
@@ -531,7 +538,7 @@ export class GameServer {
         // already excluded the self case, so 'self' is unreachable through the gateway.
         const res = this.party.invite(meId, target);
         if (res !== 'ok') {
-          this.partyNotice(
+          this.systemNotice(
             meId,
             res === 'full' ? 'Your party is full.' : 'That player is already in a party.',
           );
@@ -542,7 +549,7 @@ export class GameServer {
         if (targetConn !== null) {
           this.send(targetConn.ws, { t: 'partyInvite', fromId: meId, fromName: meName });
         }
-        this.partyNotice(
+        this.systemNotice(
           meId,
           `Invited ${this.sim.players.get(target)?.name ?? 'them'} to the party.`,
         );
@@ -551,7 +558,7 @@ export class GameServer {
       case 'accept': {
         const res = this.party.accept(meId);
         if (res === null) {
-          this.partyNotice(meId, 'That invite is no longer valid.');
+          this.systemNotice(meId, 'That invite is no longer valid.');
           return;
         }
         for (const m of res.notify) this.sendPartyState(m);
@@ -594,10 +601,37 @@ export class GameServer {
   }
 
   /** A one-off system notice to a single player, on the chat channel (no real sender). */
-  private partyNotice(id: string, text: string): void {
+  private systemNotice(id: string, text: string): void {
     const conn = this.connById(id);
     if (conn !== null) {
-      this.send(conn.ws, { t: 'chat', fromId: '', from: 'Party', text, tick: this.sim.tick });
+      this.send(conn.ws, { t: 'chat', fromId: '', from: 'System', text, tick: this.sim.tick });
+    }
+  }
+
+  /**
+   * Route a directed whisper (Part 23): send the line to the target under the sender's name (they
+   * render `From <sender>:`) and echo it to the sender under the TARGET's name (they render
+   * `To <target>:`). Both frames carry `fromId = sender` so the client's self-check (`fromId === you`)
+   * picks the right prefix. The target id is validated as a joined, online player and not self.
+   */
+  private whisper(fromId: string, fromName: string, toId: string, text: string): void {
+    if (toId === fromId) {
+      this.systemNotice(fromId, 'You cannot whisper yourself.');
+      return;
+    }
+    const target = this.sim.players.get(toId);
+    const targetConn = this.connById(toId);
+    if (target === undefined || targetConn === null) {
+      this.systemNotice(fromId, 'That player is no longer online.');
+      return;
+    }
+    const tick = this.sim.tick;
+    // Recipient: `From <sender>` (fromId ≠ their own id).
+    this.send(targetConn.ws, { t: 'chat', fromId, from: fromName, text, tick, whisper: true });
+    // Sender echo: `To <target>` (fromId === their own id ⇒ self; `from` is the target's name).
+    const fromConn = this.connById(fromId);
+    if (fromConn !== null) {
+      this.send(fromConn.ws, { t: 'chat', fromId, from: target.name, text, tick, whisper: true });
     }
   }
 

@@ -82,6 +82,7 @@ export class TestClient {
     text: string;
     tick: number;
     emote: boolean;
+    whisper: boolean;
   }[] = [];
   /** Latest party roster (members + leader); members empty when solo. */
   lastParty: { members: NetPartyMember[]; leaderId: string } = { members: [], leaderId: '' };
@@ -138,6 +139,7 @@ export class TestClient {
           text: msg.text,
           tick: msg.tick,
           emote: msg.emote === true,
+          whisper: msg.whisper === true,
         });
         break;
       case 'partyState':
@@ -175,6 +177,10 @@ export class TestClient {
   /** Send a chat line. */
   chat(text: string): void {
     this.send({ t: 'chat', text });
+  }
+  /** Send a directed whisper to a session id. */
+  whisper(toId: string, text: string): void {
+    this.send({ t: 'chat', text, to: toId });
   }
 
   /** Send a combat intent (target / cast / auto-attack / release) with an increasing seq. */

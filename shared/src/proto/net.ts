@@ -29,9 +29,10 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX);
  * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar);
  * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite);
- * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide).
+ * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide);
+ * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag).
  */
-export const NET_PROTOCOL_VERSION = 12;
+export const NET_PROTOCOL_VERSION = 13;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -188,6 +189,13 @@ export interface ClientPing {
 export interface ClientChat {
   t: 'chat';
   text: string;
+  /**
+   * A directed whisper's target SESSION id (the client resolves a typed name → id against its
+   * party roster + visible players, so it's unambiguous — names are not unique). Absent for an
+   * ordinary (global) say/emote line. The server validates the id is a joined player and routes
+   * the line only to that recipient + an echo to the sender.
+   */
+  to?: string;
 }
 
 /**
@@ -379,6 +387,12 @@ export interface ServerChat {
   text: string;
   tick: number;
   emote?: boolean;
+  /**
+   * A directed whisper. `from` is the OTHER party's display name in both copies (the recipient's
+   * sender, the sender's echo target); the client renders `From ${from}:` when the line isn't its
+   * own (fromId ≠ you) and `To ${from}:` when it is (fromId = you).
+   */
+  whisper?: boolean;
 }
 
 /** One member of a party, as the client's party panel shows them. */
@@ -593,7 +607,11 @@ export function decodeClient(raw: string): ClientMessage | null {
       // Structural only: non-empty string, capped at the wire limit. The server still
       // trims whitespace, collapses control chars, and rate-limits before rebroadcast.
       if (!isString(o.text) || o.text.length === 0 || o.text.length > MAX_CHAT_LEN) return null;
-      return { t: 'chat', text: o.text };
+      // An optional whisper target (session id); the server validates it's a joined player.
+      if (o.to !== undefined && (!isString(o.to) || o.to.length > MAX_CHAT_LEN)) return null;
+      const chat: ClientChat = { t: 'chat', text: o.text };
+      if (o.to !== undefined) chat.to = o.to;
+      return chat;
     }
     case 'party': {
       if (!isString(o.action) || !PARTY_ACTIONS.includes(o.action)) return null;
@@ -822,6 +840,10 @@ export function decodeServer(raw: string): ServerMessage | null {
         text: o.text,
         tick: o.tick,
       };
+      if (o.whisper !== undefined) {
+        if (!isBool(o.whisper)) return null;
+        chat.whisper = o.whisper;
+      }
       if (o.emote !== undefined) {
         if (!isBool(o.emote)) return null;
         chat.emote = o.emote;

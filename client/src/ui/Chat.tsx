@@ -82,6 +82,25 @@ export function Chat(): JSX.Element | null {
     if (capped.startsWith('/')) {
       const raw = capped.slice(1).split(/\s+/)[0] ?? '';
       const cmd = raw.toLowerCase();
+      // Whisper: /w | /tell | /whisper <name> <message> — a directed private line.
+      if (cmd === 'w' || cmd === 'tell' || cmd === 'whisper' || cmd === 'msg') {
+        const rest = capped.slice(1 + raw.length).trim();
+        const sp = rest.indexOf(' ');
+        const targetName = sp === -1 ? rest : rest.slice(0, sp);
+        const body = sp === -1 ? '' : rest.slice(sp + 1).trim();
+        if (targetName.length === 0 || body.length === 0) {
+          pushChat({
+            from: '',
+            text: 'Usage: /w <player name> <message>',
+            self: false,
+            system: true,
+            emote: false,
+          });
+          return;
+        }
+        commands?.whisper(targetName, body);
+        return;
+      }
       // Party: /invite <name> (alias /pinvite) forms/adds; /pleave drops you from the party.
       if (cmd === 'invite' || cmd === 'pinvite') {
         const name = capped.slice(1 + raw.length).trim();
@@ -105,7 +124,7 @@ export function Chat(): JSX.Element | null {
       if (cmd === 'emote' || cmd === 'emotes' || cmd === 'help') {
         pushChat({
           from: '',
-          text: `Party: /invite <name> · /pleave  ·  Emotes: ${emoteCommands()
+          text: `Whisper: /w <name> <msg>  ·  Party: /invite <name> · /pleave  ·  Emotes: ${emoteCommands()
             .map((c) => '/' + c)
             .join('  ')}`,
           self: false,
@@ -176,6 +195,30 @@ export function Chat(): JSX.Element | null {
             <div key={line.key} style={{ fontSize: 13, lineHeight: 1.45, wordBreak: 'break-word' }}>
               {line.system ? (
                 <span style={{ color: colors.gold, fontStyle: 'italic' }}>{line.text}</span>
+              ) : line.whisper ? (
+                // Directed whisper: "To Alia:" (own) / "From Boro:" (received) — a distinct tint.
+                <>
+                  <span
+                    style={{
+                      color: '#b98cd6',
+                      fontWeight: 600,
+                      fontStyle: 'italic',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                    }}
+                  >
+                    {line.self ? 'To ' : 'From '}
+                    {line.from}:{' '}
+                  </span>
+                  <span
+                    style={{
+                      color: '#e6d6f2',
+                      fontStyle: 'italic',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                    }}
+                  >
+                    {line.text}
+                  </span>
+                </>
               ) : line.emote ? (
                 // Emote action line: "Alia waves." — italic, no colon, one colour.
                 <span

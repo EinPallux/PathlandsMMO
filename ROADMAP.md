@@ -6,6 +6,24 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-07) — Part 23: Whispers (directed private messages) (Social layer).**
+> Adds `/w` (aliases `/tell` · `/whisper` · `/msg`): a private line to one player — the fourth chat
+> channel (say · emote · party · whisper). Landed:
+>
+> - **Protocol (`NET_PROTOCOL_VERSION` → 13)**: `ClientChat.to` (target SESSION id — the client
+>   resolves a typed name → id, since names aren't unique) + `ServerChat.whisper` (direction flag).
+> - **Gateway**: a `chat` with `to` routes to the target (`From <sender>:`) + an echo to the sender
+>   (`To <target>:`); both carry `fromId = sender` so the client's self-check picks the prefix.
+>   Validated (joined, not self), rate-gated + sanitised like say, never globally broadcast.
+> - **Client**: `whisperByName` resolves against the **party roster first, then visible players**;
+>   `/w <name> <msg>` parsing; a distinct purple `To/From` render. `partyNotice` → `systemNotice`.
+>
+> **400 tests green**; `pnpm typecheck` + `lint` + `build` (287 KB gzip) clean. _Next: friends list
+> (persistent, cross-session), or the next Phase-6 system (quests/professions server migration,
+> PostgreSQL Store, or guilds)._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 22: Parties, loot round-robin + shared quest credit (Social layer).**
 > Completes the "grouping rewards" story: a party kill gives **quest kill-credit to every in-range
 > member** (party questing works) while the **loot rotates round-robin** to one member per kill

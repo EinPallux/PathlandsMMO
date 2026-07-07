@@ -338,6 +338,8 @@ export interface GameCommands {
   travelTo(id: string): void;
   /** Multiplayer chat: send a line to the server (no-op in single-player). */
   sendChat(text: string): void;
+  /** Whisper a nearby / party player by name (resolved to a session id client-side). */
+  whisper(name: string, text: string): void;
   /** Party: invite a nearby player by name (resolved to a session id client-side), accept /
    *  decline a pending invite, leave the party, kick a member (leader-only) by session id. */
   partyInvite(name: string): void;
@@ -400,6 +402,8 @@ export interface ChatLine {
   system: boolean;
   /** True when `text` is a third-person emote phrase, rendered `${from} ${text}` (no colon). */
   emote: boolean;
+  /** True for a directed whisper — `from` is the other party; rendered `To/From ${from}:`. */
+  whisper?: boolean;
 }
 
 /** Most recent lines kept in the scrollback (older ones drop off). */

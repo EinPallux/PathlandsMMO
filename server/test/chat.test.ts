@@ -143,4 +143,45 @@ describe('chat', () => {
     a.close();
     b.close();
   });
+
+  it('routes a whisper privately to the target + an echo to the sender, not to bystanders', async () => {
+    const [a, b] = await twoJoined();
+    const c = new TestClient(url);
+    await c.opened();
+    c.hello('Cy', 'mage', 5);
+    await until(() => c.you !== null, 3000, 'C welcomed');
+
+    a.whisper(b.you!, 'meet me at the bridge');
+    await until(() => a.chats.length > 0 && b.chats.length > 0, 3000, 'whisper delivered');
+    // Recipient B sees a `From Alia` whisper (fromId is the sender, not B).
+    const recv = b.chats[0]!;
+    expect(recv.whisper).toBe(true);
+    expect(recv.fromId).toBe(a.you);
+    expect(recv.from).toBe('Alia');
+    expect(recv.text).toBe('meet me at the bridge');
+    // Sender A sees a `To Boro` echo (fromId is A itself ⇒ self; `from` is the target's name).
+    const echo = a.chats[0]!;
+    expect(echo.whisper).toBe(true);
+    expect(echo.fromId).toBe(a.you);
+    expect(echo.from).toBe('Boro');
+    // The bystander C receives nothing.
+    await sleep(200);
+    expect(c.chats.length).toBe(0);
+
+    a.close();
+    b.close();
+    c.close();
+  });
+
+  it('rejects a whisper to an unknown id with a system notice to the sender only', async () => {
+    const [a, b] = await twoJoined();
+    a.whisper('no-such-session', 'hello?');
+    await until(() => a.chats.length > 0, 3000, 'sender gets a notice');
+    expect(a.chats[0]!.fromId).toBe(''); // a system notice (no real sender)
+    expect(/no longer online/i.test(a.chats[0]!.text)).toBe(true);
+    await sleep(150);
+    expect(b.chats.length).toBe(0); // B was never involved
+    a.close();
+    b.close();
+  });
 });

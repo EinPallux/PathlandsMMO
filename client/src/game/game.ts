@@ -269,6 +269,7 @@ export class Game {
           self: line.self,
           system: false,
           emote: line.emote,
+          whisper: line.whisper,
         }),
       onParty: (st) =>
         useStore.getState().setParty({
@@ -347,6 +348,33 @@ export class Game {
     this.net.partyInvite(match.id);
   }
 
+  /**
+   * Whisper a player by (case-insensitive) name. Resolve the name → session id against our party
+   * roster FIRST (so you can whisper party members who've walked out of view), then the players
+   * currently visible to us. Client-side resolution keeps it unambiguous (names aren't unique) and
+   * private (you can only whisper someone you can identify). An unmatched name gets a local notice.
+   */
+  private whisperByName(name: string, text: string): void {
+    const query = name.trim().toLowerCase();
+    const body = text.trim();
+    if (query.length === 0 || body.length === 0 || this.net === null) return;
+    const inParty = useStore
+      .getState()
+      .party?.members.find((m) => m.name.toLowerCase() === query && m.id !== this.net?.you);
+    const match = inParty ?? this.net.remotePlayers().find((p) => p.name.toLowerCase() === query);
+    if (match === undefined) {
+      useStore.getState().pushChat({
+        from: '',
+        text: `No player named “${name.trim().slice(0, 24)}” is nearby or in your party.`,
+        self: false,
+        system: true,
+        emote: false,
+      });
+      return;
+    }
+    this.net.sendWhisper(match.id, body);
+  }
+
   private onCanvasClick = (e: MouseEvent): void => {
     // A click while already pointer-locked selects the enemy under the crosshair.
     if (e.button === 0 && this.input.locked) this.combat.pickTarget(this.camera.camera);
@@ -403,6 +431,7 @@ export class Game {
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
       sendChat: (text) => this.net?.sendChat(text),
+      whisper: (name, text) => this.whisperByName(name, text),
       partyInvite: (name) => this.inviteByName(name),
       partyAccept: () => this.net?.partyAccept(),
       partyDecline: () => this.net?.partyDecline(),

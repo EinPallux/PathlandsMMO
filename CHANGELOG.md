@@ -4,6 +4,37 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 23 — Whispers (directed private messages) (2026-07-07)
+
+Adds `/w` (aliases `/tell`, `/whisper`, `/msg`): a private line to one player, routed server-side
+to just the recipient + an echo to the sender — the fourth chat channel (say · emote · party ·
+whisper). Server-authoritative + headless-tested.
+
+#### Added
+
+- **Whisper protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **13**): `ClientChat.to`
+  (the target's SESSION id — the client resolves a typed name → id, since names aren't unique) and
+  `ServerChat.whisper` (the directional flag), with decoder validation.
+- **Gateway routing** (`server/src/gateway.ts`): a `chat` frame carrying `to` is a whisper — the
+  server sends the line to the target under the sender's name (they see `From <sender>:`) and an
+  echo to the sender under the TARGET's name (they see `To <target>:`); both frames carry
+  `fromId = sender` so the client's self-check picks the prefix. Validates the id is a joined,
+  online player and not self; failures return a system notice to the sender only. Reuses the chat
+  rate-gate + sanitiser; never reaches the global broadcast. (`partyNotice` → `systemNotice`, now
+  labelled `System`, since it serves both parties and whispers.)
+- **Client** (`netClient.ts` `sendWhisper` + `whisper` on `ChatEvent`; `game.ts` `whisperByName`
+  resolving name → id against the **party roster first, then visible players**; `store.ts`
+  `whisper` command + `ChatLine.whisper`; `Chat.tsx` `/w <name> <msg>` parsing + a distinct
+  purple `To/From <name>:` render). `/help` lists it.
+
+#### Tests
+
+- **`shared/test/net.test.ts`**: the v13 codec round-trips a whisper (`to` + `whisper` flag) and
+  rejects a non-boolean flag; version → 13.
+- **`server/test/chat.test.ts`** (+2): a whisper reaches only the target (as `From`) + the sender
+  echo (as `To`), never a bystander; a whisper to an unknown id returns a system notice to the
+  sender alone.
+
 ### Part 22 — Parties, loot round-robin + shared quest credit (2026-07-07)
 
 Completes the "grouping rewards" story: a party kill now gives **quest kill-credit to every
