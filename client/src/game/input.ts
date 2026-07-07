@@ -22,6 +22,11 @@ export class Input {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    // While a text field (chat box, login form) is focused, keystrokes belong to it: don't
+    // record them as gameplay input and don't preventDefault (which would eat Space/Tab and
+    // break typing). Keyup is still processed unconditionally so a key held into a focus
+    // change is never left stuck down.
+    if (isEditableTarget(e.target)) return;
     if (!this.keys.has(e.code)) this.tapped.add(e.code);
     this.keys.add(e.code);
     // Prevent page scroll on space/arrows and focus-change on Tab while playing.
@@ -92,4 +97,11 @@ export class Input {
     this.canvas.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
   }
+}
+
+/** True when the event's target is a focused text field (input / textarea / contenteditable). */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (el === null || typeof el.tagName !== 'string') return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
 }

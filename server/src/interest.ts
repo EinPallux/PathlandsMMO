@@ -7,7 +7,7 @@
 // This is a REPLICATION policy (a knob), deliberately not a shared/ simulation rule —
 // it changes what is sent, never what is true. The authoritative sim is unaffected.
 
-import { CHUNK_SIZE } from '@pathlands/shared';
+import { CHUNK_SIZE, type NetEntity } from '@pathlands/shared';
 import type { ServerPlayer } from './sim.js';
 
 /** Chebyshev radius in cells: 1 ⇒ the 3×3 block of chunks around the viewer. */
@@ -56,4 +56,34 @@ export function visibleIds(viewer: ServerPlayer, index: Map<number, ServerPlayer
     }
   }
   return visible;
+}
+
+/** Bucket enemy entities by chunk cell — the entity analogue of buildCellIndex. */
+export function buildEntityCellIndex(entities: readonly NetEntity[]): Map<number, NetEntity[]> {
+  const index = new Map<number, NetEntity[]>();
+  for (const e of entities) {
+    const key = cellKey(cellOf(e.x), cellOf(e.z));
+    const bucket = index.get(key);
+    if (bucket === undefined) index.set(key, [e]);
+    else bucket.push(e);
+  }
+  return index;
+}
+
+/** The enemy entities within `viewer`'s 3×3 interest region (same policy as players). */
+export function visibleEntities(
+  viewer: ServerPlayer,
+  index: Map<number, NetEntity[]>,
+): NetEntity[] {
+  const out: NetEntity[] = [];
+  const cx = cellOf(viewer.phys.x);
+  const cz = cellOf(viewer.phys.z);
+  const r = INTEREST_RADIUS_CELLS;
+  for (let dz = -r; dz <= r; dz++) {
+    for (let dx = -r; dx <= r; dx++) {
+      const bucket = index.get(cellKey(cx + dx, cz + dz));
+      if (bucket !== undefined) out.push(...bucket);
+    }
+  }
+  return out;
 }

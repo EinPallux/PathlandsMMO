@@ -4,6 +4,767 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 24 — `/who` online roster (2026-07-07)
+
+A small social utility for the shared world: `/who` lists everyone currently online (name, level,
+class) — answered by the server, so it's global (not just who's near you). Headless-tested.
+
+#### Added
+
+- **`/who` protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **14**): `ClientWho`
+  (empty request) + `ServerWho` (`NetWhoEntry[]` — name / level / class), with decoder validation.
+- **Gateway** (`server/src/gateway.ts`): a `who` frame replies with every joined player's identity,
+  capped at `WHO_MAX_ENTRIES` (100) so the frame stays bounded, and rate-gated per connection
+  (`WHO_MIN_INTERVAL_MS` 2 s) so the roster reply can't be spammed.
+- **Client** (`netClient.ts` `requestWho` + `onWho`; `game.ts` `who` command that prints
+  `N online: Alia (L5 Ranger), …` as a system line; `store.ts` `who` command; `Chat.tsx` `/who`).
+  `/help` lists it.
+
+#### Tests
+
+- **`shared/test/net.test.ts`**: the v14 codec round-trips the `/who` query + reply (empty roster
+  ok; a malformed entry rejected); version → 14.
+- **`server/test/chat.test.ts`** (+1): `/who` returns the joined roster (name/level/class) to the
+  requester only — a player who didn't ask gets no frame.
+
+### Part 23 — Whispers (directed private messages) (2026-07-07)
+
+Adds `/w` (aliases `/tell`, `/whisper`, `/msg`): a private line to one player, routed server-side
+to just the recipient + an echo to the sender — the fourth chat channel (say · emote · party ·
+whisper). Server-authoritative + headless-tested.
+
+#### Added
+
+- **Whisper protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **13**): `ClientChat.to`
+  (the target's SESSION id — the client resolves a typed name → id, since names aren't unique) and
+  `ServerChat.whisper` (the directional flag), with decoder validation.
+- **Gateway routing** (`server/src/gateway.ts`): a `chat` frame carrying `to` is a whisper — the
+  server sends the line to the target under the sender's name (they see `From <sender>:`) and an
+  echo to the sender under the TARGET's name (they see `To <target>:`); both frames carry
+  `fromId = sender` so the client's self-check picks the prefix. Validates the id is a joined,
+  online player and not self; failures return a system notice to the sender only. Reuses the chat
+  rate-gate + sanitiser; never reaches the global broadcast. (`partyNotice` → `systemNotice`, now
+  labelled `System`, since it serves both parties and whispers.)
+- **Client** (`netClient.ts` `sendWhisper` + `whisper` on `ChatEvent`; `game.ts` `whisperByName`
+  resolving name → id against the **party roster first, then visible players**; `store.ts`
+  `whisper` command + `ChatLine.whisper`; `Chat.tsx` `/w <name> <msg>` parsing + a distinct
+  purple `To/From <name>:` render). `/help` lists it.
+
+#### Tests
+
+- **`shared/test/net.test.ts`**: the v13 codec round-trips a whisper (`to` + `whisper` flag) and
+  rejects a non-boolean flag; version → 13.
+- **`server/test/chat.test.ts`** (+2): a whisper reaches only the target (as `From`) + the sender
+  echo (as `To`), never a bystander; a whisper to an unknown id returns a system notice to the
+  sender alone.
+
+### Part 22 — Parties, loot round-robin + shared quest credit (2026-07-07)
+
+Completes the "grouping rewards" story: a party kill now gives **quest kill-credit to every
+in-range member** (party questing works) while the **loot rotates round-robin** to one member
+per kill (so the economy stays neutral — one drop per kill, distributed fairly). Solo play is
+byte-for-byte unchanged. Server-authoritative + tested.
+
+#### Added
+
+- **`lootTurnRecipient` rule** (`shared/src/combat/xp.ts`): a pure round-robin — given the eligible
+  members (stable order) and a per-party turn counter, returns whose turn it is (negative-safe;
+  null for an empty list).
+- **`Party.lootTurn`** (`server/src/party.ts`): a monotonic per-party rotation cursor, advanced by
+  the gateway on each credited kill.
+- **`ServerCombat` credit refactor** (`server/src/combat.ts`): a shared `eligiblePartyMembers`
+  helper (killer + in-range party, reused by XP + loot); `creditKill` now queues the enemy def id
+  (quest credit) to **all** eligible members and the rolled loot (gold + items) to a **single**
+  round-robin recipient — chosen via the injected `setLootRecipientProvider`, with the loot rolled
+  for that recipient's class. `awardKillXp` now delegates to the same eligibility helper.
+- **Gateway wiring** (`server/src/gateway.ts`): injects the loot picker — filters the killer's
+  party to the eligible/in-range members in stable order, picks via `lootTurnRecipient`, and
+  advances `party.lootTurn`. Each recipient's client applies its own credit on the existing
+  `ServerKill` channel — no protocol change.
+
+#### Tests
+
+- **`shared/test/progression.test.ts`** (+1): `lootTurnRecipient` rotates + wraps + handles
+  single/empty.
+- **`server/test/combat.test.ts`** (+2): a party kill gives **both** members the quest credit while
+  loot goes only to the chosen recipient (the killer gets none); a solo kill still gives the killer
+  the sole credit + its loot (unchanged).
+
+### Part 21 — Parties, shared kill XP (2026-07-07)
+
+Grouping now **rewards**, not just shows health: a party kill grants the **full** XP to every
+member close enough to be in the fight — no split, so playing together is strictly better than
+apart (grouping scales rewards up, never gates — GDD §Party). Server-authoritative + tested.
+
+#### Added
+
+- **`partyXpRecipients` + `PARTY_XP_SHARE_RADIUS`** (`shared/src/combat/xp.ts`): a pure,
+  deterministic rule — given the earner and its party's positions, returns the earner plus every
+  other member within the share radius (**40 m**, matching the boss-ally "in the fight" distance).
+  Each recipient gets the full amount (no division).
+- **`ServerCombat.setPartyProvider` + `awardKillXp`** (`server/src/combat.ts`): the combat sim's
+  `xp` event now routes through `awardKillXp`, which resolves the killer's party (via the injected
+  provider), range-gates members against the earner, and awards each the full kill XP. Solo (no
+  provider / empty party) reduces to crediting only the killer, exactly as before.
+- **Gateway wiring** (`server/src/gateway.ts`): injects the provider
+  (`id → this.party.partyOf(id)?.members ?? []`) so combat can see the session-scoped party state.
+  Each member's client adopts its own XP delta on the existing `combatSelf.totalXp` channel — the
+  "client is the XP aggregator" model is unchanged; only who the server credits per kill expands.
+
+#### Tests
+
+- **`shared/test/progression.test.ts`** (+3): `partyXpRecipients` — solo credits only the earner;
+  in-range members share (earner leads the list); a member past the radius is excluded.
+- **`server/test/combat.test.ts`** (+2): a nearby partied player gains the **same** XP as the
+  killer on a kill; a party member 200 m away gains nothing.
+
+### Part 20 — Parties, live ally vitals (2026-07-07)
+
+The party panel now shows **live HP + resource bars** for every member — the server replicates
+each member's combat vitals to the others at broadcast cadence, **world-wide** (not interest-
+filtered), so you watch an ally's health whether you're fighting side-by-side or a zone apart.
+
+#### Added
+
+- **Party vitals channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **12**):
+  `NetPartyVital` (hp / maxHP / resource / maxResource / resourceKind / dead, keyed by session id)
+  - `ServerPartyVitals` (`t:'partyVitals'`), with a decoder guard (`isNetPartyVital`).
+- **`ServerCombat.vitalsOf(id)`** (`server/src/combat.ts`): a player's live vitals projected for
+  the ally frames — lighter than `combatSelf` (no cast / xp / target).
+- **Gateway broadcast** (`server/src/gateway.ts`): each broadcast, a player in a party is sent a
+  `partyVitals` frame covering **all** its members (including itself). Not interest-filtered —
+  party health is visible across the whole world. Solo players get no frame.
+- **Client** (`client/src/net/netClient.ts`, `store.ts`, `game.ts`, `ui/PartyPanel.tsx`): the
+  `partyVitals` frame ingests via a new `onPartyVitals` callback into a `partyVitals` store map
+  (keyed by id); `PartyPanel` draws an HP bar (green → red under 30 %, grey when dead) and a
+  resource bar (tinted by kind) under each member row. Going solo / disconnecting clears the map.
+
+#### Fixed
+
+- **Part 19 review** (`server/src/gateway.ts`): the invite guard now gives an accurate message for
+  the (crafted-client-only) self-invite case and drops the unreachable `'self'` branch — the id
+  guard already excludes self before `PartyManager.invite` runs, so it can only return
+  `full` / `targetBusy` there.
+
+#### Tests
+
+- **`shared/test/net.test.ts`**: the v12 codec round-trips the party-vitals frame (incl. a dead
+  member + an empty batch) and rejects a non-finite hp / a missing `dead` flag; version → 12.
+- **`server/test/party.test.ts`** (+1): two grouped players each receive a `partyVitals` frame
+  covering the whole party with positive hp/maxHP.
+
+### Part 19 — Parties, client UI (2026-07-07)
+
+The client half of grouping: you can now form, see, and manage a party in-game. Verified on
+the VPS (client-visual slice; no protocol change — it rides the Part 18 party channel).
+
+#### Added
+
+- **Party ingestion + senders** (`client/src/net/netClient.ts`): the client now decodes the
+  `partyState` (→ `onParty`) and `partyInvite` (→ `onInvite`) frames and exposes `partyInvite(id)`
+  / `partyAccept()` / `partyDecline()` / `partyLeave()` / `partyKick(id)` senders. A disconnect
+  clears the roster + any pending invite (parties are session-scoped — a reconnect is a fresh,
+  ungrouped session).
+- **Store party slice** (`client/src/game/store.ts`): `party: PartyUi | null` (leader + members +
+  our own id; empty roster ⇒ solo ⇒ `null`) and `partyInvite: PartyInviteUi | null`. Forming a
+  party dismisses any stale pending invite. Five new `GameCommands` (`partyInvite` by name /
+  `partyAccept` / `partyDecline` / `partyLeave` / `partyKick` by id).
+- **`client/src/ui/PartyPanel.tsx`**: a compact roster under the connection pill — a class-tinted
+  dot, name, level, and the leader's crown per member, with a **Leave** control and a **✕ kick**
+  beside each other member when you are the leader. Hidden when solo. (Live ally HP/resource
+  frames are the next slice — those need the server to replicate members' vitals to each other;
+  only your OWN combat state is sent today. The row is built to grow a vitals bar.)
+- **`client/src/ui/PartyInvite.tsx`**: an invite toast above the hotbar (`"<name> invites you to a
+party."`) with Accept / Decline; acting sends the choice and clears the prompt.
+- **Chat party commands** (`client/src/ui/Chat.tsx`): `/invite <name>` (alias `/pinvite`) and
+  `/pleave`, handled locally (never a raw command hits the wire). `/invite` resolves the name
+  against the players currently visible to us (interest-filtered) to the unambiguous SESSION id
+  the wire uses; an unmatched name gets a local notice. `/help` now lists the party commands.
+- **Wiring** (`client/src/game/game.ts`, `client/src/ui/App.tsx`): the `NetClient` `onParty` /
+  `onInvite` callbacks feed the store; `inviteByName` does the name→id resolution; the two panels
+  mount in the HUD; a fresh session clears the party slice.
+
+### Part 18 — Parties, server foundation (2026-07-06)
+
+The first slice of grouping: players can form a party (up to 4). Server-authoritative + fully
+headless-tested; the client UI + live ally frames are the next slice.
+
+#### Added
+
+- **`server/src/party.ts` (`PartyManager`)**: a pure, session-scoped party state machine over
+  player session ids — `invite` / `accept` / `decline` / `leave` / `kick` / `remove`. A
+  two-person party disbands on any leave; a departing leader hands off to the next member; a
+  disconnect clears the player's pending invites (in + out) and drops it from its party. Max
+  size `MAX_PARTY` = 4. Invites validate self / party-full / target-already-grouped, and accept
+  rejects a stale invite (inviter gone, party filled, or the recipient already grouped).
+- **Party channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **11**): `ClientParty`
+  (action + optional target **session id** — the client already holds it from the roster/snapshot,
+  and an id is unambiguous where display names are not; validated server-side), `ServerPartyState`
+  (roster: `NetPartyMember[]` + `leaderId`; empty ⇒ solo), `ServerPartyInvite`; decoders +
+  `MAX_PARTY` export.
+- **Gateway wiring** (`server/src/gateway.ts`): constructs the `PartyManager`, routes the `party`
+  message (`handleParty`), validates invite/kick targets by session id (an invite must name a
+  joined player who isn't the sender; `party.kick` enforces leadership + membership), rate-gates
+  **invites** (the amplification vector — each pushes an unsolicited frame to another player),
+  sends the invite to the target + a system-chat notice to the actor, and re-broadcasts each
+  affected member's roster (`sendPartyState`) after every change; `onClose` removes the player
+  from its party and re-rosters the survivors.
+
+#### Tests
+
+- **`server/test/party.test.ts`** (+11): the `PartyManager` state machine (formation, self/full/busy
+  rejection, stale-invite, disband, leader handoff, leader-only kick, disconnect cleanup) and
+  over-the-wire (two clients form a party by invite→accept and see the roster; it disbands on
+  leave; a member disconnecting disbands it for the other; an invite reaches the right player even
+  when two share a display name — proving id targeting; an invite to an offline/unknown id is
+  rejected with a notice and forms no party).
+- **`shared/test/net.test.ts`**: the v11 codec round-trips the party frames + rejects an unknown
+  action / a malformed member; version assertion updated to 11.
+
+### Part 17 — Server-timeline enemy interpolation (2026-07-06)
+
+Server enemies now move smoothly instead of snapping at the ~10 Hz delta rate — a client-rendering
+polish (no protocol / server change). Verified on the VPS combat test.
+
+#### Changed
+
+- **`client/src/net/netClient.ts`**: enemy MOVEMENT is interpolated on the server timeline like
+  remote players. A new `enemySamples` map buffers each enemy's position samples (via
+  `ingestEnemy`, filled on snapshot/delta, pruned >1 s old keeping ≥2, cleared in lockstep with
+  `enemyMap` on snapshot/gone/disconnect). `enemies()` returns each enemy with x/y/z/yaw
+  interpolated to `serverNow − renderDelay` (≈150 ms behind, via the existing `sampleAt`) and
+  every other field — hp / cast / state / identity — taken from the latest snapshot (never
+  interpolated). No extrapolation past the last sample, so an idle enemy rests at its last
+  position. The mirrored combat entity reads the interpolated position, so the existing
+  render/nameplate/targeting code smooths for free; the ~150 ms position lag is the same cosmetic
+  trade already accepted for remote players (combat outcomes stay server-authoritative).
+
+### Part 16 — Enemy cast-bar replication (Stage 2d) (2026-07-06)
+
+The target frame now shows a server enemy winding up a cast — a first combat-feel polish pass on
+the server-authoritative enemies. Server half is headless-proven; the cast bar is verified on the
+VPS combat test.
+
+#### Added
+
+- **`NetEntity` cast fields** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **10**):
+  `castSkill: string | null` + `castFrac: number`, validated by `isNetEntity`. A shared
+  `castProgress(e, tick)` helper (`server/src/combat.ts`) computes `{ skill, frac }` and is reused
+  by the player's `combatSelf`, the enemy `toNetEntity`, and the change `digest` (which now takes
+  the tick and includes a 20-step-quantised frac, so a filling cast bar replicates as UPDATE
+  deltas while idle enemies still produce no traffic).
+- **Client cast rendering** (`client/src/game/combatDirector.ts`, `client/src/ui/CombatHud.tsx`):
+  `mirrorServerEnemies` gives a casting mirrored enemy a synthetic `cast` (endTick far in the
+  future so the local `stepCombat` never resolves an enemy cast — the server owns that) that
+  drives the wind-up animation + the target-frame skill name, with the progress in a
+  `serverCastFrac` side map; `targetCastFrac` reads that for a networked enemy, else computes from
+  a real local endTick (so single-player target cast bars now fill too); `CombatHud` fills the
+  target cast bar from `castFrac` (previously a hardcoded half-fill).
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+1): a casting enemy's `NetEntity` reports the skill id + a
+  0..1 cast fraction (null when not casting).
+- **`shared/test/net.test.ts`**: the v10 codec round-trips an enemy mid-cast and rejects a
+  non-string `castSkill`; the version assertion updated to 10.
+
+### Part 15 — Server-authoritative combat, Stage 2c-4: death → Waystone respawn (2026-07-06)
+
+Death moves server-side, closing the combat-authority migration: enemies, player combat, XP,
+loot/gold, combat visuals, and now death/respawn are all server-owned. A slain player who releases
+their spirit revives at the nearest Waystone, and a corpse can't walk. Server half is
+headless-proven; the respawn snap + freeze are verified on the VPS combat test.
+
+#### Added
+
+- **Server-authoritative respawn** (`server/src/combat.ts`, `server/src/gateway.ts`,
+  `server/src/sim.ts`): `reviveReleasedPlayers` now relocates the revived spirit to the nearest
+  Waystone (`nearestWaystone`, else world spawn) and queues a `respawn`; the gateway drains it
+  after `combat.step()` and calls the new `ServerSim.teleport(id, x, z)` (zeroes momentum, drops
+  onto `surfaceSpawnY`). `ServerCombat.isDead` + `drainRespawns` expose the state the gateway
+  needs. The client reconciles the position jump as a snap (existing `RECONCILE_SNAP_DIST`).
+- **Dead-player movement freeze** (`server/src/sim.ts`, `server/src/gateway.ts`): `ServerPlayer`
+  gains a `frozen` flag the gateway sets from `combat.isDead(id)` each tick before `sim.step()`;
+  a frozen player's queued move wish is discarded (idle only, so gravity still settles the body)
+  — a corpse can't walk to a better Waystone, authoritative even against a hacked client.
+- **Client freeze mirror** (`client/src/game/game.ts`, `client/src/game/combatDirector.ts`): the
+  movement `active` flag is gated on `!combat.isPlayerDead()`, feeding the existing `freeInput`
+  so the client predicts the same freeze the server enforces (no reconciliation fight).
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+2): a released spirit revives relocated to the nearest
+  Waystone (respawn queued for the gateway; the combat entity moved too); a dead player's steady
+  "walk east" inputs move them nowhere, and the same inputs walk them once unfrozen.
+
+### Part 14 — Server-authoritative combat, Stage 2c-3: combat-events channel (2026-07-06)
+
+Combat the client can't predict — incoming hits on you, other players' fights, monster deaths,
+boss lines — is replicated as authoritative visuals so the world's combat reads correctly, not
+just your own predicted swings. Cosmetic only (hp/resource ride the combat-self channel). Server
+half is headless-proven; the visuals are verified on the VPS combat test.
+
+#### Added
+
+- **`ServerCombatEvents` frame** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **9**): a
+  batch of `NetCombatEvent` (kind `damage`/`heal`/`death`/`boss`, world position, amount, crit,
+  optional boss text) for the recipient's vicinity. Decoder validates kind + finite
+  position/amount + bool crit + optional text.
+- **`ServerCombat` fx buffer** (`server/src/combat.ts`): `collectFx` turns each tick's shared
+  combat events into positioned `FxRecord`s (damage/heal read the live target; death reads the
+  position now on the death event, so an instant-cast-reaped corpse still poofs); `drainFx`
+  returns + clears the buffer (capped at `FX_CAP` = 256).
+- **Interest-filtered fx replication** (`server/src/gateway.ts`): `broadcast` drains the fx buffer
+  once, then per connection sends a `ServerCombatEvents` frame of the visuals within `FX_RANGE_SQ`
+  of the viewer, **omitting the viewer's own outgoing damage/heal** (predicted client-side).
+- **Client fx rendering** (`client/src/net/netClient.ts`, `client/src/game/combatDirector.ts`,
+  `client/src/game/game.ts`): NetClient queues `fx` events (cleared on disconnect) and exposes
+  `drainFx()`; the CombatDirector's `netSink` gains `drainFx`, and `renderServerFx` plays the
+  floaters + hit sparks + gray death poofs + boss lines at the server positions — reusing the
+  single-player visual code, now split into a position-based `pushFloaterAt`. This restores
+  incoming-damage feedback on the player (mirrored enemies are passive locally, so it was
+  missing) and enemy death poofs (previously the enemy vanished silently in networked mode).
+
+#### Changed
+
+- **`death` combat event** (`shared/src/sim/combat.ts`): now also carries the victim's `x`/`y`/`z`
+  (captured at death), so the death VFX plays at the right spot even after the corpse is reaped.
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+2): a non-lethal hit buffers a damage visual tagged to the
+  attacker (so the gateway can omit it for them, send to others); a kill buffers a death poof at
+  the victim even after the corpse is reaped.
+- **`shared/test/net.test.ts`** (+1): the v9 codec round-trips an `fx` batch (damage/heal/death/
+  boss, incl. empty) and rejects an unknown kind + a non-finite coordinate.
+
+### Part 13 — Server-authoritative combat, Stage 2c-2: kill loot + gold (2026-07-06)
+
+Killing a monster is credited server-side: the server rolls the loot table and hands the killer
+the gold + items. Same authority split as XP — the server owns _what drops_; the client stays the
+inventory/gold aggregator (quest / craft / vendor changes + cloud-save persistence) until those
+systems migrate. Server half is headless-proven; the client half (loot landing in the bag) is
+verified on the VPS combat test.
+
+#### Added
+
+- **`ServerKill` frame** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **8**): a per-kill
+  credit — the enemy def id (for the client's quest / bounty objectives) + gold + `NetItemStack[]`
+  (full item defs, since loot generates unique items). Decoder validates gold/tick finite, enemy
+  id string, and each item stack structurally (object item with string id + name, finite qty).
+- **`ServerCombat` loot roll** (`server/src/combat.ts`): `creditKill` rolls
+  `buildEnemyLootTable` → `rollLoot` on the server's seeded RNG for the killer's class and queues
+  a `KillCredit` per player; `drainKills(id)` takes + clears a player's queue (gateway drains it
+  each broadcast); the feed is cleared on `removePlayer`. Only a live player killer is credited.
+- **Kill-credit replication** (`server/src/gateway.ts`): `broadcast` drains each connected
+  player's kill credits and sends them as `ServerKill` frames, alongside the existing self /
+  combat-self frames.
+- **Client loot application** (`client/src/net/netClient.ts`, `client/src/game/combatDirector.ts`,
+  `client/src/game/game.ts`): NetClient queues `ServerKill` frames (cleared on disconnect) and
+  exposes `drainKills()`; the CombatDirector's `netSink` gains `drainKills`, and `applyServerKills`
+  (networked) fires `onEnemyKilled(enemyId)` for quest objectives, adds gold, and pushes items
+  into the bag under its capacity rule. `lootFrom` was split so single-player and MMO share one
+  `applyKillLoot`; single-player still rolls locally, MMO applies the server's roll.
+
+#### Changed
+
+- **`death` combat event** (`shared/src/sim/combat.ts`): now carries the victim's `enemyId?`
+  (undefined for a player) + `level`, so a kill can be credited from the event alone — an
+  instant-cast kill resolves inside `applyIntent` and its corpse is reaped by the next tick's
+  spawner before the event is drained, so an entity lookup would miss it.
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+1): a player's kill queues a credit with the right enemy id
+  - rolled gold; `drainKills` is idempotent (no double loot on the next broadcast).
+- **`shared/test/net.test.ts`** (+1): the v8 codec round-trips a `ServerKill` (incl. an empty
+  loot roll) and rejects a non-finite gold + an item stack whose item has no name.
+
+### Part 12 — Server-authoritative combat, Stage 2c-1: kill XP + level-ups (2026-07-06)
+
+**Kill XP** moves server-side: the server awards XP when a player kills a monster, derives the
+level, replicates it, and persists it. Quest / Waystone XP stay client-side until those systems
+migrate, so the client remains the **XP aggregator** and the server feeds it only the kill-XP
+stream. The server half is headless-proven; the client half (XP bar + level-up VFX off server
+truth) is verified on the VPS combat test.
+
+#### Added
+
+- **`ServerCombat` progression** (`server/src/combat.ts`): a per-player `progress` map of the
+  server's XP total. `addPlayer` gains a `totalXp` parameter and **derives the spawn level from
+  it** (`levelProgressFromTotalXp`) rather than trusting the caller's claimed level. Each
+  `step()` now runs `processEvents`, which drains the shared sim's combat events and calls
+  `awardXp` on every **`xp` event** (a player's killing blow). `awardXp` adds the amount and,
+  when the total crosses a level threshold, **rebuilds the combat entity at the new level** via
+  `makePlayerEntity` (fresh stats + full HP), preserving position / yaw / target / auto-attack.
+  `progressionOf(id)` exposes `{ totalXp, level }` for persistence.
+- **`ServerCombatSelf.totalXp`** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **7**):
+  the combat-self frame now carries total XP; `combatSelf()` fills it and the codec validator
+  requires it to be finite.
+- **Client XP adoption as a delta stream** (`client/src/game/combatDirector.ts`):
+  `reconcileFromServer` adopts the server's `totalXp` as an **increment off the previous frame**
+  (`adoptServerXp` + a `lastServerXp` baseline) and adds that kill XP to the client's own
+  complete total — which also holds client-side quest / Waystone XP. The first frame of a
+  session only sets the baseline (no level-up fountain for prior-session XP; it silently takes
+  the server's stored total if it happens to lead); subsequent increments level up through the
+  existing `relevelIfNeeded` VFX + Waymeet-mail path. The baseline resets on any combat-self gap
+  so a reconnect can't manufacture a bogus delta. Local XP/level self-award stays suppressed in
+  networked mode.
+
+#### Fixed (adversarial review of Stage 2c-1)
+
+- **Dropped kill XP after any quest turn-in**: the initial reconcile only adopted the server
+  total when it **strictly exceeded** the client's, but the server sees only kill XP while the
+  client's total also includes quest / Waystone XP — so one quest turn-in pushed the client
+  ahead permanently and every subsequent kill's XP was silently dropped from the bar. Fixed by
+  the delta-stream adoption above.
+- **Persisted progress regression** (`server/src/gateway.ts`): `persistPosition` wrote the
+  server's kill-only total into `ch.xp` / `ch.level` unconditionally, so the 30 s / disconnect
+  flush clobbered the richer complete total the client cloud-saves (the client's `putCharacter`
+  upload races the ws hello, so the server can seed from a stale-low total). The writeback is
+  now a **monotonic high-water mark** — it advances stored XP only when the server genuinely
+  leads it, never regressing it.
+- **Spurious level-up VFX on login**: a server total ahead of the client's IndexedDB total (a
+  crash between a server kill and the client's autosave) replayed the level-up fountain / sound
+  / Waymeet mail for prior-session XP on the first frame. The first-frame baseline now adopts
+  silently.
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+2): a kill **awards XP** that also appears on the
+  combat-self channel; a player one XP short of level 2 **levels up on a kill**.
+- **`server/test/accounts.test.ts`** (+1): a disconnect **never regresses** stored XP below the
+  client's richer complete total (the monotonic-persistence guard).
+- **`shared/test/net.test.ts`**: the v7 codec round-trips `totalXp` and rejects a non-finite
+  value; the version assertion updated to 7.
+
+### Part 11 — Server-authoritative combat, Stage 2b: the client flip (2026-07-06)
+
+The client now renders the server's enemies and fights them server-authoritatively —
+combat is truly multiplayer. This half is browser-visual (verified on the VPS combat test);
+the server it talks to is headless-proven (Parts 9–10).
+
+#### Added
+
+- **`client/src/net/netClient.ts`**: ingests the `NetEntity` (snapshot/delta) and
+  `ServerCombatSelf` frames it had been ignoring — an `enemyMap` + `lastCombatSelf`, cleared
+  on disconnect — and exposes `enemies()` (latest per-enemy state) + `combatSelf()`. Combat
+  intents reuse the existing `sendIntent`.
+- **`CombatDirector` networked mode** (`client/src/game/combatDirector.ts`): a `netSink` the
+  game wires on connect. In this mode `simTick` **mirrors the server's enemies** into the
+  shared `CombatState` as passive targets (server owns position/HP/AI; local aggro/auto/
+  abilities stripped and the leash home pinned so the local sim never moves them), ticks the
+  shared sim only for the player's own **prediction** (cooldowns / resource / cast + auto
+  feedback), then **reconciles** the player's authoritative hp / resource / alive-state from
+  `ServerCombatSelf`. `onEvent` suppresses XP / death / loot when networked (server-owned).
+  `castSlot` / `toggleAutoAttack` / `cycleTarget` / `pickTarget` / `releaseSpirit` forward
+  their intents to the server; a networked `releaseSpirit` no longer respawns locally (the
+  server owns death + respawn).
+- **`client/src/game/game.ts`**: wires `combat.setNetSink({ enemies, combatSelf, send })` to
+  the `NetClient` when the game connects.
+
+#### Fixed (adversarial review of the client flip)
+
+- **Predicted-kill flicker / lost target / model churn**: the player's predicted damage could
+  drive a mirrored enemy to 0 HP → the shared `killEntity` marked it dead and nulled the
+  player's target, then the next server frame resurrected it (new `ModelObject`), so every
+  tab-target kill flickered dead→alive and dropped the target. Networked `simTick` now ticks
+  `stepCombat` (combat resolution only — **no enemy AI**), then **re-asserts the server's enemy
+  HP/alive-state** after prediction and **restores a target** a predicted kill dropped. Enemy
+  HP + death are the server's truth, never the client's.
+- **Leashing enemies showed full HP**: mirroring the server's `state:'leash'` onto a
+  spawn-pinned enemy tripped the shared leash-arrival branch, which reset HP to full every
+  tick. Using `stepCombat` (no enemy AI) removes the leash path entirely.
+- **False death animations**: a server despawn (a kill OR just leaving interest — the client
+  can't tell) played a death animation. In networked mode a dropped enemy is now removed
+  quietly (authoritative death VFX arrive with the Stage 2c event channel).
+- **Stale mismatched enemy**: `seen.add` moved after the `makeEnemyById` null-guard so an
+  unknown `enemyId` can't shield a stale entity from cleanup. Mirrored enemies also clear the
+  boss-phase cursor so local prediction can never fire a boss summon.
+
+#### Notes
+
+- Because server enemies are mirrored into the existing local `CombatState`, the entire enemy
+  rendering / HP-nameplate / combat-HUD / targeting machinery works **unchanged** — a
+  deliberately small, high-reuse flip. Combat feel is tab-target-tolerant (~1 broadcast of
+  latency); authoritative damage floaters + enemy cast bars arrive with the Stage 2c event
+  channel. Known Stage 2c follow-ups: (a) the client's local player identity must adopt the
+  server's persisted character (level/class) on login (Onboarding-v2 character fetch) so
+  prediction and the hotbar match the server player exactly; (b) enemies currently take raw
+  ~10 Hz server positions with single-tick interpolation (a slight stutter during chases) —
+  server-timeline interpolation like the remote-player path smooths it.
+
+### Part 10 — Server-authoritative combat, Stage 2a (2026-07-06)
+
+Players now live in the server's combat sim: enemies attack them and their skill casts
+resolve server-side. Server-side + fully headless-tested; the client flip (rendering + HUD
+off the server) is Stage 2b.
+
+#### Added
+
+- **Players as combat entities** (`server/src/combat.ts`): `ServerCombat` gained
+  `addPlayer` / `removePlayer` / `syncPlayer` / `applyPlayerIntent` / `combatSelf`. On join
+  the gateway mirrors the player into the combat state (`makePlayerEntity`); each tick
+  `onTick` syncs every player's authoritative movement position in **before** `stepSim`, so
+  enemies aggro/chase/attack real players and casts resolve against them. `reviveReleased-
+Players` revives a dead player who sent `ReleaseSpirit`.
+- **Combat intent routing** (`server/src/gateway.ts`): non-`Move` intents (`CastSkill`,
+  `SetTarget`, `ToggleAutoAttack`, `ReleaseSpirit`) now route to `combat.applyPlayerIntent`
+  — the shared `tryCast` does all authority validation (class/level/GCD/cooldown/resource/
+  range). `Move` stays the movement sim's authority.
+- **Combat-self channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **6**): a new
+  `NetCombatSelf` + `ServerCombatSelf` per-connection frame carries the player's own hp /
+  maxHP / resource / resourceKind / level / targetId / cast (skill + 0..1 progress) / dead /
+  inCombat — the wire form of what the combat HUD read from the local sim. Sent beside
+  `ServerSelf`, interest-independent, with an `isNetCombatSelf` validator.
+
+#### Fixed (adversarial review of the combat server)
+
+- **Enemy deltas dropped between broadcasts**: `ServerCombat.step()` recomputed the
+  replication diff (clearing dirty flags + advancing the shadow) every tick, but the gateway
+  only broadcasts every Nth tick — so a change on a non-broadcast tick was silently lost. The
+  diff now refreshes **once per broadcast** (`ServerCombat.refreshDiff()`, called from
+  `broadcast()`), never inside `step()`.
+- **Boss adds leaked forever**: boss-summoned adds aren't owned by a spawner slot, so dead
+  ones were never reaped and live ones never despawned. `pruneAdds()` now removes a dead add
+  immediately and a live add once its boss is gone / dead / disengaged (adds exist only for an
+  active fight).
+- **Instant in-place resurrection**: `ReleaseSpirit` revived a dead player the very next tick.
+  A `RELEASE_DELAY_TICKS` (~2 s) gate now prevents chain-res; full death (Waystone relocation
+  - penalty, coordinated with the movement authority) is Stage 2c.
+- **Ally skills could target enemies** (shared `tryCast`): an `ally`-target heal/shield/buff
+  validated range but not hostility, so a Priest could heal an enemy (e.g. keep a rival's boss
+  topped up). `tryCast` now rejects an ally cast on a hostile target — symmetric to the
+  enemy-target check. (Pre-existing shared-sim gap; also fixes single-player combat.)
+
+#### Tests
+
+- `server/test/combat.test.ts` (+6): a player's instant `fireBlast` applies damage + spends
+  mana server-side; an enemy aggros and damages a stationary player (in combat); a released
+  spirit revives only after the delay; a mid-cadence enemy change survives to the next diff;
+  boss adds are reaped; over the wire the combat-self replicates (reflecting the **persisted**
+  character's level, not the hello's claim) and a `SetTarget` intent round-trips.
+- `shared/test/combat.test.ts`: an ally-target skill on a hostile enemy is rejected (no heal).
+- `shared/test/net.test.ts`: `ServerCombatSelf` round-trip + rejection; protocol → 6.
+
+### Part 9 — Server-authoritative enemies, Stage 1 (2026-07-06)
+
+The first slice of the combat migration: the server owns the world's enemy population and
+replicates it to clients. Server-side + fully headless-tested; the client renders these
+enemies in Stage 2 (until then it still runs its local combat and ignores the new frames).
+
+#### Added
+
+- **`server/src/combat.ts` — `ServerCombat`**: one authoritative combat sim for the whole
+  world. Each tick it steps the deterministic shared spawner over **all** `WORLD_SPAWNS`
+  regions (the server owns the whole map, so it spawns globally, not proximity-gated like the
+  client) then `stepSim` (enemy AI + combat resolution) — the same pure shared code the
+  client ran locally. Exposes `netEntities()`, per-enemy `isDirty()` (via a quantised
+  change-digest so idle enemies make no traffic), `hasChanges()`, and `removed()`.
+- **Entity replication protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **5**):
+  a `NetEntity { id, enemyId, name, level, x/y/z/yaw, hp, maxHP, state }` now rides
+  `ServerSnapshot` (`entities`) and `ServerDelta` (`entities` + `goneEntities`), with an
+  `isNetEntity` validator. Decoding is tolerant of a missing `entities` field (defaults to
+  `[]`) so the change is forgiving.
+- **Entity interest** (`server/src/interest.ts`): `buildEntityCellIndex` + `visibleEntities`
+  — the enemy analogue of the player 3×3 chunk policy. The gateway diffs enemies per
+  connection (ENTER / UPDATE / LEAVE) against a new `knownEntities` set, in the same delta
+  frame as players; the join snapshot seeds the enemies in the joiner's interest.
+
+#### Changed
+
+- **`server/src/gateway.ts`**: constructs a `ServerCombat` from `sim.world`, steps it each
+  tick (`onTick`), and merges enemy ENTER/UPDATE/LEAVE into the per-subscriber snapshot/delta.
+- **`server/src/sim.ts`**: `ServerSim.world` is now public so the gateway can build the
+  combat sim from the shared world.
+
+#### Tests
+
+- `server/test/entities.test.ts` (+3): deterministic spawn + idle (two `ServerCombat` sims
+  agree byte-for-byte; enemies full-HP, `state:'idle'`, within region radius), no wire
+  changes once settled, and the replication path (a joiner at the boar region sees the boars
+  as `NetEntity`; a distant plaza player does not).
+- `shared/test/net.test.ts`: `NetEntity` snapshot/delta round-trip, malformed-entity
+  rejection, pre-v5 forward-compat, protocol version → 5.
+
+### Part 8 — MMO-only pivot (2026-07-06)
+
+Direction change (owner call): Pathlands is now **MMO-only** — the standalone offline
+single-player build is retired. The client always connects to the authoritative server and
+always requires an account login.
+
+#### Added
+
+- **`client/src/net/serverUrl.ts`** — `resolveServerUrl()` returns `VITE_PATHLANDS_SERVER`
+  when set, else the page's own origin with a `ws(s)://` scheme. The VPS deploy (nginx serves
+  the client and proxies the WebSocket on the same host) is therefore zero-config.
+
+#### Changed
+
+- **`App.tsx`** — the server URL is always resolved; the account **login screen always
+  gates** the world (the `VITE_PATHLANDS_SERVER !== undefined` opt-in checks are gone), and
+  the cloud-save upload is unconditional.
+- **`game.ts`** — the `NetClient` + `RemotePlayerRenderer` are **always constructed** and the
+  socket always connects (no more single-player `net = null` branch). Fields stay nullable so
+  the existing `this.net?.` guards read unchanged.
+- **Docs** — `CLAUDE.md` (opening direction + Deployment section), ROADMAP, ARCHITECTURE,
+  SERVER_DEPLOY: the VPS is canonical; the client has a hard server dependency by design;
+  local IndexedDB saves are a bootstrap cache with the server as source of truth.
+
+### Part 7 — Presence & emotes (2026-07-06)
+
+Make other players legible in the shared world: see who they are, and let them emote.
+
+#### Added
+
+- **Remote-player nameplates** (`client/src/game/game.ts`): each server-reported remote
+  now gets a friendly **name + level** plate, projected from its interpolated head position
+  and merged into the existing nameplate layer (no HP bar — friendlies aren't targets).
+  Client-only; single-player unchanged.
+- **Emotes** (`shared/src/data/emotes.ts`): a data-driven 15-command table (`/wave`,
+  `/bow`, `/cheer`, `/dance`, `/roar`, …) with `findEmote` / `emoteCommands` helpers.
+  Typing `/wave` broadcasts a third-person action line everyone sees — "Alia waves." —
+  formatted **server-side** under the authoritative display name and rendered as an italic
+  emote line. The client validates the command against the shared table first (instant
+  "unknown command" / `/emotes` help without a round-trip); the server re-validates and
+  drops an unknown command. Carried on the existing chat channel via a new optional
+  `ServerChat.emote` flag (no new client message; still protocol v4).
+
+#### Tests
+
+- `shared/test/emotes.test.ts` (+3): command uniqueness/format, non-empty phrases,
+  case-insensitive `findEmote` + unknown → null.
+- `server/test/chat.test.ts` (+2): a known `/wave` broadcasts `emote:true` "waves." under
+  the server name; an unknown `/command` produces no broadcast.
+- `shared/test/net.test.ts`: `ServerChat.emote` codec round-trip + non-boolean rejection.
+
+### Part 6 — Chat: the first social channel (2026-07-06)
+
+Global chat so players in the same world can talk — the first slice of the Social layer,
+chosen for being fully server-testable and the thing a first playtest most wants. The wire
+codec is the trust boundary; the server is authoritative over identity and rate.
+
+#### Added
+
+- **Chat protocol** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **4**): a
+  `ClientChat {text}` and a `ServerChat {fromId, from, text, tick}`, plus `MAX_CHAT_LEN`
+  (300). Decoders reject a non-string / empty / over-cap line at the boundary.
+- **Server chat** (`server/src/gateway.ts`): the `chat` frame is accepted only from a
+  **joined** session, **rate-limited per connection** (≥ 700 ms between lines), **sanitised**
+  (`sanitizeChat` strips C0/C1 control chars incl. newlines, collapses whitespace, caps at
+  200 chars, drops an empty result), and **rebroadcast to every joined session** — the
+  sender included — under the **server-side display name**, never the client's copy (no
+  impersonation).
+- **Client** (`client/src/net/netClient.ts`): `NetClient.sendChat(text)` and an `onChat`
+  callback that flags a line `self` when `fromId` is our own session id.
+- **Chat store slice** (`client/src/game/store.ts`): `chat: ChatLine[]` (capped at
+  `CHAT_HISTORY_MAX` = 100), `pushChat`, and a `chatTyping` flag with `setChatTyping`; a
+  `GameCommands.sendChat`.
+- **Chat panel** (`client/src/ui/Chat.tsx`): a bottom-left scrollback + input that opens on
+  **Enter**, sends on Enter, cancels on **Esc**; own vs. others colour-coded; auto-scrolls;
+  hidden entirely in single-player (`store.net === null`). Wired into `App.tsx`.
+
+#### Changed
+
+- **Input gating while typing**: `Input.onKeyDown` (`client/src/game/input.ts`) now ignores
+  keystrokes whose target is a focused text field (and no longer `preventDefault`s Space/Tab
+  there), so typing works normally; keyup is still processed unconditionally so a key held
+  into a focus change is never left stuck down. `game.ts` additionally suspends all gameplay
+  key actions and freezes the player (`freeInput`) while `chatTyping`, and the chat panel
+  releases pointer-lock on open so mouse-look can't accumulate a snap.
+
+#### Tests
+
+- `server/test/chat.test.ts` (+7): two-client delivery (sender included), server-name
+  authority (no spoof), control-char/newline sanitising, length cap, whitespace-only drop,
+  rate-limit burst, and a pre-hello socket that can neither send nor receive chat.
+- `shared/test/net.test.ts`: chat codec round-trip + rejection cases; protocol version → 4.
+
+### Part 5 — Onboarding v2: client login (2026-07-06)
+
+Closes the accounts loop: the Part-4 server is now driven from the browser. Client-only
+and **opt-in** (`VITE_PATHLANDS_SERVER`) — single-player is unchanged and never sees a login.
+
+#### Added
+
+- **Auth API client** (`client/src/net/authClient.ts`): `register` / `login` (→ session
+  token), `fetchCharacter` / `putCharacter`, and a `httpBase` helper that maps the `wss://`
+  game URL to `https://` for the REST endpoints. Server error codes map to friendly copy.
+- **`LoginScreen`** (`client/src/ui/LoginScreen.tsx`): a themed email/password form with a
+  login/register toggle, inline errors, and a busy state. Rendered as a gate before the
+  character flow whenever a server is configured.
+- **Token wiring**: the session token is persisted in `localStorage` and threaded
+  `App → Game → NetClient` into the ws hello, so the connection binds to the account and the
+  server restores the character's last position. On entering the world the local character is
+  **best-effort uploaded** to the account (cloud-save migration). `NetClient` gained an
+  `onAuthError` callback (fired on a server `auth` error) → App clears the token and returns
+  to the login screen; a rejected token no longer reconnect-loops.
+
+### Part 4 — Accounts & persistence (server foundation) (2026-07-06)
+
+Real accounts and durable characters, dependency-free (Node `crypto` only — no native
+argon2 to break a Docker build) and fully headless-tested.
+
+#### Added
+
+- **Auth** (`server/src/auth.ts`): scrypt password hashing (per-password random salt,
+  constant-time comparison) and compact **HS256 JWT** session tokens (`Auth.issue`/`verify`
+  with expiry + signature-tamper rejection). No dependencies; argon2id is a documented
+  drop-in upgrade later.
+- **Persistence** (`server/src/store.ts`): a `Store` interface (accounts + character
+  blobs) with a durable **`FileStore`** — JSON on disk, debounced **atomic** writes
+  (temp-file + rename), loads on start, tolerates a missing/corrupt file — as the default,
+  and a `MemoryStore` for tests. Characters are stored as the opaque `CharacterSave` blob
+  (a cloud save). PostgreSQL stays the staged scale option (compose `--profile db`).
+- **REST auth API** (`server/src/httpApi.ts`, served on the existing HTTP port): `POST
+/auth/register` and `/auth/login` → a session token; `GET`/`PUT /character` (bearer-auth)
+  for the character cloud save. Per-IP rate-limited, request-body size-capped, and
+  structurally validated at the boundary.
+- **ws session binding**: the hello now carries an optional account `token`
+  (`NET_PROTOCOL_VERSION` → 3, decoder validates it). A valid token binds the session,
+  loads the persisted character (its identity + last position override the guest fields),
+  and the server writes the **authoritative position back** on disconnect and every 30 s —
+  so a character resumes where it logged off. An invalid token is rejected outright (no
+  silent guest fallback); absent ⇒ an ephemeral guest session (the prior behaviour).
+- Tests (+14 → **337**): auth crypto (hash round-trip / wrong-password / salt uniqueness /
+  JWT expiry+tamper), store CRUD + FileStore durability across reopen, and the full
+  register → login → cloud-save → token-session → position-persists-across-reconnect flow
+  (`server/test/{auth,store,accounts}.test.ts`).
+
+#### Changed
+
+- `docker-compose.yml`: the `game` service now takes a required `AUTH_SECRET` (from a
+  `.env` file — compose refuses to start without it) and mounts a `gamedata` volume at
+  `/data` for the FileStore. `sim.join` accepts an optional persisted spawn (validated
+  in-bounds). The entry point warns and mints an ephemeral secret if `AUTH_SECRET` is unset.
+
+### Part 3 — Server Ops: deployable to a VPS (2026-07-06)
+
+The authoritative server can now run on a Linux VPS behind TLS, so the two-player movement
+slice is testable with real players (ARCH §8, first slice of the Ops & launch deliverable).
+
+#### Added
+
+- **HTTP health/status endpoint.** The gateway now creates its own `http.Server` and lets
+  `ws` ride on it, so `wss://` upgrades and plain-HTTP routes share one port: `GET /healthz`
+  (returns `ok`, for nginx upstream checks and the Docker `HEALTHCHECK`) and `GET /status`
+  (JSON: `status`, `protocol`, `seed`, `tickRate`, `serverTick`, `players`, `connections`,
+  `uptimeMs`). Covered by `server/test/health.test.ts`.
+- **`server/Dockerfile`** — Node 22 + pnpm; a **filtered install** (`--filter
+"@pathlands/server..."`) pulls only the `server` + `shared` workspaces (the client's
+  `three`/`react`/`vite` are never fetched), runs unprivileged as the `node` user, and
+  starts via `tsx` with `shared/` imported unchanged. Includes a container `HEALTHCHECK`.
+- **`docker-compose.yml`** — `game` + `nginx` (TLS/wss reverse proxy) core services; a
+  `db` (PostgreSQL 16) service is declared behind a `--profile db` for the later accounts
+  phase (the server doesn't use it yet).
+- **`deploy/nginx/pathlands.conf`** — TLS termination, port-80→443 redirect, WebSocket
+  upgrade proxy to the `game` service, `/healthz` + `/status` passthrough, and long
+  read/send timeouts for persistent game sockets.
+- **`docs/SERVER_DEPLOY.md`** — the VPS runbook: DNS A-record → certbot standalone → `docker
+compose up -d --build` → build the client with `VITE_PATHLANDS_SERVER=wss://…` → two-browser
+  test, plus operating (status/logs/update), weekly TLS renewal via cron, and the
+  deferred-Postgres note. `.dockerignore` keeps the build context to the server source.
+
 ### Part 2 — Reconciliation, interest management, connection UX, server hardening (2026-07-06)
 
 Built on top of Part 1 after an **adversarial audit** of the Part-1 netcode (which surfaced the

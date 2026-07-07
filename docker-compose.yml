@@ -1,0 +1,68 @@
+# Pathlands MMO — Phase-6 deployment (ARCH §8). The `web` tier builds the static client and
+# serves it with nginx (TLS), which also reverse-proxies the `game` server's wss + HTTP API on
+# the same origin. One command brings up the whole stack. See docs/SERVER_DEPLOY.md.
+#
+#   docker compose up -d --build      # build the client + start the game server + nginx
+#   docker compose --profile db up -d # also start PostgreSQL (for the accounts phase)
+
+services:
+  game:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: pathlands-server
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8080'
+      # REQUIRED in production: a stable random secret for signing session tokens.
+      # Put it in a .env file next to this compose (AUTH_SECRET=...). Changing it logs
+      # everyone out. Generate one with:  openssl rand -base64 32
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in a .env file}
+      # Accounts + characters persist here (mounted volume below).
+      DATA_FILE: /data/pathlands.json
+      # Optional tuning (defaults are sensible — see server/src/config.ts):
+      # MAX_CONNECTIONS: '512'
+      # MAX_MSGS_PER_SEC: '60'
+      # HEARTBEAT_MS: '30000'
+    volumes:
+      - gamedata:/data
+    # Not published to the host — nginx is the only thing that talks to it.
+    expose:
+      - '8080'
+
+  web:
+    # Builds the static client (three/react/vite) and serves it with nginx, which also
+    # reverse-proxies the game server. Multi-stage — the VPS needs only Docker, no host Node.
+    build:
+      context: .
+      dockerfile: deploy/web/Dockerfile
+    image: pathlands-web
+    restart: unless-stopped
+    depends_on:
+      - game
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      # The site config (edit the domain here; a restart re-reads it, no rebuild needed).
+      - ./deploy/nginx/pathlands.conf:/etc/nginx/conf.d/default.conf:ro
+      # certbot on the host writes certs here; mounted read-only for TLS termination.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+
+  # PostgreSQL persistence lands with the accounts phase. Declared now so the compose is
+  # ready; the game server does not connect to it yet. Start with `--profile db`.
+  db:
+    image: postgres:16-alpine
+    profiles: ['db']
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pathlands
+      POSTGRES_USER: pathlands
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  gamedata:
+  pgdata:

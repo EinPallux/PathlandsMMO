@@ -13,14 +13,36 @@
 // validation (range, cooldown, resource, ownership) stays in the sim, where it has
 // always lived — the server is authoritative by construction.
 
+import type { ItemDef } from '../data/items.js';
 import type { CastSkillIntent, Intent, MoveIntent } from '../sim/intents.js';
 import type { MoveState, PlayerPhysics } from '../sim/types.js';
 
 /**
  * Bumped on any breaking wire change; the server rejects a mismatched client.
- * v2 added the per-connection `self` reconciliation channel (ServerSelf).
+ * v2 added the per-connection `self` reconciliation channel (ServerSelf);
+ * v3 added the optional account `token` on the hello (accounts & persistence);
+ * v4 added the chat channel (ClientChat / ServerChat);
+ * v5 added server-authoritative enemy entities (NetEntity in snapshot / delta);
+ * v6 added the per-connection combat-self channel (ServerCombatSelf);
+ * v7 added server-authoritative XP progression (totalXp on NetCombatSelf);
+ * v8 added server-authoritative loot: the per-kill ServerKill credit (enemyId + gold + items);
+ * v9 added the combat-events channel (ServerCombatEvents — authoritative floaters + death VFX);
+ * v10 added enemy cast replication (castSkill / castFrac on NetEntity — the target-frame cast bar);
+ * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite);
+ * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide);
+ * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag);
+ * v14 added the online roster query (ClientWho / ServerWho).
  */
-export const NET_PROTOCOL_VERSION = 2;
+export const NET_PROTOCOL_VERSION = 14;
+
+/** Max players in one party (GDD §Party). */
+export const MAX_PARTY = 4;
+
+/** Valid party actions on the wire (validated at the boundary; the server enforces semantics). */
+const PARTY_ACTIONS = ['invite', 'accept', 'decline', 'leave', 'kick'];
+
+/** Max chat text length accepted at the wire (the server trims further). */
+export const MAX_CHAT_LEN = 300;
 
 /** How another player appears to everyone else — the replication view of a player. */
 export interface NetPlayer {
@@ -36,6 +58,35 @@ export interface NetPlayer {
   /** Facing yaw in radians. */
   yaw: number;
   move: MoveState;
+}
+
+/**
+ * How a server-authoritative enemy appears to clients — the replication view of a
+ * `CombatEntity` of faction 'enemy'. Position/hp/state are the server's truth; the client
+ * renders and interpolates it exactly like a remote player (it never simulates the enemy).
+ * `enemyId` is the EnemyDef id so the client picks the right voxel model; `state` is the
+ * AI state ('idle' | 'aggro' | 'leash') for animation selection.
+ */
+export interface NetEntity {
+  id: string;
+  /** EnemyDef id (e.g. 'wolf'), for model selection on the client. */
+  enemyId: string;
+  name: string;
+  level: number;
+  x: number;
+  y: number;
+  z: number;
+  /** Facing yaw in radians. */
+  yaw: number;
+  hp: number;
+  maxHP: number;
+  /** AI state for animation: 'idle' | 'aggro' | 'leash'. */
+  state: string;
+  /** Skill id the enemy is currently casting, or null — drives the target-frame cast bar +
+   * the wind-up animation. Server-authoritative (the client never simulates enemy casts). */
+  castSkill: string | null;
+  /** Cast progress 0..1 (0 when not casting). */
+  castFrac: number;
 }
 
 /**
@@ -101,6 +152,13 @@ export interface ClientHello {
   name: string;
   cls: string;
   level: number;
+  /**
+   * Optional account session token (from POST /auth/login). When present and valid the
+   * server binds the session to that account and loads the persisted character (its
+   * class/level/position override the name/cls/level fields, which are the guest identity
+   * used when no token is supplied). Absent ⇒ an ephemeral guest session.
+   */
+  token?: string;
 }
 
 /**
@@ -123,7 +181,44 @@ export interface ClientPing {
   clientTime: number;
 }
 
-export type ClientMessage = ClientHello | ClientIntent | ClientPing;
+/**
+ * A line of chat typed by the player. The server sanitises and trims `text`, applies a
+ * per-connection rate limit, and rebroadcasts it as a ServerChat to every joined session.
+ * Untrusted: the server never echoes the raw text — it re-derives the display name and
+ * caps length itself, so a client can't spoof another player or blow the wire budget.
+ */
+export interface ClientChat {
+  t: 'chat';
+  text: string;
+  /**
+   * A directed whisper's target SESSION id (the client resolves a typed name → id against its
+   * party roster + visible players, so it's unambiguous — names are not unique). Absent for an
+   * ordinary (global) say/emote line. The server validates the id is a joined player and routes
+   * the line only to that recipient + an echo to the sender.
+   */
+  to?: string;
+}
+
+/**
+ * A party control action. `invite` / `kick` carry the target's SESSION id (the client has it from
+ * the snapshot / roster — an id is unambiguous where player names are not); `accept` / `decline`
+ * act on the recipient's one pending invite; `leave` drops the sender from its party. All are
+ * validated server-side (the server confirms the id is a joined player / a party member).
+ */
+export interface ClientParty {
+  t: 'party';
+  action: 'invite' | 'accept' | 'decline' | 'leave' | 'kick';
+  /** Target player session id for `invite` / `kick`; ignored otherwise. */
+  target?: string;
+}
+
+/** A request for the current online-player roster (answered with a ServerWho). No payload. */
+export interface ClientWho {
+  t: 'who';
+}
+
+export type ClientMessage =
+  ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty | ClientWho;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -148,6 +243,8 @@ export interface ServerSnapshot {
   t: 'snapshot';
   tick: number;
   players: NetPlayer[];
+  /** Interest-filtered enemy entities around the joiner (server-authoritative). */
+  entities: NetEntity[];
 }
 
 /**
@@ -161,6 +258,10 @@ export interface ServerDelta {
   tick: number;
   players: NetPlayer[];
   gone: string[];
+  /** Enemy entities that entered the recipient's interest or changed within it. */
+  entities: NetEntity[];
+  /** Enemy ids to DESPAWN: left interest, died, or were removed from the sim. */
+  goneEntities: string[];
 }
 
 /**
@@ -174,6 +275,94 @@ export interface ServerSelf {
   tick: number;
   ackedSeq: number;
   phys: NetSelf;
+}
+
+/**
+ * The recipient's OWN combat state — health, resource, target, cast, and combat flags —
+ * projected from its authoritative player `CombatEntity` on the server. Sent per-connection
+ * at the broadcast cadence (independent of interest, like ServerSelf). This is the wire form
+ * of what the client's combat HUD used to read from its LOCAL combat sim; server-authoritative
+ * now (ARCH §7). Kinematics stay on the ServerSelf channel — this carries only combat.
+ */
+export interface NetCombatSelf {
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  /** ResourceKind value as a string (e.g. 'rage', 'mana'); decouples the wire from the enum. */
+  resourceKind: string;
+  level: number;
+  /** Total lifetime XP (the client derives level + xp-into-level; server-authoritative). */
+  totalXp: number;
+  /** Current target entity id (player or enemy), or null. */
+  targetId: string | null;
+  /** Skill id currently being cast, or null when not casting. */
+  castSkill: string | null;
+  /** Cast progress 0..1 (0 when not casting). */
+  castFrac: number;
+  dead: boolean;
+  inCombat: boolean;
+}
+
+/** The recipient's own combat state (health / resource / target / cast). */
+export interface ServerCombatSelf {
+  t: 'combatSelf';
+  tick: number;
+  self: NetCombatSelf;
+}
+
+/** One stack of looted items on the wire — a full item definition (loot generates unique,
+ * rolled items, not registry ids) plus a quantity. Same shape as the save's `ItemStackSave`. */
+export interface NetItemStack {
+  item: ItemDef;
+  qty: number;
+}
+
+/**
+ * A kill credited to the recipient — the server-authoritative outcome of THIS player landing
+ * the killing blow on an enemy. `enemyId` is the enemy DEFINITION id (e.g. 'thornbackBoar')
+ * so the client can advance its (still client-side) quest / bounty objectives; `gold` + `items`
+ * are the server's authoritative loot roll for the kill (possibly empty). Sent once per kill to
+ * the killer only. The client is the inventory/gold AGGREGATOR (it also holds quest / craft /
+ * vendor changes), so it applies this grant onto its own bag under its own capacity rules — the
+ * server owns WHAT dropped, the client owns where it goes. (Full server-side inventory authority
+ * follows when quests/crafting/vendors migrate.)
+ */
+export interface ServerKill {
+  t: 'kill';
+  tick: number;
+  enemyId: string;
+  gold: number;
+  items: NetItemStack[];
+}
+
+/**
+ * One authoritative combat visual to play at a world position: a damage / heal floater (+ hit
+ * spark), an enemy death poof, or a boss-phase line. Purely cosmetic — the numbers that matter
+ * (hp / resource) ride the combat-self channel; this makes the WORLD's combat legible (incoming
+ * hits on you, other players' fights, monster deaths) which client prediction alone can't show.
+ * The position is server-resolved so the client renders it even for a corpse it has already
+ * dropped.
+ */
+export interface NetCombatEvent {
+  kind: 'damage' | 'heal' | 'death' | 'boss';
+  x: number;
+  y: number;
+  z: number;
+  /** Damage / heal amount (0 for death / boss). */
+  amount: number;
+  /** Whether the hit crit (false for death / boss). */
+  crit: boolean;
+  /** Boss-phase line (only on `kind:'boss'`). */
+  text?: string;
+}
+
+/** A batch of authoritative combat visuals for the recipient's vicinity this broadcast. Interest-
+ * filtered, and the recipient's OWN outgoing hits are omitted (the client predicts those). */
+export interface ServerCombatEvents {
+  t: 'fx';
+  tick: number;
+  events: NetCombatEvent[];
 }
 
 /** Echo of a ping, with the server tick for a coarse clock estimate. */
@@ -191,8 +380,109 @@ export interface ServerError {
   message: string;
 }
 
+/**
+ * A chat line rebroadcast to every joined session. `fromId` is the sender's session id
+ * (so the client can flag its own lines) and `from` is the server-authoritative display
+ * name — never the client-supplied name — so no player can impersonate another. When
+ * `emote` is set, `text` is a third-person action phrase and the client renders it as
+ * `${from} ${text}` (an emote line) rather than `${from}: ${text}`.
+ */
+export interface ServerChat {
+  t: 'chat';
+  fromId: string;
+  from: string;
+  text: string;
+  tick: number;
+  emote?: boolean;
+  /**
+   * A directed whisper. `from` is the OTHER party's display name in both copies (the recipient's
+   * sender, the sender's echo target); the client renders `From ${from}:` when the line isn't its
+   * own (fromId ≠ you) and `To ${from}:` when it is (fromId = you).
+   */
+  whisper?: boolean;
+}
+
+/** One member of a party, as the client's party panel shows them. */
+export interface NetPartyMember {
+  /** Session id (matches NetPlayer.id — the client can cross-reference for position). */
+  id: string;
+  name: string;
+  /** CharacterClass value as a string. */
+  cls: string;
+  level: number;
+}
+
+/**
+ * The recipient's current party roster. `members` is empty (and `leaderId` '') when the recipient
+ * is solo — so this frame both forms and disbands the party panel. Sent to every affected member
+ * on any party change (join / leave / kick / disband / disconnect).
+ */
+export interface ServerPartyState {
+  t: 'partyState';
+  members: NetPartyMember[];
+  leaderId: string;
+}
+
+/** A pending party invite the recipient can accept / decline (from a server-authoritative name). */
+export interface ServerPartyInvite {
+  t: 'partyInvite';
+  fromId: string;
+  fromName: string;
+}
+
+/** One party member's live combat vitals, for the ally frames (keyed by session id). */
+export interface NetPartyVital {
+  id: string;
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  /** ResourceKind value as a string (e.g. 'rage', 'mana') — tints the resource bar. */
+  resourceKind: string;
+  /** True when the member is dead (grey out the frame). */
+  dead: boolean;
+}
+
+/**
+ * Live vitals for the recipient's whole party (including themselves), sent at broadcast cadence.
+ * Unlike entity replication this is NOT interest-filtered — you see your party's health across the
+ * world, apart or together. Sent only to players who are in a party; solo players get none.
+ */
+export interface ServerPartyVitals {
+  t: 'partyVitals';
+  tick: number;
+  vitals: NetPartyVital[];
+}
+
+/** One online player in the /who roster (identity only — no position). */
+export interface NetWhoEntry {
+  name: string;
+  level: number;
+  /** CharacterClass value as a string. */
+  cls: string;
+}
+
+/** The current online-player roster, in reply to a ClientWho (capped server-side). */
+export interface ServerWho {
+  t: 'who';
+  players: NetWhoEntry[];
+}
+
 export type ServerMessage =
-  ServerWelcome | ServerSnapshot | ServerDelta | ServerSelf | ServerPong | ServerError;
+  | ServerWelcome
+  | ServerSnapshot
+  | ServerDelta
+  | ServerSelf
+  | ServerCombatSelf
+  | ServerKill
+  | ServerCombatEvents
+  | ServerPartyState
+  | ServerPartyInvite
+  | ServerPartyVitals
+  | ServerWho
+  | ServerPong
+  | ServerError
+  | ServerChat;
 
 // ---------------------------------------------------------------------------
 // Codec — the one place the wire format lives.
@@ -308,10 +598,22 @@ export function decodeClient(raw: string): ClientMessage | null {
   const o = parseObject(raw);
   if (o === null) return null;
   switch (o.t) {
-    case 'hello':
+    case 'hello': {
       if (!isFiniteNumber(o.protocol) || !isString(o.name) || !isString(o.cls)) return null;
       if (!isFiniteNumber(o.level)) return null;
-      return { t: 'hello', protocol: o.protocol, name: o.name, cls: o.cls, level: o.level };
+      const hello: ClientHello = {
+        t: 'hello',
+        protocol: o.protocol,
+        name: o.name,
+        cls: o.cls,
+        level: o.level,
+      };
+      if (o.token !== undefined) {
+        if (!isString(o.token)) return null;
+        hello.token = o.token;
+      }
+      return hello;
+    }
     case 'intent': {
       // seq/tick must be non-negative integers: the server's monotonic seq gate would be
       // poisoned by a huge or fractional value (dropping all later inputs of that session).
@@ -323,6 +625,28 @@ export function decodeClient(raw: string): ClientMessage | null {
     case 'ping':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime)) return null;
       return { t: 'ping', id: o.id, clientTime: o.clientTime };
+    case 'chat': {
+      // Structural only: non-empty string, capped at the wire limit. The server still
+      // trims whitespace, collapses control chars, and rate-limits before rebroadcast.
+      if (!isString(o.text) || o.text.length === 0 || o.text.length > MAX_CHAT_LEN) return null;
+      // An optional whisper target (session id); the server validates it's a joined player.
+      if (o.to !== undefined && (!isString(o.to) || o.to.length > MAX_CHAT_LEN)) return null;
+      const chat: ClientChat = { t: 'chat', text: o.text };
+      if (o.to !== undefined) chat.to = o.to;
+      return chat;
+    }
+    case 'who':
+      return { t: 'who' };
+    case 'party': {
+      if (!isString(o.action) || !PARTY_ACTIONS.includes(o.action)) return null;
+      // A target name (invite / kick) is optional here; the server validates + caps it.
+      if (o.target !== undefined && (!isString(o.target) || o.target.length > MAX_CHAT_LEN)) {
+        return null;
+      }
+      const party: ClientParty = { t: 'party', action: o.action as ClientParty['action'] };
+      if (o.target !== undefined) party.target = o.target;
+      return party;
+    }
     default:
       return null;
   }
@@ -344,6 +668,33 @@ function isNetPlayer(v: unknown): v is NetPlayer {
   );
 }
 
+function isNetEntity(v: unknown): v is NetEntity {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.id) &&
+    isString(o.enemyId) &&
+    isString(o.name) &&
+    isFiniteNumber(o.level) &&
+    isFiniteNumber(o.x) &&
+    isFiniteNumber(o.y) &&
+    isFiniteNumber(o.z) &&
+    isFiniteNumber(o.yaw) &&
+    isFiniteNumber(o.hp) &&
+    isFiniteNumber(o.maxHP) &&
+    isString(o.state) &&
+    (o.castSkill === null || isString(o.castSkill)) &&
+    isFiniteNumber(o.castFrac)
+  );
+}
+
+/** Validate an optional NetEntity[] wire field, returning [] when absent. Null ⇒ invalid. */
+function decodeEntities(v: unknown): NetEntity[] | null {
+  if (v === undefined) return [];
+  if (!Array.isArray(v) || !v.every(isNetEntity)) return null;
+  return v;
+}
+
 function isNetSelf(v: unknown): v is NetSelf {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
@@ -358,6 +709,58 @@ function isNetSelf(v: unknown): v is NetSelf {
     isBool(o.onGround) &&
     isBool(o.inWater) &&
     isString(o.move)
+  );
+}
+
+function isNetCombatSelf(v: unknown): v is NetCombatSelf {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isFiniteNumber(o.hp) &&
+    isFiniteNumber(o.maxHP) &&
+    isFiniteNumber(o.resource) &&
+    isFiniteNumber(o.maxResource) &&
+    isString(o.resourceKind) &&
+    isFiniteNumber(o.level) &&
+    isFiniteNumber(o.totalXp) &&
+    (o.targetId === null || isString(o.targetId)) &&
+    (o.castSkill === null || isString(o.castSkill)) &&
+    isFiniteNumber(o.castFrac) &&
+    isBool(o.dead) &&
+    isBool(o.inCombat)
+  );
+}
+
+/**
+ * A looted item stack on the wire. This is a SERVER→client frame (the server is trusted), so
+ * we do a structural sanity check rather than full item validation: an `item` object with a
+ * string id + name (enough that a corrupted frame can't crash the bag UI) and a finite qty.
+ * The `item` is passed through as an `ItemDef` — the client consumes the same shape from its
+ * own save.
+ */
+function isNetItemStack(v: unknown): v is NetItemStack {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  if (!isFiniteNumber(o.qty) || typeof o.item !== 'object' || o.item === null) return false;
+  const item = o.item as Record<string, unknown>;
+  return isString(item.id) && isString(item.name);
+}
+
+const FX_KINDS = new Set(['damage', 'heal', 'death', 'boss']);
+
+/** Validate one combat-visual record. Position + amount finite; kind known; optional boss text. */
+function isNetCombatEvent(v: unknown): v is NetCombatEvent {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.kind) &&
+    FX_KINDS.has(o.kind) &&
+    isFiniteNumber(o.x) &&
+    isFiniteNumber(o.y) &&
+    isFiniteNumber(o.z) &&
+    isFiniteNumber(o.amount) &&
+    isBool(o.crit) &&
+    (o.text === undefined || isString(o.text))
   );
 }
 
@@ -387,18 +790,55 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'snapshot': {
       if (!isFiniteNumber(o.tick) || !Array.isArray(o.players)) return null;
       if (!o.players.every(isNetPlayer)) return null;
-      return { t: 'snapshot', tick: o.tick, players: o.players };
+      const entities = decodeEntities(o.entities);
+      if (entities === null) return null;
+      return { t: 'snapshot', tick: o.tick, players: o.players, entities };
     }
     case 'delta': {
       if (!isFiniteNumber(o.tick) || !Array.isArray(o.players) || !Array.isArray(o.gone)) {
         return null;
       }
       if (!o.players.every(isNetPlayer) || !o.gone.every(isString)) return null;
-      return { t: 'delta', tick: o.tick, players: o.players, gone: o.gone };
+      const entities = decodeEntities(o.entities);
+      if (entities === null) return null;
+      const goneEntities =
+        o.goneEntities === undefined
+          ? []
+          : Array.isArray(o.goneEntities) && o.goneEntities.every(isString)
+            ? (o.goneEntities as string[])
+            : null;
+      if (goneEntities === null) return null;
+      return { t: 'delta', tick: o.tick, players: o.players, gone: o.gone, entities, goneEntities };
     }
     case 'self': {
       if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.ackedSeq) || !isNetSelf(o.phys)) return null;
       return { t: 'self', tick: o.tick, ackedSeq: o.ackedSeq, phys: o.phys };
+    }
+    case 'combatSelf': {
+      if (!isFiniteNumber(o.tick) || !isNetCombatSelf(o.self)) return null;
+      return { t: 'combatSelf', tick: o.tick, self: o.self };
+    }
+    case 'kill': {
+      if (
+        !isFiniteNumber(o.tick) ||
+        !isString(o.enemyId) ||
+        !isFiniteNumber(o.gold) ||
+        !Array.isArray(o.items) ||
+        !o.items.every(isNetItemStack)
+      ) {
+        return null;
+      }
+      return { t: 'kill', tick: o.tick, enemyId: o.enemyId, gold: o.gold, items: o.items };
+    }
+    case 'fx': {
+      if (
+        !isFiniteNumber(o.tick) ||
+        !Array.isArray(o.events) ||
+        !o.events.every(isNetCombatEvent)
+      ) {
+        return null;
+      }
+      return { t: 'fx', tick: o.tick, events: o.events };
     }
     case 'pong':
       if (!isFiniteNumber(o.id) || !isFiniteNumber(o.clientTime) || !isFiniteNumber(o.serverTick)) {
@@ -408,7 +848,82 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'error':
       if (!isString(o.code) || !isString(o.message)) return null;
       return { t: 'error', code: o.code, message: o.message };
+    case 'chat': {
+      if (
+        !isString(o.fromId) ||
+        !isString(o.from) ||
+        !isString(o.text) ||
+        !isFiniteNumber(o.tick)
+      ) {
+        return null;
+      }
+      const chat: ServerChat = {
+        t: 'chat',
+        fromId: o.fromId,
+        from: o.from,
+        text: o.text,
+        tick: o.tick,
+      };
+      if (o.whisper !== undefined) {
+        if (!isBool(o.whisper)) return null;
+        chat.whisper = o.whisper;
+      }
+      if (o.emote !== undefined) {
+        if (!isBool(o.emote)) return null;
+        chat.emote = o.emote;
+      }
+      return chat;
+    }
+    case 'partyState': {
+      if (
+        !isString(o.leaderId) ||
+        !Array.isArray(o.members) ||
+        !o.members.every(isNetPartyMember)
+      ) {
+        return null;
+      }
+      return { t: 'partyState', leaderId: o.leaderId, members: o.members };
+    }
+    case 'partyInvite':
+      if (!isString(o.fromId) || !isString(o.fromName)) return null;
+      return { t: 'partyInvite', fromId: o.fromId, fromName: o.fromName };
+    case 'partyVitals': {
+      if (!isFiniteNumber(o.tick) || !Array.isArray(o.vitals) || !o.vitals.every(isNetPartyVital)) {
+        return null;
+      }
+      return { t: 'partyVitals', tick: o.tick, vitals: o.vitals };
+    }
+    case 'who': {
+      if (!Array.isArray(o.players) || !o.players.every(isNetWhoEntry)) return null;
+      return { t: 'who', players: o.players };
+    }
     default:
       return null;
   }
+}
+
+function isNetPartyMember(v: unknown): v is NetPartyMember {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return isString(o.id) && isString(o.name) && isString(o.cls) && isFiniteNumber(o.level);
+}
+
+function isNetPartyVital(v: unknown): v is NetPartyVital {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.id) &&
+    isFiniteNumber(o.hp) &&
+    isFiniteNumber(o.maxHP) &&
+    isFiniteNumber(o.resource) &&
+    isFiniteNumber(o.maxResource) &&
+    isString(o.resourceKind) &&
+    isBool(o.dead)
+  );
+}
+
+function isNetWhoEntry(v: unknown): v is NetWhoEntry {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return isString(o.name) && isFiniteNumber(o.level) && isString(o.cls);
 }

@@ -10,7 +10,12 @@ import {
   makeMoveIntent,
   NET_PROTOCOL_VERSION,
   type ClientMessage,
+  type Intent,
   type MoveIntent,
+  type NetCombatSelf,
+  type NetEntity,
+  type NetPartyMember,
+  type NetPartyVital,
   type NetPlayer,
   type NetSelf,
 } from '@pathlands/shared';
@@ -49,6 +54,11 @@ export function gatewayOptions(port = 0): GatewayOptions {
     heartbeatMs: 60_000,
     // High so the move-every-tick tests are never throttled; a focused test overrides it.
     maxMsgsPerSec: 1000,
+    authRatePerMin: 1000,
+    maxAuthBodyBytes: 4 * 1024,
+    maxCharacterBodyBytes: 512 * 1024,
+    // Long so the periodic position flush never races the tests; they persist explicitly.
+    saveIntervalMs: 3_600_000,
   };
 }
 
@@ -58,9 +68,30 @@ export class TestClient {
   you: string | null = null;
   seed: number | null = null;
   readonly players = new Map<string, NetPlayer>();
+  /** Server-authoritative enemy entities this client currently sees. */
+  readonly enemies = new Map<string, NetEntity>();
   lastSelf: { ackedSeq: number; phys: NetSelf } | null = null;
+  /** Latest own combat state (health / resource / target / cast), or null until first frame. */
+  lastCombatSelf: NetCombatSelf | null = null;
   /** Every Move intent this client has sent, in send order — for reconcile replay. */
   readonly sent: { seq: number; intent: MoveIntent }[] = [];
+  /** Every chat line this client has received, in arrival order. */
+  readonly chats: {
+    fromId: string;
+    from: string;
+    text: string;
+    tick: number;
+    emote: boolean;
+    whisper: boolean;
+  }[] = [];
+  /** Latest party roster (members + leader); members empty when solo. */
+  lastParty: { members: NetPartyMember[]; leaderId: string } = { members: [], leaderId: '' };
+  /** Latest pending party invite received, or null. */
+  lastInvite: { fromId: string; fromName: string } | null = null;
+  /** Latest party-vitals frame (member id → live hp/resource), or null before the first. */
+  lastVitals: NetPartyVital[] | null = null;
+  /** Latest /who roster reply, or null before the first request. */
+  lastWho: { name: string; level: number; cls: string }[] | null = null;
   deltaCount = 0;
   private seq = 0;
 
@@ -87,14 +118,43 @@ export class TestClient {
       case 'snapshot':
         this.players.clear();
         for (const p of msg.players) this.players.set(p.id, p);
+        this.enemies.clear();
+        for (const e of msg.entities) this.enemies.set(e.id, e);
         break;
       case 'delta':
         this.deltaCount += 1;
         for (const p of msg.players) this.players.set(p.id, p);
         for (const id of msg.gone) this.players.delete(id);
+        for (const e of msg.entities) this.enemies.set(e.id, e);
+        for (const id of msg.goneEntities) this.enemies.delete(id);
         break;
       case 'self':
         this.lastSelf = { ackedSeq: msg.ackedSeq, phys: msg.phys };
+        break;
+      case 'combatSelf':
+        this.lastCombatSelf = msg.self;
+        break;
+      case 'chat':
+        this.chats.push({
+          fromId: msg.fromId,
+          from: msg.from,
+          text: msg.text,
+          tick: msg.tick,
+          emote: msg.emote === true,
+          whisper: msg.whisper === true,
+        });
+        break;
+      case 'partyState':
+        this.lastParty = { members: msg.members, leaderId: msg.leaderId };
+        break;
+      case 'partyInvite':
+        this.lastInvite = { fromId: msg.fromId, fromName: msg.fromName };
+        break;
+      case 'partyVitals':
+        this.lastVitals = msg.vitals;
+        break;
+      case 'who':
+        this.lastWho = msg.players;
         break;
       default:
         break;
@@ -105,8 +165,10 @@ export class TestClient {
     this.ws.send(encodeClient(msg));
   }
 
-  hello(name: string, cls: string, level: number): void {
-    this.send({ t: 'hello', protocol: NET_PROTOCOL_VERSION, name, cls, level });
+  hello(name: string, cls: string, level: number, token?: string): void {
+    const msg: ClientMessage = { t: 'hello', protocol: NET_PROTOCOL_VERSION, name, cls, level };
+    if (token !== undefined) msg.token = token;
+    this.send(msg);
   }
 
   /** Send one move intent (increasing seq so the server never drops it); record it. */
@@ -115,6 +177,62 @@ export class TestClient {
     const intent = makeMoveIntent(wishX, wishZ, false, false, 0);
     this.sent.push({ seq: this.seq, intent });
     this.send({ t: 'intent', seq: this.seq, tick: 0, intent });
+  }
+
+  /** Send a chat line. */
+  chat(text: string): void {
+    this.send({ t: 'chat', text });
+  }
+  /** Send a directed whisper to a session id. */
+  whisper(toId: string, text: string): void {
+    this.send({ t: 'chat', text, to: toId });
+  }
+  /** Request the online-player roster (/who). */
+  who(): void {
+    this.send({ t: 'who' });
+  }
+
+  /** Send a combat intent (target / cast / auto-attack / release) with an increasing seq. */
+  private combatIntent(intent: Intent): void {
+    this.seq += 1;
+    this.send({ t: 'intent', seq: this.seq, tick: 0, intent });
+  }
+
+  setTarget(targetId: string | null): void {
+    this.combatIntent({ type: 'SetTarget', targetId });
+  }
+
+  cast(skillId: string, targetId?: string): void {
+    this.combatIntent({
+      type: 'CastSkill',
+      skillId,
+      ...(targetId !== undefined ? { targetId } : {}),
+    });
+  }
+
+  toggleAuto(on: boolean): void {
+    this.combatIntent({ type: 'ToggleAutoAttack', on });
+  }
+
+  release(): void {
+    this.combatIntent({ type: 'ReleaseSpirit' });
+  }
+
+  // --- party (invite/kick target the recipient's SESSION id, from the roster/snapshot) ---
+  partyInvite(id: string): void {
+    this.send({ t: 'party', action: 'invite', target: id });
+  }
+  partyAccept(): void {
+    this.send({ t: 'party', action: 'accept' });
+  }
+  partyDecline(): void {
+    this.send({ t: 'party', action: 'decline' });
+  }
+  partyLeave(): void {
+    this.send({ t: 'party', action: 'leave' });
+  }
+  partyKick(id: string): void {
+    this.send({ t: 'party', action: 'kick', target: id });
   }
 
   close(): void {

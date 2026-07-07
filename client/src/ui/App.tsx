@@ -30,7 +30,18 @@ import { BountyBoard } from './BountyBoard.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { FirstTimeTips } from './FirstTimeTips.js';
 import { NetStatusHud } from './NetStatusHud.js';
+import { Chat } from './Chat.js';
+import { PartyPanel } from './PartyPanel.js';
+import { PartyInvite } from './PartyInvite.js';
+import { LoginScreen } from './LoginScreen.js';
 import { Onboarding } from './Onboarding.js';
+import { putCharacter } from '../net/authClient.js';
+import { resolveServerUrl } from '../net/serverUrl.js';
+
+// Pathlands is MMO-only: the client always connects to an authoritative server (default:
+// the page's own origin — see resolveServerUrl). Accounts/login always gate the world.
+const SERVER_URL = resolveServerUrl();
+const TOKEN_KEY = 'pathlands.token';
 
 export function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,6 +51,9 @@ export function App(): JSX.Element {
     account: AccountSave;
     settings: Settings;
   } | null>(null);
+  // Account session token: restored from localStorage, cleared on logout / server
+  // rejection. Required — the world is always gated behind a logged-in account.
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const ready = useStore((s) => s.ready);
   const showDev = useStore((s) => s.showDev);
   const showMap = useStore((s) => s.showMap);
@@ -69,8 +83,20 @@ export function App(): JSX.Element {
       vfxDensity: entry.settings.vfxDensity,
       resolutionScale: entry.settings.resolutionScale,
     });
-    const game = new Game(canvasRef.current, entry.character, entry.account);
+    // On auth failure the server rejected our token — drop it and return to login.
+    const onAuthError = (): void => {
+      localStorage.removeItem(TOKEN_KEY);
+      setToken(null);
+      setEntry(null);
+    };
+    const game = new Game(canvasRef.current, entry.character, entry.account, token, onAuthError);
     gameRef.current = game;
+
+    // Best-effort cloud-save migration: hand the local character to the account so the
+    // server can restore its position on the next login.
+    if (token !== null) {
+      void putCharacter(SERVER_URL, token, entry.character);
+    }
 
     const save = (): void => {
       const snap = game.snapshotCharacter();
@@ -87,7 +113,20 @@ export function App(): JSX.Element {
       game.dispose();
       gameRef.current = null;
     };
-  }, [entry]);
+  }, [entry, token]);
+
+  // MMO-only: gate the whole flow behind account login until we hold a token.
+  if (token === null) {
+    return (
+      <LoginScreen
+        serverUrl={SERVER_URL}
+        onAuthed={(t) => {
+          localStorage.setItem(TOKEN_KEY, t);
+          setToken(t);
+        }}
+      />
+    );
+  }
 
   if (!entry) {
     return (
@@ -121,6 +160,9 @@ export function App(): JSX.Element {
         {ready && <SettingsPanel />}
         {ready && <FirstTimeTips />}
         {ready && <NetStatusHud />}
+        {ready && <PartyPanel />}
+        {ready && <PartyInvite />}
+        {ready && <Chat />}
         {ready && <Dialogue />}
         {ready && showDev && <DevOverlay />}
         {ready && showMap && <DebugMap />}

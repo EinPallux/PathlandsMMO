@@ -49,7 +49,21 @@ export type CombatEvent =
   | { type: 'miss'; sourceId: string; targetId: string; skillId: string }
   | { type: 'castStart'; entityId: string; skillId: string; endTick: number }
   | { type: 'castInterrupt'; entityId: string; skillId: string }
-  | { type: 'death'; entityId: string; killerId: string | null }
+  | {
+      type: 'death';
+      entityId: string;
+      killerId: string | null;
+      /** The victim's enemy def id (undefined for a player death) + level — enough to credit
+       * the kill (loot / quest objectives) WITHOUT the corpse still being in the state, since
+       * an instant-cast kill is reaped before the next tick's event drain. */
+      enemyId?: string;
+      level: number;
+      /** Where the death happened (for the death VFX), captured at death — the corpse may be
+       * gone by the time a consumer reads this. */
+      x: number;
+      y: number;
+      z: number;
+    }
   | { type: 'xp'; entityId: string; amount: number; enemyLevel: number }
   | { type: 'resource'; entityId: string; kind: ResourceKind; value: number }
   | { type: 'bossPhase'; entityId: string; say: string }
@@ -261,7 +275,16 @@ function killEntity(state: CombatState, victim: CombatEntity, killer: CombatEnti
   victim.dead = true;
   victim.cast = null;
   victim.targetId = null;
-  state.events.push({ type: 'death', entityId: victim.id, killerId: killer?.id ?? null });
+  state.events.push({
+    type: 'death',
+    entityId: victim.id,
+    killerId: killer?.id ?? null,
+    enemyId: victim.enemyId,
+    level: victim.level,
+    x: victim.x,
+    y: victim.y,
+    z: victim.z,
+  });
 
   // Award XP when a player fells an enemy (pets credit their owner in Part 5).
   if (victim.faction === 'enemy' && killer?.faction === 'player') {
@@ -330,6 +353,9 @@ export function tryCast(
     const target = targetId ? state.entities.get(targetId) : undefined;
     if (!isAlive(target)) return fail('noTarget');
     if (needsEnemy && !hostile(caster, target)) return fail('badTarget');
+    // Ally-target skills (heal/shield/buff) may only land on a NON-hostile target — otherwise
+    // a Priest could keep an enemy (or a rival's boss) topped up. Symmetric to the enemy check.
+    if (needsAlly && hostile(caster, target)) return fail('badTarget');
     if (dist2D(caster, target) > skill.range) return fail('range');
   }
   // Ground-placed skills must land within range of the caster.

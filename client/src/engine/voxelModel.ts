@@ -151,6 +151,11 @@ export class ModelObject {
     if (!this.animated.clips[name]!.loop) this.time = 0;
   }
 
+  /** Whether this model actually defines a clip (ClipSet is partial — quadrupeds lack 'cast'). */
+  hasClip(name: ClipName): boolean {
+    return this.animated.clips[name] !== undefined;
+  }
+
   setTransform(x: number, y: number, z: number, yaw: number): void {
     this.group.position.set(x, y, z);
     this.group.rotation.y = yaw;

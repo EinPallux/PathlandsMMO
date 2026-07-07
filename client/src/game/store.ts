@@ -336,6 +336,52 @@ export interface GameCommands {
   /** Waystones: attune/open the nearby stone, fast-travel to a discovered one. */
   interactWaystone(): void;
   travelTo(id: string): void;
+  /** Multiplayer chat: send a line to the server (no-op in single-player). */
+  sendChat(text: string): void;
+  /** Whisper a nearby / party player by name (resolved to a session id client-side). */
+  whisper(name: string, text: string): void;
+  /** Request the online-player roster (`/who`); the reply prints to chat. */
+  who(): void;
+  /** Party: invite a nearby player by name (resolved to a session id client-side), accept /
+   *  decline a pending invite, leave the party, kick a member (leader-only) by session id. */
+  partyInvite(name: string): void;
+  partyAccept(): void;
+  partyDecline(): void;
+  partyLeave(): void;
+  partyKick(id: string): void;
+}
+
+/** One party member as the roster panel renders it (Phase 6 §Social). */
+export interface PartyMemberUi {
+  id: string;
+  name: string;
+  cls: string;
+  level: number;
+}
+
+/** The local player's party. `null` ⇒ solo (the panel is hidden). */
+export interface PartyUi {
+  /** Session id of the leader (the only member who may kick). */
+  leaderId: string;
+  /** Our own session id — flags "you" in the list and gates the leader-only controls. */
+  selfId: string;
+  members: PartyMemberUi[];
+}
+
+/** A pending invite awaiting the player's accept/decline (drives the invite toast). */
+export interface PartyInviteUi {
+  fromId: string;
+  fromName: string;
+}
+
+/** One party member's live vitals for the ally frames (arrives at broadcast cadence). */
+export interface PartyVitalUi {
+  hp: number;
+  maxHP: number;
+  resource: number;
+  maxResource: number;
+  resourceKind: string;
+  dead: boolean;
 }
 
 /** Multiplayer connection phase for the HUD indicator (Phase 6). */
@@ -348,6 +394,26 @@ export interface NetUi {
   latencyMs: number | null;
 }
 
+/** One rendered chat line (Phase 6). `self` styles your own lines; `system` is server/UI notices. */
+export interface ChatLine {
+  /** Stable React key (a UI-only monotonic counter). */
+  key: number;
+  from: string;
+  text: string;
+  self: boolean;
+  system: boolean;
+  /** True when `text` is a third-person emote phrase, rendered `${from} ${text}` (no colon). */
+  emote: boolean;
+  /** True for a directed whisper — `from` is the other party; rendered `To/From ${from}:`. */
+  whisper?: boolean;
+}
+
+/** Most recent lines kept in the scrollback (older ones drop off). */
+export const CHAT_HISTORY_MAX = 100;
+
+/** UI-only monotonic key source for chat lines (cosmetic; never simulation state). */
+let chatKeySeq = 0;
+
 export interface UiState {
   ready: boolean;
   loadProgress: number; // 0..1
@@ -355,6 +421,16 @@ export interface UiState {
   contextLost: boolean;
   /** Multiplayer status (Phase 6); null in single-player. Drives the NetStatusHud. */
   net: NetUi | null;
+  /** Chat scrollback (Phase 6). Empty in single-player; the Chat panel hides when net is null. */
+  chat: ChatLine[];
+  /** True while the chat input is focused — the game loop suspends keyboard gameplay input. */
+  chatTyping: boolean;
+  /** The local player's party (Phase 6 §Social); null ⇒ solo. */
+  party: PartyUi | null;
+  /** A pending party invite awaiting accept/decline; null ⇒ none. Drives the invite toast. */
+  partyInvite: PartyInviteUi | null;
+  /** Live vitals of each party member, keyed by session id (Part 20 ally frames). */
+  partyVitals: Record<string, PartyVitalUi>;
 
   fps: number;
   drawCalls: number;
@@ -430,6 +506,16 @@ export interface UiState {
   setSnapshot: (s: Partial<UiState>) => void;
   setReady: (ready: boolean) => void;
   setNet: (n: NetUi | null) => void;
+  /** Append a chat line (assigns its key + trims the scrollback). */
+  pushChat: (line: Omit<ChatLine, 'key'>) => void;
+  /** Set the chat-input-focused flag that gates gameplay keyboard input. */
+  setChatTyping: (typing: boolean) => void;
+  /** Replace the party roster (empty members ⇒ solo → stored as null, clearing any invite). */
+  setParty: (p: PartyUi) => void;
+  /** Set (or clear, with null) the pending party invite. */
+  setPartyInvite: (i: PartyInviteUi | null) => void;
+  /** Replace the party vitals map from a vitals frame (keyed by member session id). */
+  setPartyVitals: (vitals: Array<PartyVitalUi & { id: string }>) => void;
   toggleMap: () => void;
   toggleDev: () => void;
   toggleChar: () => void;
@@ -480,6 +566,11 @@ export interface UiState {
 export const useStore = create<UiState>((set) => ({
   contextLost: false,
   net: null,
+  chat: [],
+  chatTyping: false,
+  party: null,
+  partyInvite: null,
+  partyVitals: {},
   ready: false,
   loadProgress: 0,
 
@@ -553,6 +644,34 @@ export const useStore = create<UiState>((set) => ({
   setSnapshot: (s) => set(s),
   setReady: (ready) => set({ ready }),
   setNet: (net) => set({ net }),
+  pushChat: (line) =>
+    set((st) => {
+      const next = [...st.chat, { ...line, key: chatKeySeq++ }];
+      if (next.length > CHAT_HISTORY_MAX) next.splice(0, next.length - CHAT_HISTORY_MAX);
+      return { chat: next };
+    }),
+  setChatTyping: (chatTyping) => set({ chatTyping }),
+  setParty: (p) =>
+    // Empty roster ⇒ solo. Forming/refreshing a real party also dismisses any stale invite
+    // (you can't hold a pending invite while grouped — the server rejects that). Going solo
+    // drops any lingering vitals so a rejoin never shows a stale bar.
+    set(p.members.length > 0 ? { party: p, partyInvite: null } : { party: null, partyVitals: {} }),
+  setPartyInvite: (partyInvite) => set({ partyInvite }),
+  setPartyVitals: (vitals) =>
+    set(() => {
+      const map: Record<string, PartyVitalUi> = {};
+      for (const v of vitals) {
+        map[v.id] = {
+          hp: v.hp,
+          maxHP: v.maxHP,
+          resource: v.resource,
+          maxResource: v.maxResource,
+          resourceKind: v.resourceKind,
+          dead: v.dead,
+        };
+      }
+      return { partyVitals: map };
+    }),
   toggleMap: () => set((st) => ({ showMap: !st.showMap })),
   toggleDev: () => set((st) => ({ showDev: !st.showDev })),
   toggleChar: () => set((st) => ({ showChar: !st.showChar })),

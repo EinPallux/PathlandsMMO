@@ -1,0 +1,12 @@
+# Keep the build context small. The server image (server/Dockerfile) only COPYs shared/ +
+# server/, and the web image (deploy/web/Dockerfile) builds the client — so the context must
+# include the client source, public assets, and scripts, but never node_modules / build output.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.github
+.claude
+docs
+*.log
+.DS_Store

@@ -29,6 +29,7 @@ import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
 import { RemotePlayerRenderer } from '../engine/remotePlayers.js';
 import { NetClient } from '../net/netClient.js';
+import { resolveServerUrl } from '../net/serverUrl.js';
 import { Input } from './input.js';
 import { PlayerController } from './playerController.js';
 import { Discovery } from './discovery.js';
@@ -39,7 +40,7 @@ import { MetaDirector } from './metaDirector.js';
 import { MountController } from './mountController.js';
 import { BountyDirector } from './bountyDirector.js';
 import { questGiverById } from '@pathlands/shared';
-import { useStore, type GameCommands } from './store.js';
+import { useStore, type GameCommands, type Nameplate } from './store.js';
 
 // Spawn (Brookhollow plaza, north of the fountain at 1536,1536) is a shared world
 // constant (SPAWN_X/SPAWN_Z) so the Phase-6 server and the client agree on it.
@@ -99,11 +100,14 @@ export class Game {
   private adaptTimer = 0;
   /** Reused per frame to feed the player focus to the shadow follow (no alloc). */
   private readonly shadowFocus = new THREE.Vector3();
+  /** Scratch vector for projecting remote-player heads to screen nameplates. */
+  private readonly plateProj = new THREE.Vector3();
   /**
-   * Phase-6 netcode, OPT-IN: constructed only when a server URL is configured
-   * (VITE_PATHLANDS_SERVER), so the single-player build has no server dependency.
-   * The NetClient streams our intents up and other players down; the RemotePlayer-
-   * Renderer draws them. Our own player stays locally predicted.
+   * Phase-6 netcode (MMO-only): always constructed — the client connects to the
+   * authoritative server (default: same origin, see resolveServerUrl). The NetClient
+   * streams our intents up and other players down; the RemotePlayerRenderer draws them.
+   * Our own player stays locally predicted + server-reconciled. The fields stay nullable
+   * so the many `this.net?.` guards read unchanged.
    */
   private readonly net: NetClient | null;
   private readonly remoteRenderer: RemotePlayerRenderer | null;
@@ -120,6 +124,10 @@ export class Game {
     canvas: HTMLCanvasElement,
     character: CharacterSave | null = null,
     account: AccountSave = { pathPoints: 0, perks: {} },
+    /** Phase-6 account session token, threaded into the ws hello when multiplayer is on. */
+    serverToken: string | null = null,
+    /** Called if the server rejects the token (expired) so the UI can re-login. */
+    onAuthError?: () => void,
   ) {
     this.account = { pathPoints: account.pathPoints, perks: { ...account.perks } };
     this.canvas = canvas;
@@ -242,26 +250,76 @@ export class Game {
     // A completed Deed may unlock a mount skin (GDD §7).
     this.meta.onDeedComplete = (deedId) => this.mount.grantSkinForDeed(deedId);
 
-    // Opt-in multiplayer (Phase 6): connect only when a server URL is configured. The
-    // static single-player deploy leaves this unset and runs exactly as before.
-    const serverUrl = import.meta.env.VITE_PATHLANDS_SERVER as string | undefined;
-    if (serverUrl !== undefined && serverUrl.length > 0) {
-      this.net = new NetClient({
-        url: serverUrl,
-        identity: {
-          name: character?.name ?? 'Wanderer',
-          cls: this.currentClass,
-          level: character?.level ?? 1,
-        },
-        onStatus: (st) =>
-          useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
-      });
-      this.remoteRenderer = new RemotePlayerRenderer(this.scene);
-      this.net.connect();
-    } else {
-      this.net = null;
-      this.remoteRenderer = null;
-    }
+    // MMO-only (Phase 6): the client always connects to the authoritative server. The URL
+    // defaults to the page's own origin (resolveServerUrl) so the VPS deploy is zero-config.
+    const net = new NetClient({
+      url: resolveServerUrl(),
+      identity: {
+        name: character?.name ?? 'Wanderer',
+        cls: this.currentClass,
+        level: character?.level ?? 1,
+        ...(serverToken !== null ? { token: serverToken } : {}),
+      },
+      onStatus: (st) =>
+        useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+      onChat: (line) =>
+        useStore.getState().pushChat({
+          from: line.from,
+          text: line.text,
+          self: line.self,
+          // A server notice (party full / whisper failed / …) arrives with an empty fromId — the
+          // server never attributes a real line to no one — so render it in the gold-italic system
+          // style rather than as an ordinary `System: …` chat line.
+          system: line.fromId === '',
+          emote: line.emote,
+          whisper: line.whisper,
+        }),
+      onParty: (st) =>
+        useStore.getState().setParty({
+          leaderId: st.leaderId,
+          selfId: st.selfId,
+          members: st.members.map((m) => ({
+            id: m.id,
+            name: m.name,
+            cls: m.cls,
+            level: m.level,
+          })),
+        }),
+      onInvite: (inv) => useStore.getState().setPartyInvite(inv),
+      onPartyVitals: (vitals) => useStore.getState().setPartyVitals(vitals),
+      onWho: (players) => {
+        const cap = (c: string): string => c.charAt(0).toUpperCase() + c.slice(1);
+        const list = players.map((p) => `${p.name} (L${p.level} ${cap(p.cls)})`).join(', ');
+        useStore.getState().pushChat({
+          from: '',
+          text: `${players.length} online: ${list}`,
+          self: false,
+          system: true,
+          emote: false,
+        });
+      },
+      ...(onAuthError !== undefined ? { onAuthError } : {}),
+    });
+    this.net = net;
+    this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+    // Stage 2b: the combat director takes its enemies + own combat state from the server and
+    // forwards combat intents to it (the server is authoritative over all combat outcomes).
+    this.combat.setNetSink({
+      enemies: () => net.enemies(),
+      combatSelf: () => net.combatSelf(),
+      drainKills: () => net.drainKills(),
+      drainFx: () => net.drainFx(),
+      send: (intent) => net.sendIntent(intent),
+    });
+    // Fresh session: clear any scrollback + party state left from a previous game instance.
+    useStore.setState({
+      chat: [],
+      chatTyping: false,
+      party: null,
+      partyInvite: null,
+      partyVitals: {},
+    });
+    net.connect();
 
     this.effectiveVD = viewDist;
     this.registerCommands();
@@ -280,6 +338,55 @@ export class Game {
     this.controller.teleport(x, y, z);
     this.camera.syncFreeToPlayer(x, y, z);
     this.accumulator = 0;
+  }
+
+  /**
+   * Invite a player to the party by (case-insensitive) name. We resolve the name against the
+   * players currently visible to us (interest-filtered — you invite people near you) to get the
+   * unambiguous SESSION id the wire uses, then send it. An unmatched name gets a local notice.
+   */
+  private inviteByName(name: string): void {
+    const query = name.trim().toLowerCase();
+    if (query.length === 0 || this.net === null) return;
+    const match = this.net.remotePlayers().find((p) => p.name.toLowerCase() === query);
+    if (match === undefined) {
+      useStore.getState().pushChat({
+        from: '',
+        text: `No player named “${name.trim().slice(0, 24)}” is nearby to invite.`,
+        self: false,
+        system: true,
+        emote: false,
+      });
+      return;
+    }
+    this.net.partyInvite(match.id);
+  }
+
+  /**
+   * Whisper a player by (case-insensitive) name. Resolve the name → session id against our party
+   * roster FIRST (so you can whisper party members who've walked out of view), then the players
+   * currently visible to us. Client-side resolution keeps it unambiguous (names aren't unique) and
+   * private (you can only whisper someone you can identify). An unmatched name gets a local notice.
+   */
+  private whisperByName(name: string, text: string): void {
+    const query = name.trim().toLowerCase();
+    const body = text.trim();
+    if (query.length === 0 || body.length === 0 || this.net === null) return;
+    const inParty = useStore
+      .getState()
+      .party?.members.find((m) => m.name.toLowerCase() === query && m.id !== this.net?.you);
+    const match = inParty ?? this.net.remotePlayers().find((p) => p.name.toLowerCase() === query);
+    if (match === undefined) {
+      useStore.getState().pushChat({
+        from: '',
+        text: `No player named “${name.trim().slice(0, 24)}” is nearby or in your party.`,
+        self: false,
+        system: true,
+        emote: false,
+      });
+      return;
+    }
+    this.net.sendWhisper(match.id, body);
   }
 
   private onCanvasClick = (e: MouseEvent): void => {
@@ -337,6 +444,14 @@ export class Game {
       turnInBounty: (id) => this.bounties.turnIn(id),
       interactWaystone: () => void this.combat.interactWaystone(),
       travelTo: (id) => this.combat.travelTo(id),
+      sendChat: (text) => this.net?.sendChat(text),
+      whisper: (name, text) => this.whisperByName(name, text),
+      who: () => this.net?.requestWho(),
+      partyInvite: (name) => this.inviteByName(name),
+      partyAccept: () => this.net?.partyAccept(),
+      partyDecline: () => this.net?.partyDecline(),
+      partyLeave: () => this.net?.partyLeave(),
+      partyKick: (id) => this.net?.partyKick(id),
     };
     useStore.getState().setCommands(commands);
   }
@@ -403,6 +518,10 @@ export class Game {
 
     // Panel/action keys are rebindable (Settings, save v11); read the live map.
     const store = useStore.getState();
+    // Chat has focus (Phase 6): the text field owns the keyboard. Input already stops
+    // recording keystrokes while a field is focused, but a key held down BEFORE focusing
+    // could still read as `isDown`, so suppress all gameplay key actions here as well.
+    if (store.chatTyping) return;
     const kb = store.keybinds;
     const tapped = (action: string): boolean => this.input.wasTapped(kb[action] ?? '');
     if (tapped('toggleFreeFly')) this.toggleFreeFly();
@@ -497,8 +616,14 @@ export class Game {
     // ticks, so newly predicted ticks build on the reconciled state. No-op single-player.
     this.reconcileSelf();
 
-    // Fixed-tick simulation with interpolation.
-    const active = this.camera.mode === 'thirdPerson';
+    // Fixed-tick simulation with interpolation. While the chat box has focus the player
+    // is inert (freeInput), so typing WASD never walks the character. A dead player is inert
+    // too — the server freezes a corpse's movement (Stage 2c-4), so we must predict the same
+    // (feed freeInput) or reconciliation would fight our predicted walk every tick.
+    const active =
+      this.camera.mode === 'thirdPerson' &&
+      !useStore.getState().chatTyping &&
+      !this.combat.isPlayerDead();
     this.accumulator += dt;
     let ticks = 0;
     while (this.accumulator >= TICK_DT && ticks < 5) {
@@ -552,9 +677,28 @@ export class Game {
     this.mount.render(rs, dt, thirdPerson);
 
     // Draw the other players the server reports, interpolated ~120 ms behind. No-op
-    // (and no models in the scene) in single-player.
+    // (and no models in the scene) in single-player. Project each remote's head to a
+    // friendly name+level nameplate so you can see WHO is around you (and who's chatting).
+    const remotePlates: Nameplate[] = [];
     if (this.net !== null && this.remoteRenderer !== null) {
-      this.remoteRenderer.sync(this.net.remotePlayers(), dt);
+      const remotes = this.net.remotePlayers();
+      this.remoteRenderer.sync(remotes, dt);
+      const sw = this.canvas.clientWidth;
+      const sh = this.canvas.clientHeight;
+      for (const r of remotes) {
+        this.plateProj.set(r.x, r.y + 2.4, r.z);
+        this.plateProj.project(this.camera.camera);
+        if (this.plateProj.z < -1 || this.plateProj.z > 1) continue; // behind camera / clipped
+        if (Math.abs(this.plateProj.x) > 1.1 || Math.abs(this.plateProj.y) > 1.1) continue;
+        remotePlates.push({
+          id: `remote:${r.id}`,
+          name: r.name,
+          level: r.level,
+          hostile: false,
+          sx: (this.plateProj.x * 0.5 + 0.5) * sw,
+          sy: (-this.plateProj.y * 0.5 + 0.5) * sh,
+        });
+      }
     }
 
     this.camera.update(rs.x, rs.y, rs.z, this.sampler.isSolid);
@@ -578,7 +722,9 @@ export class Game {
       this.canvas.clientWidth,
       this.canvas.clientHeight,
     );
-    useStore.getState().setNameplates([...this.entities.nameplates, ...this.combat.enemyPlates]);
+    useStore
+      .getState()
+      .setNameplates([...this.entities.nameplates, ...this.combat.enemyPlates, ...remotePlates]);
 
     // "Press E to trade" prompt: nearest merchant in reach, unless a panel is open.
     const st = useStore.getState();
@@ -789,7 +935,10 @@ export class Game {
     );
     this.net?.dispose();
     this.remoteRenderer?.dispose();
-    if (this.net !== null) useStore.getState().setNet(null); // hide the HUD on teardown
+    if (this.net !== null) {
+      useStore.getState().setNet(null); // hide the HUD on teardown
+      useStore.setState({ chat: [], chatTyping: false }); // clear chat + release the input gate
+    }
     this.input.dispose();
     this.chunks.dispose();
     this.propRenderer.dispose();
