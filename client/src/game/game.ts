@@ -527,8 +527,13 @@ export class Game {
     this.reconcileSelf();
 
     // Fixed-tick simulation with interpolation. While the chat box has focus the player
-    // is inert (freeInput), so typing WASD never walks the character.
-    const active = this.camera.mode === 'thirdPerson' && !useStore.getState().chatTyping;
+    // is inert (freeInput), so typing WASD never walks the character. A dead player is inert
+    // too — the server freezes a corpse's movement (Stage 2c-4), so we must predict the same
+    // (feed freeInput) or reconciliation would fight our predicted walk every tick.
+    const active =
+      this.camera.mode === 'thirdPerson' &&
+      !useStore.getState().chatTyping &&
+      !this.combat.isPlayerDead();
     this.accumulator += dt;
     let ticks = 0;
     while (this.accumulator >= TICK_DT && ticks < 5) {

@@ -325,6 +325,12 @@ export class CombatDirector {
     return inCombat(this.player, this.state.tick);
   }
 
+  /** Whether the player is dead (awaiting respawn). Used to freeze own movement so a corpse
+   * can't walk — matching the server's authoritative freeze, so prediction never fights it. */
+  isPlayerDead(): boolean {
+    return this.player.dead;
+  }
+
   /** Debit gold if affordable (mount purchase). Returns whether it was paid. */
   spendGold(amount: number): boolean {
     if (amount < 0 || this.gold < amount) return false;
@@ -658,8 +664,9 @@ export class CombatDirector {
     const p = this.player;
     if (!p.dead) return;
     if (this.networked) {
-      // The server owns death + respawn; it revives us in place after a short delay
-      // (Stage 2c relocates to a Waystone). Just forward the release.
+      // The server owns death + respawn: after the release delay it revives us at the nearest
+      // Waystone and teleports our physics there (Stage 2c-4); our position reconciles as a snap
+      // and combatSelf flips us back to alive. Just forward the release.
       this.netSink?.send({ type: 'ReleaseSpirit' });
       return;
     }

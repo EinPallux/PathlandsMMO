@@ -19,8 +19,11 @@ import {
   enemyById,
   levelProgressFromTotalXp,
   makePlayerEntity,
+  nearestWaystone,
   rollLoot,
   skillById,
+  SPAWN_X,
+  SPAWN_Z,
   stepSim,
   stepSpawner,
   WORLD_SPAWNS,
@@ -117,6 +120,10 @@ export class ServerCombat {
   private readonly killFeed = new Map<string, KillCredit[]>();
   /** Authoritative combat visuals accumulated since the last broadcast drain (Stage 2c-3). */
   private fxBuffer: FxRecord[] = [];
+  /** Players revived this step, to relocate in the MOVEMENT authority (Stage 2c-4). The combat
+   * entity's position is synced FROM the physics each tick, so a respawn must move the physics
+   * too — the gateway drains these and teleports each. */
+  private respawns: { id: string; x: number; z: number }[] = [];
 
   constructor(world: ServerWorld) {
     this.state = createCombatState(WORLD_SEED);
@@ -352,14 +359,24 @@ export class ServerCombat {
   }
 
   /**
-   * A dead player who has released their spirit revives after a short delay. The full death
-   * flow (Waystone relocation + penalty, coordinated with the ServerSim movement authority)
-   * lands in Stage 2c — this keeps a dead player from chain-resurrecting in place instantly.
+   * A dead player who has released their spirit revives after a short delay (no instant
+   * chain-res), **relocated to the nearest Waystone** (GDD §7 — the graveyard-run respawn).
+   * The combat entity's position is synced from the movement authority each tick, so we also
+   * queue a `respawn` for the gateway to teleport the physics; both are moved here so the entity
+   * is consistent within this tick. (Respawning at the nearest Waystone by position, not the
+   * nearest ATTUNED one — the server doesn't track per-character activations yet; it lands with
+   * server-side character identity.)
    */
   private reviveReleasedPlayers(): void {
     for (const e of this.state.entities.values()) {
       if (e.faction !== 'player' || !e.dead || e.respawnTick === undefined) continue;
       if (this.state.tick - e.respawnTick < RELEASE_DELAY_TICKS) continue; // still a spirit
+      const ws = nearestWaystone(e.x, e.z);
+      const rx = ws?.x ?? SPAWN_X;
+      const rz = ws?.z ?? SPAWN_Z;
+      e.x = rx;
+      e.z = rz;
+      e.y = this.ctx.heightAt ? this.ctx.heightAt(rx, rz) + 2 : e.y; // matches world.surfaceSpawnY
       e.dead = false;
       e.hp = e.maxHP;
       e.resource = e.resourceKind === 'rage' ? 0 : e.maxResource;
@@ -369,7 +386,23 @@ export class ServerCombat {
       e.targetId = null;
       e.cast = null;
       e.inCombatUntil = 0;
+      this.respawns.push({ id: e.id, x: rx, z: rz });
     }
+  }
+
+  /** Whether a player's combat entity is currently dead (drives the gateway's movement freeze). */
+  isDead(id: string): boolean {
+    const e = this.state.entities.get(id);
+    return e !== undefined && e.faction === 'player' && e.dead;
+  }
+
+  /** Take and clear the players revived this step, so the gateway can teleport the movement
+   * authority (physics) to the Waystone they respawned at (Stage 2c-4). */
+  drainRespawns(): { id: string; x: number; z: number }[] {
+    if (this.respawns.length === 0) return [];
+    const out = this.respawns;
+    this.respawns = [];
+    return out;
   }
 
   /**

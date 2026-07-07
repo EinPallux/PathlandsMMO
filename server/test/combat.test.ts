@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createCharacter,
   makeEnemyById,
+  nearestWaystone,
   totalXpToReachLevel,
   WORLD_SPAWNS,
 } from '@pathlands/shared';
@@ -208,6 +209,57 @@ describe('server-authoritative player combat — ServerCombat', () => {
     const death = combat.drainFx().find((f) => f.kind === 'death');
     expect(death).toBeDefined();
     expect(Math.hypot(death!.x - boar.x, death!.z - boar.z)).toBeLessThan(2);
+  });
+
+  it('respawns a released spirit at the nearest Waystone (Stage 2c-4)', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.addPlayer('P', 'Boro', 'warrior', 6, boar.x, boar.y, boar.z);
+    const p = combat.state.entities.get('P')!;
+    p.hp = 0;
+    p.dead = true;
+    combat.applyPlayerIntent('P', { type: 'ReleaseSpirit' });
+    combat.step();
+    expect(combat.drainRespawns()).toHaveLength(0); // still a spirit; the delay hasn't elapsed
+
+    let respawn: { id: string; x: number; z: number } | undefined;
+    for (let i = 0; i < 45; i++) {
+      combat.step();
+      const rs = combat.drainRespawns();
+      if (rs.length > 0) {
+        respawn = rs[0];
+        break;
+      }
+    }
+    const ws = nearestWaystone(boar.x, boar.z)!;
+    expect(respawn).toBeDefined();
+    expect(respawn!.x).toBe(ws.x); // relocated to the nearest Waystone (for the gateway to teleport)
+    expect(respawn!.z).toBe(ws.z);
+    const e = combat.state.entities.get('P')!;
+    expect(e.dead).toBe(false); // alive again
+    expect(Math.hypot(e.x - ws.x, e.z - ws.z)).toBeLessThan(1); // combat entity moved too
+    expect(combat.isDead('P')).toBe(false);
+  });
+
+  it('freezes a dead player’s movement so a corpse can’t walk (Stage 2c-4)', () => {
+    const sim = new ServerSim(createServerWorld());
+    const p = sim.join('Boro', 'warrior', 6);
+    const x0 = p.phys.x;
+    const east = { type: 'Move' as const, wishX: 1, wishZ: 0, jump: false, sprint: false, yaw: 0 };
+    // Frozen: even with a steady stream of "walk east" inputs, the corpse stays put.
+    p.frozen = true;
+    for (let i = 0; i < 20; i++) {
+      sim.applyMove(p.id, east, i);
+      sim.step();
+    }
+    expect(Math.abs(sim.players.get(p.id)!.phys.x - x0)).toBeLessThan(0.05);
+    // Unfrozen (respawned): the same input walks them.
+    p.frozen = false;
+    for (let i = 0; i < 8; i++) {
+      sim.applyMove(p.id, east, 20 + i);
+      sim.step();
+    }
+    expect(sim.players.get(p.id)!.phys.x).toBeGreaterThan(x0 + 0.1);
   });
 });
 

@@ -4,6 +4,35 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+### Part 15 — Server-authoritative combat, Stage 2c-4: death → Waystone respawn (2026-07-06)
+
+Death moves server-side, closing the combat-authority migration: enemies, player combat, XP,
+loot/gold, combat visuals, and now death/respawn are all server-owned. A slain player who releases
+their spirit revives at the nearest Waystone, and a corpse can't walk. Server half is
+headless-proven; the respawn snap + freeze are verified on the VPS combat test.
+
+#### Added
+
+- **Server-authoritative respawn** (`server/src/combat.ts`, `server/src/gateway.ts`,
+  `server/src/sim.ts`): `reviveReleasedPlayers` now relocates the revived spirit to the nearest
+  Waystone (`nearestWaystone`, else world spawn) and queues a `respawn`; the gateway drains it
+  after `combat.step()` and calls the new `ServerSim.teleport(id, x, z)` (zeroes momentum, drops
+  onto `surfaceSpawnY`). `ServerCombat.isDead` + `drainRespawns` expose the state the gateway
+  needs. The client reconciles the position jump as a snap (existing `RECONCILE_SNAP_DIST`).
+- **Dead-player movement freeze** (`server/src/sim.ts`, `server/src/gateway.ts`): `ServerPlayer`
+  gains a `frozen` flag the gateway sets from `combat.isDead(id)` each tick before `sim.step()`;
+  a frozen player's queued move wish is discarded (idle only, so gravity still settles the body)
+  — a corpse can't walk to a better Waystone, authoritative even against a hacked client.
+- **Client freeze mirror** (`client/src/game/game.ts`, `client/src/game/combatDirector.ts`): the
+  movement `active` flag is gated on `!combat.isPlayerDead()`, feeding the existing `freeInput`
+  so the client predicts the same freeze the server enforces (no reconciliation fight).
+
+#### Tests
+
+- **`server/test/combat.test.ts`** (+2): a released spirit revives relocated to the nearest
+  Waystone (respawn queued for the gateway; the combat entity moved too); a dead player's steady
+  "walk east" inputs move them nowhere, and the same inputs walk them once unfrozen.
+
 ### Part 14 — Server-authoritative combat, Stage 2c-3: combat-events channel (2026-07-06)
 
 Combat the client can't predict — incoming hits on you, other players' fights, monster deaths,

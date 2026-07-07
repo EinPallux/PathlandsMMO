@@ -53,6 +53,13 @@ export interface ServerPlayer {
   lastAppliedSeq: number;
   /** Set when the player's replicated state changed since the last broadcast. */
   dirty: boolean;
+  /**
+   * Movement is suspended (a dead player awaiting respawn). The gateway sets this each tick from
+   * the combat sim's death state; while set, `step()` ignores queued move intents (idle only,
+   * so gravity still settles the body) — a corpse can't walk to a better respawn Waystone. The
+   * authoritative guard even if a client keeps sending movement while dead.
+   */
+  frozen: boolean;
 }
 
 const MAX_NAME_LEN = 24;
@@ -135,9 +142,29 @@ export class ServerSim {
       lastRecvSeq: -1,
       lastAppliedSeq: -1,
       dirty: true,
+      frozen: false,
     };
     this.players.set(id, player);
     return player;
+  }
+
+  /**
+   * Teleport a player to a ground position (server-authoritative respawn / travel). Zeroes
+   * momentum and drops them onto the surface so they don't carry velocity through the jump or
+   * clip into terrain; marks dirty so others learn the new position. The client reconciles this
+   * as a snap (a teleport-scale correction bypasses the smooth-slide, see game.ts).
+   */
+  teleport(id: string, x: number, z: number): void {
+    const p = this.players.get(id);
+    if (p === undefined) return;
+    p.phys.x = x;
+    p.phys.z = z;
+    p.phys.y = this.world.surfaceSpawnY(x, z);
+    p.phys.vx = 0;
+    p.phys.vy = 0;
+    p.phys.vz = 0;
+    p.phys.onGround = true;
+    p.dirty = true;
   }
 
   /** Drop a player. Returns true if the id was present. */
@@ -171,10 +198,12 @@ export class ServerSim {
       const pmove = before.moveState;
 
       // One input per tick: the authoritative rate governs how fast the sim advances,
-      // so a burst of buffered inputs plays out across successive ticks (never faster).
+      // so a burst of buffered inputs plays out across successive ticks (never faster). A
+      // frozen (dead) player still drains + acks its queued input so reconciliation keeps
+      // flowing, but its wish is discarded — only gravity acts, so the corpse stays put.
       const queued = p.inputs.shift();
-      const intent = queued?.intent ?? idleIntent(before.yaw);
       if (queued !== undefined) p.lastAppliedSeq = queued.seq;
+      const intent = p.frozen || queued === undefined ? idleIntent(before.yaw) : queued.intent;
       stepPlayerMovement(this.world.sampler, p.phys, intent, TICK_DT);
 
       if (

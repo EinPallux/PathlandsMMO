@@ -6,6 +6,34 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-06) — Part 15: Server-authoritative combat, Stage 2c-4 (death → Waystone respawn).**
+> Death is now the server's: a slain player who releases their spirit revives at the nearest
+> Waystone, and a corpse can't walk. This closes the combat-authority migration — **enemies,
+> player combat, XP, loot/gold, combat visuals, and death/respawn are all server-owned.** Server
+> half headless-proven; the respawn snap + freeze land for VPS test. Landed:
+>
+> - **Server-authoritative respawn.** `ServerCombat.reviveReleasedPlayers` (after the release
+>   delay) relocates the revived spirit to the **nearest Waystone** and queues a `respawn`; the
+>   combat entity's position is synced from the movement authority each tick, so the gateway
+>   drains the queue after `combat.step()` and **teleports the physics** (`ServerSim.teleport` —
+>   zero momentum, drop onto `surfaceSpawnY`). The client reconciles the jump as a **snap**.
+> - **A corpse can't walk.** The gateway sets `ServerPlayer.frozen = combat.isDead(id)` before
+>   `sim.step()`; a frozen player's queued move wish is discarded (idle only — gravity still
+>   settles the body), so a dead player can't crawl to a better Waystone. Authoritative even
+>   against a hacked client. The client mirrors the freeze (own movement gated on
+>   `!combat.isPlayerDead()`, feeding the existing `freeInput`) so prediction never fights it.
+> - **Tests** (+2): a released spirit revives **relocated to the nearest Waystone** (the respawn
+>   is queued for the gateway to teleport, and the combat entity moved too); a dead player's
+>   steady "walk east" inputs move them **nowhere**, and the same inputs walk them once unfrozen.
+>
+> **372 tests green**; `pnpm typecheck` + `lint` + `build` (285 KB gzip) clean. _Combat authority
+> migration complete. Remaining Phase-6 polish (separate from combat): the client re-seeding its
+> character from the server on login (multi-device consistency — `fetchCharacter` is staged but
+> unused), server-timeline enemy interpolation + enemy cast-bar replication for the target frame,
+> then quests/professions on the same server tick pipeline._
+>
+> ---
+>
 > **Phase 6 (2026-07-06) — Part 14: Server-authoritative combat, Stage 2c-3 (combat-events channel).**
 > Combat the client **can't predict** — incoming hits on you, other players' fights, monster
 > deaths, boss lines — is now replicated as authoritative visuals, so the world's combat reads

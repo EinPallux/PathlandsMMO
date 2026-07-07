@@ -494,6 +494,10 @@ export class GameServer {
   // --- tick + broadcast ---
 
   private onTick(): void {
+    // Suspend the movement of players the combat sim has killed (until they respawn), so a
+    // corpse can't walk to a better Waystone. Death state is from the previous combat tick — a
+    // one-tick lag is immaterial.
+    for (const p of this.sim.players.values()) p.frozen = this.combat.isDead(p.id);
     this.sim.step();
     // Feed each player's authoritative movement position into the combat sim so enemies
     // target real positions and casts resolve against them, then advance combat one tick.
@@ -501,6 +505,9 @@ export class GameServer {
       this.combat.syncPlayer(p.id, p.phys.x, p.phys.y, p.phys.z, p.phys.yaw);
     }
     this.combat.step(); // enemies + players: spawn, AI, aggro, cast resolution
+    // Server-authoritative respawn (Stage 2c-4): the combat sim relocated a revived spirit to a
+    // Waystone — move the movement authority (physics) to match, so the position sticks.
+    for (const r of this.combat.drainRespawns()) this.sim.teleport(r.id, r.x, r.z);
     if (this.sim.tick % this.opts.broadcastEveryTicks === 0) this.broadcast();
   }
 
