@@ -32,9 +32,11 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide);
  * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag);
  * v14 added the online roster query (ClientWho / ServerWho);
- * v15 added GM tooling (ClientGm + ServerWelcome.gm).
+ * v15 added GM tooling (ClientGm + ServerWelcome.gm);
+ * v16 added droppable ground items (ClientDropItem / ClientPickupItem / ServerWorldItems /
+ *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped.
  */
-export const NET_PROTOCOL_VERSION = 15;
+export const NET_PROTOCOL_VERSION = 16;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -91,6 +93,22 @@ export interface NetEntity {
   castSkill: string | null;
   /** Cast progress 0..1 (0 when not casting). */
   castFrac: number;
+}
+
+/**
+ * A stack of items lying on the ground — the replication view of a server-authoritative world
+ * item. Any player nearby can pick it up (first-come-wins, resolved server-side), and it despawns
+ * after a fixed lifetime. This is how players trade now (bank/mail/trade were scrapped): you drop
+ * a stack, another player walks over and picks it up. `item` is a full loot-rolled ItemDef (there
+ * is no registry id for procedural loot), `qty` the stack size, and `x/y/z` the drop position.
+ */
+export interface NetWorldItem {
+  id: string;
+  item: ItemDef;
+  qty: number;
+  x: number;
+  y: number;
+  z: number;
 }
 
 /**
@@ -238,8 +256,41 @@ export interface ClientGm {
   qty?: number;
 }
 
+/**
+ * Drop a bag stack onto the ground at the player's position — the way players hand items to each
+ * other now. The client sends the full `item` (procedural loot has no registry id) + `qty`; the
+ * server spawns the world item at the sender's AUTHORITATIVE position (it never trusts a
+ * client-supplied position). Trust note: while inventory is still client-authoritative, the server
+ * can't verify the sender actually held the stack — this is consistent with the current model (a
+ * cheat client can already edit its own local bag). Server-side inventory authority (the economy
+ * migration) will validate the drop against the real bag.
+ */
+export interface ClientDropItem {
+  t: 'dropItem';
+  item: ItemDef;
+  qty: number;
+}
+
+/**
+ * Pick up a ground item by id. The server validates the item exists and the sender is within
+ * pickup range, then removes it ATOMICALLY — first-come-wins. That authoritative removal is the
+ * anti-duplication guarantee: two players racing for one stack, only one gets it.
+ */
+export interface ClientPickupItem {
+  t: 'pickupItem';
+  id: string;
+}
+
 export type ClientMessage =
-  ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty | ClientWho | ClientGm;
+  | ClientHello
+  | ClientIntent
+  | ClientPing
+  | ClientChat
+  | ClientParty
+  | ClientWho
+  | ClientGm
+  | ClientDropItem
+  | ClientPickupItem;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -491,6 +542,31 @@ export interface ServerWho {
   players: NetWhoEntry[];
 }
 
+/**
+ * Interest-filtered ground items around the recipient (the 3×3-chunk region, same policy as
+ * enemies). `items` are those that ENTERED interest (newly dropped, or the viewer moved into
+ * range); `gone` are ids to REMOVE (picked up, despawned, or left interest). A ground item is
+ * immutable once dropped, so there is no UPDATE case — an id appears in `items` exactly once.
+ */
+export interface ServerWorldItems {
+  t: 'worldItems';
+  tick: number;
+  items: NetWorldItem[];
+  gone: string[];
+}
+
+/**
+ * A server grant of item stacks straight into the recipient's bag — sent when the player picks a
+ * ground item up. Kept separate from ServerKill so a pickup plays a loot cue (not a death cue) and
+ * never advances quest/bounty objectives. The client is the bag aggregator, so capacity rules
+ * apply where it places the stacks.
+ */
+export interface ServerItemGranted {
+  t: 'grant';
+  tick: number;
+  items: NetItemStack[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -503,6 +579,8 @@ export type ServerMessage =
   | ServerPartyInvite
   | ServerPartyVitals
   | ServerWho
+  | ServerWorldItems
+  | ServerItemGranted
   | ServerPong
   | ServerError
   | ServerChat;
@@ -696,6 +774,21 @@ export function decodeClient(raw: string): ClientMessage | null {
       }
       return gm;
     }
+    case 'dropItem': {
+      // The dropped item is a full ItemDef (procedural loot has no registry id). Structural
+      // gate only: an object with a string id + name and a positive integer qty; the server
+      // clamps qty and stamps the authoritative position. Semantic ownership isn't checkable
+      // while inventory is client-authoritative (see ClientDropItem's trust note).
+      if (typeof o.item !== 'object' || o.item === null) return null;
+      const item = o.item as Record<string, unknown>;
+      if (!isString(item.id) || !isString(item.name)) return null;
+      if (!isNonNegInt(o.qty) || o.qty < 1) return null;
+      return { t: 'dropItem', item: o.item as unknown as ItemDef, qty: o.qty };
+    }
+    case 'pickupItem': {
+      if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_CHAT_LEN) return null;
+      return { t: 'pickupItem', id: o.id };
+    }
     default:
       return null;
   }
@@ -791,6 +884,17 @@ function isNetItemStack(v: unknown): v is NetItemStack {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
   if (!isFiniteNumber(o.qty) || typeof o.item !== 'object' || o.item === null) return false;
+  const item = o.item as Record<string, unknown>;
+  return isString(item.id) && isString(item.name);
+}
+
+/** A ground item on the wire (SERVER→client; trusted source, so a structural sanity check). */
+function isNetWorldItem(v: unknown): v is NetWorldItem {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  if (!isString(o.id) || !isFiniteNumber(o.qty)) return false;
+  if (!isFiniteNumber(o.x) || !isFiniteNumber(o.y) || !isFiniteNumber(o.z)) return false;
+  if (typeof o.item !== 'object' || o.item === null) return false;
   const item = o.item as Record<string, unknown>;
   return isString(item.id) && isString(item.name);
 }
@@ -951,6 +1055,24 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'who': {
       if (!Array.isArray(o.players) || !o.players.every(isNetWhoEntry)) return null;
       return { t: 'who', players: o.players };
+    }
+    case 'worldItems': {
+      if (
+        !isFiniteNumber(o.tick) ||
+        !Array.isArray(o.items) ||
+        !o.items.every(isNetWorldItem) ||
+        !Array.isArray(o.gone) ||
+        !o.gone.every(isString)
+      ) {
+        return null;
+      }
+      return { t: 'worldItems', tick: o.tick, items: o.items, gone: o.gone };
+    }
+    case 'grant': {
+      if (!isFiniteNumber(o.tick) || !Array.isArray(o.items) || !o.items.every(isNetItemStack)) {
+        return null;
+      }
+      return { t: 'grant', tick: o.tick, items: o.items };
     }
     default:
       return null;

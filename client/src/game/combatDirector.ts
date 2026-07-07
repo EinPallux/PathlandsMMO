@@ -195,6 +195,8 @@ export class CombatDirector {
     combatSelf: () => NetCombatSelf | null;
     drainKills: () => ServerKill[];
     drainFx: () => NetCombatEvent[];
+    /** Item stacks granted to us by the server (a ground-item pickup) to add to the bag. */
+    drainGrants: () => ItemStackSave[];
     send: (intent: Intent) => void;
   } | null = null;
 
@@ -808,6 +810,7 @@ export class CombatDirector {
       }
       this.reconcileFromServer();
       this.applyServerKills();
+      this.applyServerGrants();
       if (this.netSink !== null) this.renderServerFx(this.netSink.drainFx());
       return;
     }
@@ -1023,6 +1026,41 @@ export class CombatDirector {
     for (const kill of kills) {
       this.applyKillLoot(kill.enemyId, kill.gold, kill.items, this.player);
     }
+  }
+
+  /**
+   * Apply the server's item grants — the authoritative result of picking a ground item up (Part
+   * 29). Unlike a kill this plays a loot cue (not a death cue) and never advances quest objectives:
+   * it's purely "these stacks entered your bag." Bag capacity is enforced here (the client is the
+   * aggregator); an overflow drops on the floor conceptually — surfaced as a "Bag full" floater.
+   */
+  private applyServerGrants(): void {
+    const grants = this.netSink?.drainGrants();
+    if (grants === undefined || grants.length === 0) return;
+    let added = false;
+    for (const stack of grants) {
+      if (this.inventory.length >= this.bagCap()) {
+        this.pushFloater(this.player, 'Bag full', 'miss');
+        break;
+      }
+      this.inventory.push({ item: stack.item, qty: stack.qty });
+      this.pushFloater(this.player, stack.item.name, 'heal');
+      added = true;
+    }
+    if (added) audio.sfx('loot');
+  }
+
+  /**
+   * Drop a whole bag stack onto the world (the player-to-player trade action). Removes it from the
+   * bag and returns the removed stack so the caller can send it to the server, which spawns the
+   * authoritative ground item at our position. Returns null for an out-of-range / empty slot.
+   */
+  dropInventory(index: number): ItemStackSave | null {
+    if (index < 0 || index >= this.inventory.length) return null;
+    const removed = this.inventory.splice(index, 1)[0];
+    if (removed === undefined) return null;
+    this.pushFloater(this.player, `Dropped ${removed.item.name}`, 'miss');
+    return { item: removed.item, qty: removed.qty };
   }
 
   /**

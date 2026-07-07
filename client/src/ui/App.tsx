@@ -17,6 +17,7 @@ import { CombatHud } from './CombatHud.js';
 import { CharacterPanel } from './CharacterPanel.js';
 import { WaystonePanel } from './WaystonePanel.js';
 import { VendorPanel } from './VendorPanel.js';
+import { GroundLootPrompt } from './GroundLootPrompt.js';
 import { QuestDialog } from './QuestDialog.js';
 import { QuestLogPanel } from './QuestLogPanel.js';
 import { QuestTracker } from './QuestTracker.js';
@@ -146,6 +147,7 @@ export function App(): JSX.Element {
         {ready && <CharacterPanel />}
         {ready && <WaystonePanel />}
         {ready && <VendorPanel />}
+        {ready && <GroundLootPrompt />}
         {ready && <QuestTracker />}
         {ready && <QuestToasts />}
         {ready && <QuestDialog />}

@@ -26,12 +26,15 @@ import {
   type Intent,
   type MoveIntent,
   type MoveState,
+  type ItemDef,
   type NetCombatEvent,
   type NetCombatSelf,
   type NetEntity,
+  type NetItemStack,
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
+  type NetWorldItem,
   type ClientGm,
   type NetWhoEntry,
   type ServerKill,
@@ -178,6 +181,10 @@ export class NetClient {
   private readonly enemySamples = new Map<string, Sample[]>();
   /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
   private lastCombatSelf: NetCombatSelf | null = null;
+  /** Ground items in our interest region (server-authoritative), keyed by id — for rendering. */
+  private readonly worldItemMap = new Map<string, NetWorldItem>();
+  /** Item stacks granted to us (a ground-item pickup) since the game last drained them. */
+  private readonly grantQueue: NetItemStack[] = [];
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
   private readonly killQueue: ServerKill[] = [];
   /** Authoritative combat visuals (floaters / sparks / death poofs) awaiting render. */
@@ -266,6 +273,9 @@ export class NetClient {
         this.enemyMap.clear();
         this.enemySamples.clear();
         for (const e of msg.entities) this.ingestEnemy(e, msg.tick);
+        // Ground items are re-seeded by a `worldItems` frame the server sends right after this
+        // snapshot; clear here so a rejoin starts from a clean set.
+        this.worldItemMap.clear();
         this.emitStatus();
         break;
       }
@@ -337,6 +347,13 @@ export class NetClient {
         break;
       case 'who':
         this.opts.onWho?.(msg.players);
+        break;
+      case 'worldItems':
+        for (const wi of msg.items) this.worldItemMap.set(wi.id, wi); // ENTER (immutable, no update)
+        for (const id of msg.gone) this.worldItemMap.delete(id); // LEAVE / picked up / despawned
+        break;
+      case 'grant':
+        for (const s of msg.items) this.grantQueue.push(s); // a pickup — the game adds to the bag
         break;
       default:
         break;
@@ -421,6 +438,8 @@ export class NetClient {
     this.clockInit = false;
     this.enemyMap.clear();
     this.enemySamples.clear();
+    this.worldItemMap.clear();
+    this.grantQueue.length = 0;
     this.lastCombatSelf = null;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
@@ -514,6 +533,29 @@ export class NetClient {
   requestWho(): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'who' });
+  }
+
+  /** Drop a bag stack onto the ground (the server spawns it at our authoritative position). */
+  sendDropItem(item: ItemDef, qty: number): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'dropItem', item, qty });
+  }
+
+  /** Ask to pick up a ground item by id (the server validates range + grants it if still there). */
+  sendPickupItem(id: string): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'pickupItem', id });
+  }
+
+  /** The ground items currently in our interest region (for the world renderer + pickup prompt). */
+  worldItems(): NetWorldItem[] {
+    return [...this.worldItemMap.values()];
+  }
+
+  /** Take and clear item stacks granted to us (ground-item pickups) since the last drain. */
+  drainGrants(): NetItemStack[] {
+    if (this.grantQueue.length === 0) return [];
+    return this.grantQueue.splice(0, this.grantQueue.length);
   }
 
   /** Send a GM action (the server re-checks GM privilege; a non-GM's frame is ignored). */

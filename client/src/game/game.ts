@@ -28,6 +28,7 @@ import { Environment } from '../engine/environment.js';
 import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
 import { RemotePlayerRenderer } from '../engine/remotePlayers.js';
+import { GroundItemRenderer } from '../engine/groundItemRenderer.js';
 import { NetClient } from '../net/netClient.js';
 import { resolveServerUrl } from '../net/serverUrl.js';
 import { Input } from './input.js';
@@ -48,6 +49,10 @@ const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
 const UNDERGROUND_MARGIN = 3;
+
+// How close (world units) to a dropped item the "Press E to pick up" prompt appears. A hair under
+// the server's PICKUP_RADIUS (3) so a shown prompt always yields a successful server-side pickup.
+const PICKUP_PROMPT_RANGE = 2.8;
 
 // Phase-6 reconciliation smoothing: the error offset decays with this time constant
 // (~95% gone in ~3τ ≈ 0.18 s); corrections larger than the snap distance are applied
@@ -111,6 +116,8 @@ export class Game {
    */
   private readonly net: NetClient | null;
   private readonly remoteRenderer: RemotePlayerRenderer | null;
+  /** Renders the server's dropped ground items (the trade motes); null in a server-free build. */
+  private readonly groundItems: GroundItemRenderer | null;
   /**
    * Cosmetic reconciliation error: the residual between our prediction and the server's
    * authority after a reconcile, added to the RENDERED position and decayed to zero so a
@@ -301,6 +308,7 @@ export class Game {
     });
     this.net = net;
     this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+    this.groundItems = new GroundItemRenderer(this.scene);
     // Stage 2b: the combat director takes its enemies + own combat state from the server and
     // forwards combat intents to it (the server is authoritative over all combat outcomes).
     this.combat.setNetSink({
@@ -308,6 +316,7 @@ export class Game {
       combatSelf: () => net.combatSelf(),
       drainKills: () => net.drainKills(),
       drainFx: () => net.drainFx(),
+      drainGrants: () => net.drainGrants(),
       send: (intent) => net.sendIntent(intent),
     });
     // Fresh session: clear any scrollback + party state left from a previous game instance.
@@ -318,6 +327,7 @@ export class Game {
       partyInvite: null,
       partyVitals: {},
       gm: false,
+      nearbyLoot: null,
     });
     net.connect();
 
@@ -423,6 +433,12 @@ export class Game {
       equipItem: (index) => this.combat.equipItem(index),
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
+      dropItem: (index) => {
+        // Drop the stack out of the local bag, then have the server spawn the authoritative
+        // ground item at our position (other players can pick it up — the trade mechanic).
+        const removed = this.combat.dropInventory(index);
+        if (removed !== null) this.net?.sendDropItem(removed.item, removed.qty);
+      },
       buyItem: (index) => this.combat.buyItem(index),
       buybackItem: (index) => this.combat.buybackItem(index),
       closeVendor: () => this.combat.closeVendor(),
@@ -550,8 +566,8 @@ export class Game {
       if (this.input.wasTapped(code)) this.combat.castSlot(i);
     }
 
-    // Interact (E by default): advance dialogue → attune/use a Waystone → trade with a
-    // merchant → talk to an NPC.
+    // Interact (E by default): advance dialogue → pick up a nearby ground item → attune/use a
+    // Waystone → trade with a merchant → talk to an NPC.
     if (tapped('interact')) {
       const px = this.controller.physics.x;
       const pz = this.controller.physics.z;
@@ -561,6 +577,9 @@ export class Game {
         this.quests.closeDialog();
       } else if (store.vendor) {
         this.combat.closeVendor();
+      } else if (store.nearbyLoot) {
+        // A dropped item is the most immediate intent — the server validates range + grants it.
+        this.net?.sendPickupItem(store.nearbyLoot.id);
       } else if (
         !this.combat.interactWaystone() &&
         !this.gather.interact(px, this.controller.physics.y, pz)
@@ -700,6 +719,31 @@ export class Game {
           sx: (this.plateProj.x * 0.5 + 0.5) * sw,
           sy: (-this.plateProj.y * 0.5 + 0.5) * sh,
         });
+      }
+    }
+
+    // Server-dropped ground items: render the loot motes and find the nearest one in pickup reach
+    // so the HUD can prompt "Press E to pick up". Uses AUTHORITATIVE physics (the same position the
+    // server range-checks), so a shown prompt always yields a successful pickup.
+    if (this.net !== null && this.groundItems !== null) {
+      const items = this.net.worldItems();
+      this.groundItems.sync(items, dt);
+      const lootSt = useStore.getState();
+      const busy = lootSt.dialogue !== null || lootSt.vendor !== null || lootSt.showTravel;
+      let nearest: { id: string; name: string } | null = null;
+      if (!busy) {
+        const pp = this.controller.physics;
+        let best = PICKUP_PROMPT_RANGE * PICKUP_PROMPT_RANGE;
+        for (const wi of items) {
+          const d2 = (wi.x - pp.x) ** 2 + (wi.z - pp.z) ** 2;
+          if (d2 <= best) {
+            best = d2;
+            nearest = { id: wi.id, name: wi.item.name };
+          }
+        }
+      }
+      if ((lootSt.nearbyLoot?.id ?? null) !== (nearest?.id ?? null)) {
+        lootSt.setNearbyLoot(nearest);
       }
     }
 
@@ -935,6 +979,7 @@ export class Game {
     );
     this.net?.dispose();
     this.remoteRenderer?.dispose();
+    this.groundItems?.dispose();
     if (this.net !== null) {
       useStore.getState().setNet(null); // hide the HUD on teardown
       useStore.setState({ chat: [], chatTyping: false }); // clear chat + release the input gate

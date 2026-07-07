@@ -27,19 +27,23 @@ import {
   type NetPartyVital,
   type NetPlayer,
   type NetWhoEntry,
+  type NetWorldItem,
   type ServerChat,
   type ServerMessage,
 } from '@pathlands/shared';
 import type { ServerSim, ServerPlayer } from './sim.js';
 import { ServerCombat } from './combat.js';
 import { PartyManager } from './party.js';
+import { GroundItems } from './groundItems.js';
 import {
   buildCellIndex,
   buildEntityCellIndex,
+  buildItemCellIndex,
   cellOf,
   INTEREST_RADIUS_CELLS,
   visibleEntities,
   visibleIds,
+  visibleItems,
 } from './interest.js';
 import { Auth } from './auth.js';
 import { MemoryStore, type Store } from './store.js';
@@ -53,6 +57,8 @@ interface Conn {
   readonly known: Set<string>;
   /** Enemy entity ids currently replicated to this connection (its entity interest). */
   readonly knownEntities: Set<string>;
+  /** Ground-item ids currently replicated to this connection (its item interest). */
+  readonly knownItems: Set<string>;
   /** Cleared by the heartbeat each round; set true on a WebSocket-level pong. */
   isAlive: boolean;
   /** Fires if the socket never says hello — an anti-idle-DoS reaper. */
@@ -72,6 +78,8 @@ interface Conn {
   isGm: boolean;
   /** Wall-clock (ms) until which this player is muted by a GM (0 = not muted). */
   mutedUntilMs: number;
+  /** Wall-clock (ms) of this connection's last accepted item drop — an anti-spam-drop gate. */
+  lastDropMs: number;
 }
 
 export interface GatewayOptions {
@@ -110,6 +118,18 @@ const PARTY_MIN_INTERVAL_MS = 500;
 
 /** Minimum spacing between one connection's /who queries (ms) — bounds the roster-reply cost. */
 const WHO_MIN_INTERVAL_MS = 2000;
+
+/** Minimum spacing between one connection's item drops (ms) — bounds spawned-entity spam. */
+const DROP_MIN_INTERVAL_MS = 250;
+
+/** How close (world units) a player must be to a ground item to pick it up. */
+const PICKUP_RADIUS = 3;
+
+/** Ground-item lifetime before it despawns (10 minutes; converted to sim ticks at construction). */
+const GROUND_ITEM_TTL_MS = 10 * 60 * 1000;
+
+/** Upper bound on a single dropped stack's quantity (defends the wire / bag against absurd sizes). */
+const MAX_DROP_QTY = 999;
 
 /** Cap on players listed in a /who reply, so the frame stays bounded in a crowded world. */
 const WHO_MAX_ENTRIES = 100;
@@ -150,6 +170,12 @@ export class GameServer {
   private readonly combat: ServerCombat;
   /** Session-scoped party (group) state (Phase 6 §Social). */
   private readonly party = new PartyManager();
+  /** The world's authoritative dropped items (the player-to-player trade surface). */
+  private readonly groundItems = new GroundItems();
+  /** Ground-item lifetime in SIM TICKS (from GROUND_ITEM_TTL_MS ÷ tick duration). */
+  private readonly groundItemTtlTicks: number;
+  /** Set when a ground item was dropped / picked up / despawned — forces a replication pass. */
+  private groundChanged = false;
 
   constructor(
     private readonly sim: ServerSim,
@@ -157,6 +183,11 @@ export class GameServer {
     deps: GatewayDeps = {},
   ) {
     this.combat = new ServerCombat(sim.world);
+    // Convert the 10-minute ground-item lifetime to sim ticks (the sim has no wall-clock).
+    this.groundItemTtlTicks = Math.max(
+      1,
+      Math.round(GROUND_ITEM_TTL_MS / Math.max(1, opts.tickDurationMs)),
+    );
     // Let the combat sim share a kill's XP with the killer's nearby party (Part 21): it looks up
     // the party's member ids and range-gates them itself. Solo players resolve to an empty list.
     this.combat.setPartyProvider((id) => this.party.partyOf(id)?.members ?? []);
@@ -283,6 +314,7 @@ export class GameServer {
       id: null,
       known: new Set(),
       knownEntities: new Set(),
+      knownItems: new Set(),
       isAlive: true,
       helloTimer: null,
       msgWindowStart: 0,
@@ -293,6 +325,7 @@ export class GameServer {
       lastWhoMs: 0,
       isGm: false,
       mutedUntilMs: 0,
+      lastDropMs: 0,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
@@ -478,6 +511,17 @@ export class GameServer {
           conn.knownEntities.add(e.id);
         }
         this.send(conn.ws, { t: 'snapshot', tick: this.sim.tick, players, entities });
+        // Seed ground-item interest: the dropped stacks in the joiner's 3×3 region, tracked so
+        // the next passes only send new drops / removals.
+        const itemIndex = buildItemCellIndex(this.groundItems.netItems());
+        const items: NetWorldItem[] = [];
+        for (const wi of visibleItems(player, itemIndex)) {
+          items.push(wi);
+          conn.knownItems.add(wi.id);
+        }
+        if (items.length > 0) {
+          this.send(conn.ws, { t: 'worldItems', tick: this.sim.tick, items, gone: [] });
+        }
         this.membershipChanged = true;
         return;
       }
@@ -563,6 +607,45 @@ export class GameServer {
         if (conn.id === null) return; // must be joined
         if (!conn.isGm) return; // silently ignore GM actions from a non-GM (never trusted)
         void this.handleGm(conn.id, msg);
+        return;
+      }
+      case 'dropItem': {
+        if (conn.id === null) return; // must be joined
+        if (now - conn.lastDropMs < DROP_MIN_INTERVAL_MS) return; // anti-spam-drop gate
+        const player = this.sim.players.get(conn.id);
+        if (player === undefined) return;
+        conn.lastDropMs = now;
+        // Drop at the player's AUTHORITATIVE position (never a client-supplied one), qty clamped.
+        const qty = Math.max(1, Math.min(MAX_DROP_QTY, Math.floor(msg.qty)));
+        this.groundItems.drop(
+          msg.item,
+          qty,
+          player.phys.x,
+          player.phys.y,
+          player.phys.z,
+          this.sim.tick,
+        );
+        this.groundChanged = true; // force a replication pass so nearby players see it
+        return;
+      }
+      case 'pickupItem': {
+        if (conn.id === null) return; // must be joined
+        const player = this.sim.players.get(conn.id);
+        if (player === undefined) return;
+        // Atomic authoritative removal (first-come-wins) if in range — the anti-dup guarantee.
+        const picked = this.groundItems.tryPickup(
+          msg.id,
+          player.phys.x,
+          player.phys.z,
+          PICKUP_RADIUS,
+        );
+        if (picked === null) return; // gone, already taken, or out of range — no grant
+        this.send(conn.ws, {
+          t: 'grant',
+          tick: this.sim.tick,
+          items: [{ item: picked.item, qty: picked.qty }],
+        });
+        this.groundChanged = true; // the stack left the world — replicate its removal
         return;
       }
     }
@@ -817,6 +900,11 @@ export class GameServer {
     // Server-authoritative respawn (Stage 2c-4): the combat sim relocated a revived spirit to a
     // Waystone — move the movement authority (physics) to match, so the position sticks.
     for (const r of this.combat.drainRespawns()) this.sim.teleport(r.id, r.x, r.z);
+    // Despawn ground items past their 10-minute lifetime; a removal forces a replication pass so
+    // clients drop the mesh (the ids ride the per-conn `gone` list in broadcast()).
+    if (this.groundItems.expire(this.sim.tick, this.groundItemTtlTicks).length > 0) {
+      this.groundChanged = true;
+    }
     if (this.sim.tick % this.opts.broadcastEveryTicks === 0) this.broadcast();
   }
 
@@ -836,9 +924,15 @@ export class GameServer {
     // A delta pass is worthwhile when a player moved/joined/left OR an enemy changed (a
     // viewer's own movement also shifts which enemies are in its interest). The `self` pass
     // below always runs so reconciliation acks keep flowing for a stationary player.
-    const buildDeltas = this.sim.anyDirty() || membershipChanged || this.combat.hasChanges();
+    const groundChanged = this.groundChanged;
+    this.groundChanged = false;
+    // A ground-item drop / pickup / despawn shifts item interest even if no player moved, so it
+    // joins the delta-pass trigger alongside player movement + enemy changes.
+    const buildDeltas =
+      this.sim.anyDirty() || membershipChanged || this.combat.hasChanges() || groundChanged;
     const index = buildDeltas ? buildCellIndex(this.sim.players.values()) : null;
     const entityIndex = buildDeltas ? buildEntityCellIndex(this.combat.netEntities()) : null;
+    const itemIndex = buildDeltas ? buildItemCellIndex(this.groundItems.netItems()) : null;
 
     for (const conn of this.conns.values()) {
       if (conn.id === null) continue;
@@ -971,6 +1065,33 @@ export class GameServer {
             entities,
             goneEntities,
           });
+        }
+
+        // Ground items: ENTER (newly dropped / walked into range) + LEAVE (picked up, despawned,
+        // or walked out of range). A ground item is immutable, so there is no UPDATE case — an id
+        // enters `known` once and only leaves on removal. Sent on its own frame from ServerWorldItems.
+        if (itemIndex !== null) {
+          const visibleWi = visibleItems(viewer, itemIndex);
+          const seenWi = new Set<string>();
+          const newItems: NetWorldItem[] = [];
+          const goneItems: string[] = [];
+          for (const wi of visibleWi) {
+            seenWi.add(wi.id);
+            if (!conn.knownItems.has(wi.id)) {
+              conn.knownItems.add(wi.id); // ENTER
+              newItems.push(wi);
+            }
+          }
+          for (const id of conn.knownItems) if (!seenWi.has(id)) goneItems.push(id);
+          for (const id of goneItems) conn.knownItems.delete(id);
+          if (newItems.length > 0 || goneItems.length > 0) {
+            this.send(conn.ws, {
+              t: 'worldItems',
+              tick: this.sim.tick,
+              items: newItems,
+              gone: goneItems,
+            });
+          }
         }
       }
     }

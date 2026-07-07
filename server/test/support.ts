@@ -12,12 +12,15 @@ import {
   type ClientMessage,
   type Intent,
   type MoveIntent,
+  type ItemDef,
   type NetCombatSelf,
   type NetEntity,
+  type NetItemStack,
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
   type NetSelf,
+  type NetWorldItem,
 } from '@pathlands/shared';
 import { TICK_DURATION_MS } from '@pathlands/shared';
 import type { GatewayOptions } from '../src/gateway.js';
@@ -99,6 +102,10 @@ export class TestClient {
   closed = false;
   /** Gold from the most recent kill/grant frame, or null. */
   lastKillGold: number | null = null;
+  /** Ground items this client currently sees (interest-filtered), keyed by id. */
+  readonly worldItems = new Map<string, NetWorldItem>();
+  /** Item stacks from the most recent pickup grant, appended in arrival order. */
+  readonly grants: NetItemStack[] = [];
   deltaCount = 0;
   private seq = 0;
 
@@ -170,6 +177,13 @@ export class TestClient {
       case 'who':
         this.lastWho = msg.players;
         break;
+      case 'worldItems':
+        for (const wi of msg.items) this.worldItems.set(wi.id, wi);
+        for (const id of msg.gone) this.worldItems.delete(id);
+        break;
+      case 'grant':
+        for (const s of msg.items) this.grants.push(s);
+        break;
       default:
         break;
     }
@@ -204,6 +218,14 @@ export class TestClient {
   /** Request the online-player roster (/who). */
   who(): void {
     this.send({ t: 'who' });
+  }
+  /** Drop a bag stack onto the ground (spawned at the player's authoritative position). */
+  dropItem(item: ItemDef, qty = 1): void {
+    this.send({ t: 'dropItem', item, qty });
+  }
+  /** Ask to pick up a ground item by id. */
+  pickupItem(id: string): void {
+    this.send({ t: 'pickupItem', id });
   }
   /** Send a GM action (target by name). */
   gmAction(

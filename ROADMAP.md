@@ -17,6 +17,20 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >
 > ---
 >
+> **Phase 6 (2026-07-07) — Part 29: Droppable ground items (the trade surface).**
+> Players trade by **dropping items on the ground** now — a server-authoritative world item any
+> nearby player can pick up, despawning after **10 minutes**. New protocol (v16): `ClientDropItem`
+> / `ClientPickupItem` (client→server) and `ServerWorldItems` (interest-filtered ENTER/LEAVE, like
+> enemies) / `ServerItemGranted` (server→client). Server `GroundItems` store owns the stacks; a
+> **drop** spawns one at the player's authoritative position, a **pickup** removes it **atomically**
+> (first-come-wins — the anti-dup guarantee) and grants it back to the picker's bag; a TTL sweep
+> despawns unclaimed stacks. Client renders spinning rarity-coloured motes + a "press E to pick up"
+> prompt; **shift+right-click** a bag item to drop it. **417 tests green** (6 new: the `GroundItems`
+> store — drop/atomic-pickup/despawn/cap — and the wire path — replicate/grant/anti-dup/interest).
+> _Next: the quests / professions / economy server-authority migration + shared quest turn-in credit._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 28: Scrap Bank, Mail & Trading.**
 > Owner call: the Waymeet Bank (item vault + mail inbox) and any dedicated trade window are
 > **removed**. There is no item storage beyond the character's bag; player exchange happens by

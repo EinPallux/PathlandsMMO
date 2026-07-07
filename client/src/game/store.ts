@@ -285,10 +285,12 @@ export interface GameCommands {
   cycleTarget(): void;
   toggleAutoAttack(): void;
   releaseSpirit(): void;
-  /** Inventory: equip a bag item, unequip a slot, sell a bag item. */
+  /** Inventory: equip a bag item, unequip a slot, sell a bag item, drop a bag stack on the ground. */
   equipItem(index: number): void;
   unequipItem(slot: string): void;
   sellItem(index: number): void;
+  /** Drop a whole bag stack onto the ground for other players to pick up (the trade mechanic). */
+  dropItem(index: number): void;
   /** Vendors: buy a stock item, buy back a sold item, close the shop. */
   buyItem(index: number): void;
   buybackItem(index: number): void;
@@ -463,6 +465,9 @@ export interface UiState {
   /** Name of a merchant within trade range (drives the "Press E to trade" prompt). */
   nearbyVendor: string | null;
 
+  /** Nearest pickuppable ground item (id + name), or null — drives the "Press E to pick up" prompt. */
+  nearbyLoot: { id: string; name: string } | null;
+
   questLog: QuestEntryUi[] | null;
   questTracker: QuestEntryUi[];
   questDialog: QuestDialogUi | null;
@@ -513,6 +518,7 @@ export interface UiState {
   setWaystone: (w: WaystoneUi) => void;
   setVendor: (v: VendorUi | null) => void;
   setNearbyVendor: (name: string | null) => void;
+  setNearbyLoot: (loot: { id: string; name: string } | null) => void;
   setQuestLog: (q: QuestEntryUi[]) => void;
   setQuestTracker: (q: QuestEntryUi[]) => void;
   setQuestDialog: (q: QuestDialogUi | null) => void;
@@ -598,6 +604,7 @@ export const useStore = create<UiState>((set) => ({
   showTravel: false,
   vendor: null,
   nearbyVendor: null,
+  nearbyLoot: null,
 
   questLog: null,
   questTracker: [],
@@ -665,6 +672,7 @@ export const useStore = create<UiState>((set) => ({
   setWaystone: (waystone) => set({ waystone }),
   setVendor: (vendor) => set({ vendor }),
   setNearbyVendor: (nearbyVendor) => set({ nearbyVendor }),
+  setNearbyLoot: (nearbyLoot) => set({ nearbyLoot }),
   setQuestLog: (questLog) => set({ questLog }),
   setQuestTracker: (questTracker) => set({ questTracker }),
   setQuestDialog: (questDialog) => set({ questDialog }),

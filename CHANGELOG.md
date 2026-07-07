@@ -10,6 +10,37 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 29 — Droppable ground items (2026-07-07)
+
+The player-to-player trade surface that replaces bank / mail / a trade window: **drop items on the
+ground and let another player pick them up.** Server-authoritative end to end — the atomic pickup is
+the anti-duplication guarantee.
+
+#### Added
+
+- **Protocol v16** (`shared/proto/net.ts`): `ClientDropItem` (full item + qty) / `ClientPickupItem`
+  (id) client→server, and `ServerWorldItems` (interest-filtered ENTER/LEAVE, no UPDATE — a ground
+  item is immutable) / `ServerItemGranted` (bag grant on pickup) server→client, plus the `NetWorldItem`
+  view and decoders/guards.
+- **`server/src/groundItems.ts` (`GroundItems`)**: the authoritative world-item store —
+  `drop` / `get` / `tryPickup` (atomic, range-checked, first-come-wins) / `expire` (TTL sweep) /
+  `netItems`, with a 2048-item memory cap that evicts the oldest.
+- **Gateway wiring**: `dropItem` spawns a stack at the player's **authoritative** position (rate-gated,
+  qty-clamped); `pickupItem` removes it atomically within `PICKUP_RADIUS` and grants it back; a
+  per-tick sweep despawns stacks past the **10-minute** lifetime (`GROUND_ITEM_TTL_MS` → sim ticks).
+  Ground items are interest-replicated per connection (`knownItems` set + `ServerWorldItems` diff),
+  seeded on join alongside the snapshot.
+- **Interest helpers** (`server/src/interest.ts`): `buildItemCellIndex` / `visibleItems` (the
+  world-item analogue of the enemy interest functions).
+- **Client**: `NetClient` ingests `worldItems` + `grant`, exposes `worldItems()` / `drainGrants()` /
+  `sendDropItem` / `sendPickupItem`; `CombatDirector.applyServerGrants` adds granted stacks to the bag
+  (loot cue, not a death cue) and `dropInventory` removes a stack to drop; `GroundItemRenderer` draws
+  spinning rarity-coloured motes; a proximity `GroundLootPrompt` ("press **E** to pick up") + the E
+  interaction; **shift+right-click** a bag item on the character sheet to drop it. New `loot` SFX.
+- **Tests** (+7): `server/test/groundItems.test.ts` — the `GroundItems` store (drop, atomic pickup,
+  out-of-range, despawn, cap eviction) and the wire path (replicate to a nearby player, grant +
+  remove on pickup, anti-dup race, interest filtering); `shared/test/net.test.ts` — v16 round-trips.
+
 ### Part 28 — Scrap Bank, Mail & Trading (2026-07-07)
 
 Owner call: the Waymeet **Bank** (item vault) and **Mail** inbox are removed, and no dedicated
