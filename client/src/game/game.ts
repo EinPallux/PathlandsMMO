@@ -267,7 +267,10 @@ export class Game {
           from: line.from,
           text: line.text,
           self: line.self,
-          system: false,
+          // A server notice (party full / whisper failed / …) arrives with an empty fromId — the
+          // server never attributes a real line to no one — so render it in the gold-italic system
+          // style rather than as an ordinary `System: …` chat line.
+          system: line.fromId === '',
           emote: line.emote,
           whisper: line.whisper,
         }),
