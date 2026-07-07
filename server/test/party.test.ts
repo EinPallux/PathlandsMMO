@@ -127,8 +127,8 @@ describe('party — over the wire', () => {
     b.hello('Boro', 'warrior', 6);
     await until(() => a.you !== null && b.you !== null, 3000, 'both welcomed');
 
-    // Alia invites Boro by name; Boro gets the invite frame.
-    a.partyInvite('Boro');
+    // Alia invites Boro by session id; Boro gets the invite frame naming the inviter.
+    a.partyInvite(b.you!);
     await until(() => b.lastInvite?.fromId === a.you, 3000, 'invite arrives');
     expect(b.lastInvite!.fromName).toBe('Alia');
 
@@ -164,13 +164,60 @@ describe('party — over the wire', () => {
     a.hello('Alia', 'ranger', 5);
     b.hello('Boro', 'warrior', 6);
     await until(() => a.you !== null && b.you !== null, 3000, 'welcomed');
-    a.partyInvite('Boro');
+    a.partyInvite(b.you!);
     await until(() => b.lastInvite !== null, 3000, 'invite');
     b.partyAccept();
     await until(() => a.lastParty.members.length === 2, 3000, 'formed');
 
     b.close(); // Boro drops
     await until(() => a.lastParty.members.length === 0, 3000, 'Alia sees the party disband');
+
+    a.close();
+  });
+
+  it('invite is by session id, so it reaches the right player even with duplicate names', async () => {
+    // Two players share the display name "Twin"; a third invites ONE of them by session id.
+    // Name-based targeting would resolve to the global-first match (ambiguous); id targeting
+    // is exact.
+    const a = new TestClient(wsUrl);
+    const twin1 = new TestClient(wsUrl);
+    const twin2 = new TestClient(wsUrl);
+    await Promise.all([a.opened(), twin1.opened(), twin2.opened()]);
+    a.hello('Alia', 'ranger', 5);
+    twin1.hello('Twin', 'warrior', 6);
+    twin2.hello('Twin', 'priest', 7);
+    await until(
+      () => a.you !== null && twin1.you !== null && twin2.you !== null,
+      3000,
+      'all welcomed',
+    );
+
+    // Invite the SECOND Twin specifically.
+    a.partyInvite(twin2.you!);
+    await until(() => twin2.lastInvite?.fromId === a.you, 3000, 'twin2 invited');
+    // The other same-named player received nothing.
+    expect(twin1.lastInvite).toBeNull();
+
+    twin2.partyAccept();
+    await until(() => a.lastParty.members.length === 2, 3000, 'party formed with twin2');
+    expect(a.lastParty.members.map((m) => m.id).sort()).toEqual([a.you, twin2.you].sort());
+    expect(a.lastParty.members.some((m) => m.id === twin1.you)).toBe(false);
+
+    a.close();
+    twin1.close();
+    twin2.close();
+  });
+
+  it('an invite to an offline / unknown session id is rejected, forming no party', async () => {
+    const a = new TestClient(wsUrl);
+    await a.opened();
+    a.hello('Alia', 'ranger', 5);
+    await until(() => a.you !== null, 3000, 'welcomed');
+
+    a.partyInvite('no-such-session');
+    await until(() => a.chats.some((c) => c.fromId === ''), 3000, 'a rejection notice arrives');
+    expect(a.chats.some((c) => c.fromId === '' && /no longer online/i.test(c.text))).toBe(true);
+    expect(a.lastParty.members).toHaveLength(0);
 
     a.close();
   });

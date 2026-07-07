@@ -60,6 +60,8 @@ interface Conn {
   accountId: string | null;
   /** Wall-clock (ms) of this connection's last accepted chat line — its send-rate gate. */
   lastChatMs: number;
+  /** Wall-clock (ms) of this connection's last accepted party action — an invite-spam gate. */
+  lastPartyMs: number;
 }
 
 export interface GatewayOptions {
@@ -90,6 +92,9 @@ const FLOOD_TERMINATE_FACTOR = 8;
 
 /** Minimum spacing between one connection's chat lines (ms) — an anti-spam gate. */
 const CHAT_MIN_INTERVAL_MS = 700;
+
+/** Minimum spacing between one connection's party actions (ms) — an invite-spam gate. */
+const PARTY_MIN_INTERVAL_MS = 500;
 
 /** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
 const CHAT_BROADCAST_MAX = 200;
@@ -252,6 +257,7 @@ export class GameServer {
       msgCount: 0,
       accountId: null,
       lastChatMs: 0,
+      lastPartyMs: 0,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
@@ -474,6 +480,13 @@ export class GameServer {
       }
       case 'party': {
         if (conn.id === null) return; // must be joined
+        // Rate-gate INVITES only — that's the amplification vector (each invite pushes an
+        // unsolicited frame to another player). accept/decline/leave/kick only touch the
+        // sender's own bounded (≤4) party, so a human firing them back-to-back is fine.
+        if (msg.action === 'invite') {
+          if (now - conn.lastPartyMs < PARTY_MIN_INTERVAL_MS) return; // silently drop the flood
+          conn.lastPartyMs = now;
+        }
         this.handleParty(conn.id, msg);
         return;
       }
@@ -486,10 +499,11 @@ export class GameServer {
   private handleParty(meId: string, msg: ClientParty): void {
     switch (msg.action) {
       case 'invite': {
-        if (msg.target === undefined) return;
-        const target = this.resolvePlayerByName(msg.target);
-        if (target === null) {
-          this.partyNotice(meId, `No player named “${msg.target.slice(0, 24)}” is online.`);
+        // Targets are session ids (unambiguous where names are not — the client has the id
+        // from the roster/snapshot). Validate it names a joined player, and not the sender.
+        const target = msg.target;
+        if (target === undefined || target === meId || !this.sim.players.has(target)) {
+          this.partyNotice(meId, 'That player is no longer online.');
           return;
         }
         const res = this.party.invite(meId, target);
@@ -533,10 +547,9 @@ export class GameServer {
         break;
       }
       case 'kick': {
+        // `target` is the member's session id; party.kick validates leadership + membership.
         if (msg.target === undefined) return;
-        const target = this.resolvePlayerByName(msg.target);
-        if (target === null) return;
-        const res = this.party.kick(meId, target);
+        const res = this.party.kick(meId, msg.target);
         if (res === null) return;
         for (const m of res.notify) this.sendPartyState(m);
         break;
@@ -572,14 +585,6 @@ export class GameServer {
   /** The connection whose session id is `id`, or null (small N — parties are ≤ 4). */
   private connById(id: string): Conn | null {
     for (const c of this.conns.values()) if (c.id === id) return c;
-    return null;
-  }
-
-  /** Resolve a player name (case-insensitive, server-authoritative) to a session id, or null. */
-  private resolvePlayerByName(name: string): string | null {
-    const lower = name.trim().toLowerCase();
-    if (lower.length === 0) return null;
-    for (const p of this.sim.players.values()) if (p.name.toLowerCase() === lower) return p.id;
     return null;
   }
 

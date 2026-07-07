@@ -197,9 +197,9 @@ export class TestClient {
     this.combatIntent({ type: 'ReleaseSpirit' });
   }
 
-  // --- party ---
-  partyInvite(name: string): void {
-    this.send({ t: 'party', action: 'invite', target: name });
+  // --- party (invite/kick target the recipient's SESSION id, from the roster/snapshot) ---
+  partyInvite(id: string): void {
+    this.send({ t: 'party', action: 'invite', target: id });
   }
   partyAccept(): void {
     this.send({ t: 'party', action: 'accept' });
@@ -210,8 +210,8 @@ export class TestClient {
   partyLeave(): void {
     this.send({ t: 'party', action: 'leave' });
   }
-  partyKick(name: string): void {
-    this.send({ t: 'party', action: 'kick', target: name });
+  partyKick(id: string): void {
+    this.send({ t: 'party', action: 'kick', target: id });
   }
 
   close(): void {

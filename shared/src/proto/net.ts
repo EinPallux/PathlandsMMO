@@ -190,14 +190,15 @@ export interface ClientChat {
 }
 
 /**
- * A party control action. `invite` / `kick` carry a target player NAME (the server resolves it to
- * a session, server-authoritatively); `accept` / `decline` act on the recipient's one pending
- * invite; `leave` drops the sender from its party. All are validated server-side.
+ * A party control action. `invite` / `kick` carry the target's SESSION id (the client has it from
+ * the snapshot / roster — an id is unambiguous where player names are not); `accept` / `decline`
+ * act on the recipient's one pending invite; `leave` drops the sender from its party. All are
+ * validated server-side (the server confirms the id is a joined player / a party member).
  */
 export interface ClientParty {
   t: 'party';
   action: 'invite' | 'accept' | 'decline' | 'leave' | 'kick';
-  /** Target player name for `invite` / `kick`; ignored otherwise. */
+  /** Target player session id for `invite` / `kick`; ignored otherwise. */
   target?: string;
 }
 
