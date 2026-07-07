@@ -62,9 +62,21 @@ value (changing it later logs everyone out):
 echo "AUTH_SECRET=$(openssl rand -base64 32)" > .env
 ```
 
-Accounts and characters persist in the `gamedata` Docker volume (the server's `FileStore`,
-`/data/pathlands.json`), so they survive restarts and redeploys. Back it up with
-`docker run --rm -v pathlandsmmo_gamedata:/d -v "$PWD":/b alpine tar czf /b/gamedata.tgz -C /d .`.
+All player data lives in **PostgreSQL** (the `db` service; the server applies its schema on
+connect). Set a strong password in the same `.env`:
+
+```bash
+echo "POSTGRES_PASSWORD=$(openssl rand -base64 24)" >> .env
+```
+
+Data survives restarts/redeploys in the `pgdata` volume. Back it up with `pg_dump`:
+
+```bash
+docker compose exec db pg_dump -U pathlands pathlands > backup-$(date +%F).sql
+```
+
+(If you leave `DATABASE_URL` unset the server falls back to a single-file `FileStore` in the
+`gamedata` volume — fine for local dev, but the compose sets Postgres for you.)
 
 ## 5. Build + start everything
 
@@ -143,14 +155,30 @@ it after. Add a host cron (as root):
 (the site is down for a few seconds once a week during renewal — acceptable for a game server;
 switch to the webroot challenge later if you want zero-downtime renewal.)
 
-### PostgreSQL (accounts phase, later)
+### GM tooling
 
-The compose file declares a `db` service behind the `db` profile. The server does **not**
-use it yet. When the accounts phase lands, start it with:
+Make yourself a GM by adding your account email to `GM_EMAILS` in `.env` (comma-separated), then
+restart the game container — you're granted GM on your next login:
 
 ```bash
-sudo POSTGRES_PASSWORD=<strong-password> docker compose --profile db up -d
+echo "GM_EMAILS=you@example.com" >> .env
+docker compose up -d game
 ```
+
+In-game GM commands (typed in chat): `/kick <name>`, `/mute <name> [minutes]`, `/unmute <name>`,
+`/ban <name>`, `/unban <name>`, `/tp <name> <x> <z>`, `/give <name> <gold>`.
+
+### PostgreSQL
+
+The `db` service starts automatically and is the **source of truth for all player data** (and
+game content as it migrates — the schema is designed for a future admin/map editor). The server
+waits for the DB healthcheck, then applies its schema on connect. Nightly backup cron (as root):
+
+```cron
+0 4 * * * cd /path/to/PathlandsMMO && docker compose exec -T db pg_dump -U pathlands pathlands | gzip > /var/backups/pathlands-$(date +\%F).sql.gz
+```
+
+Restore-test it before you rely on it: `gunzip -c backup.sql.gz | docker compose exec -T db psql -U pathlands pathlands`.
 
 ---
 

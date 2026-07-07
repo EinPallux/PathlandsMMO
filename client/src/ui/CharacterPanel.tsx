@@ -1,7 +1,8 @@
 // Character sheet: equipment paperdoll, primary + derived stats, and the bag.
 // Toggled with I / C (or the ✕). Click a bag item to equip, an equipped item to
-// unequip, right-click a bag item to sell. Reads the inventory slice the
-// CombatDirector publishes; actions go through GameCommands.
+// unequip, right-click a bag item to sell, shift+right-click to DROP it on the ground
+// (the trade mechanic). Reads the inventory slice the CombatDirector publishes; actions
+// go through GameCommands.
 
 import { useStore, type MountUi } from '../game/store.js';
 import { EQUIP_SLOTS, RARITY_COLOR, type ItemDef } from '@pathlands/shared';
@@ -44,7 +45,8 @@ function ItemCell({
   /** The item currently in this item's slot, for a vs-equipped comparison. */
   equipped?: ItemDef;
   onClick?: () => void;
-  onContext?: () => void;
+  /** Right-click handler; receives whether Shift was held (shift = drop, plain = sell). */
+  onContext?: (shift: boolean) => void;
 }): JSX.Element {
   const border = item ? rarityHex(item) : colors.panelBorder;
   const { pos, handlers } = useHoverTip();
@@ -56,7 +58,7 @@ function ItemCell({
         onContextMenu={(e) => {
           if (onContext) {
             e.preventDefault();
-            onContext();
+            onContext(e.shiftKey);
           }
         }}
         disabled={!item && !onClick}
@@ -171,7 +173,8 @@ export function CharacterPanel(): JSX.Element | null {
         {/* Bag */}
         <div style={{ flex: 1 }}>
           <div style={{ color: colors.inkDim, fontSize: 11, marginBottom: 4 }}>
-            BAGS ({inv.bag.length}/{inv.bagSize}) · left-click equip · right-click sell
+            BAGS ({inv.bag.length}/{inv.bagSize}) · left-click equip · right-click sell ·
+            shift+right-click drop
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 52px)', gap: 4 }}>
             {Array.from({ length: inv.bagSize }).map((_, i) => {
@@ -182,7 +185,9 @@ export function CharacterPanel(): JSX.Element | null {
                   item={stack?.item}
                   equipped={stack ? inv.equipment[stack.item.slot] : undefined}
                   onClick={stack ? () => cmd?.equipItem(i) : undefined}
-                  onContext={stack ? () => cmd?.sellItem(i) : undefined}
+                  onContext={
+                    stack ? (shift) => (shift ? cmd?.dropItem(i) : cmd?.sellItem(i)) : undefined
+                  }
                 />
               );
             })}

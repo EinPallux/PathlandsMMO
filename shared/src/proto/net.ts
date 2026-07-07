@@ -31,15 +31,21 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v11 added the party channel (ClientParty / ServerPartyState / ServerPartyInvite);
  * v12 added party vitals (ServerPartyVitals — live ally HP/resource frames, world-wide);
  * v13 added directed whispers (ClientChat.to session id / ServerChat.whisper flag);
- * v14 added the online roster query (ClientWho / ServerWho).
+ * v14 added the online roster query (ClientWho / ServerWho);
+ * v15 added GM tooling (ClientGm + ServerWelcome.gm);
+ * v16 added droppable ground items (ClientDropItem / ClientPickupItem / ServerWorldItems /
+ *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped.
  */
-export const NET_PROTOCOL_VERSION = 14;
+export const NET_PROTOCOL_VERSION = 16;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
 
 /** Valid party actions on the wire (validated at the boundary; the server enforces semantics). */
 const PARTY_ACTIONS = ['invite', 'accept', 'decline', 'leave', 'kick'];
+
+/** Valid GM actions on the wire (the server re-checks GM privilege before acting). */
+const GM_ACTIONS = ['kick', 'mute', 'unmute', 'ban', 'unban', 'teleport', 'give'];
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -87,6 +93,22 @@ export interface NetEntity {
   castSkill: string | null;
   /** Cast progress 0..1 (0 when not casting). */
   castFrac: number;
+}
+
+/**
+ * A stack of items lying on the ground — the replication view of a server-authoritative world
+ * item. Any player nearby can pick it up (first-come-wins, resolved server-side), and it despawns
+ * after a fixed lifetime. This is how players trade now (bank/mail/trade were scrapped): you drop
+ * a stack, another player walks over and picks it up. `item` is a full loot-rolled ItemDef (there
+ * is no registry id for procedural loot), `qty` the stack size, and `x/y/z` the drop position.
+ */
+export interface NetWorldItem {
+  id: string;
+  item: ItemDef;
+  qty: number;
+  x: number;
+  y: number;
+  z: number;
 }
 
 /**
@@ -217,8 +239,58 @@ export interface ClientWho {
   t: 'who';
 }
 
+/**
+ * A GM tooling action. Gated server-side on the sender's account `is_gm` flag (never trusted from
+ * the client). `target` is a player NAME — a GM is trusted, so the server resolves it globally and
+ * reports the result on the system channel. Field use by action: `mute` → `minutes`; `teleport` →
+ * `x`/`z`; `give` → `item` (registry id) + `qty`; `kick`/`ban`/`unban`/`unmute` → none.
+ */
+export interface ClientGm {
+  t: 'gm';
+  action: 'kick' | 'mute' | 'unmute' | 'ban' | 'unban' | 'teleport' | 'give';
+  target: string;
+  minutes?: number;
+  x?: number;
+  z?: number;
+  item?: string;
+  qty?: number;
+}
+
+/**
+ * Drop a bag stack onto the ground at the player's position — the way players hand items to each
+ * other now. The client sends the full `item` (procedural loot has no registry id) + `qty`; the
+ * server spawns the world item at the sender's AUTHORITATIVE position (it never trusts a
+ * client-supplied position). Trust note: while inventory is still client-authoritative, the server
+ * can't verify the sender actually held the stack — this is consistent with the current model (a
+ * cheat client can already edit its own local bag). Server-side inventory authority (the economy
+ * migration) will validate the drop against the real bag.
+ */
+export interface ClientDropItem {
+  t: 'dropItem';
+  item: ItemDef;
+  qty: number;
+}
+
+/**
+ * Pick up a ground item by id. The server validates the item exists and the sender is within
+ * pickup range, then removes it ATOMICALLY — first-come-wins. That authoritative removal is the
+ * anti-duplication guarantee: two players racing for one stack, only one gets it.
+ */
+export interface ClientPickupItem {
+  t: 'pickupItem';
+  id: string;
+}
+
 export type ClientMessage =
-  ClientHello | ClientIntent | ClientPing | ClientChat | ClientParty | ClientWho;
+  | ClientHello
+  | ClientIntent
+  | ClientPing
+  | ClientChat
+  | ClientParty
+  | ClientWho
+  | ClientGm
+  | ClientDropItem
+  | ClientPickupItem;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -232,6 +304,8 @@ export interface ServerWelcome {
   seed: number;
   tick: number;
   tickRate: number;
+  /** True when this session's account has GM privileges (unlocks the client's GM commands). */
+  gm?: boolean;
 }
 
 /**
@@ -468,6 +542,31 @@ export interface ServerWho {
   players: NetWhoEntry[];
 }
 
+/**
+ * Interest-filtered ground items around the recipient (the 3×3-chunk region, same policy as
+ * enemies). `items` are those that ENTERED interest (newly dropped, or the viewer moved into
+ * range); `gone` are ids to REMOVE (picked up, despawned, or left interest). A ground item is
+ * immutable once dropped, so there is no UPDATE case — an id appears in `items` exactly once.
+ */
+export interface ServerWorldItems {
+  t: 'worldItems';
+  tick: number;
+  items: NetWorldItem[];
+  gone: string[];
+}
+
+/**
+ * A server grant of item stacks straight into the recipient's bag — sent when the player picks a
+ * ground item up. Kept separate from ServerKill so a pickup plays a loot cue (not a death cue) and
+ * never advances quest/bounty objectives. The client is the bag aggregator, so capacity rules
+ * apply where it places the stacks.
+ */
+export interface ServerItemGranted {
+  t: 'grant';
+  tick: number;
+  items: NetItemStack[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -480,6 +579,8 @@ export type ServerMessage =
   | ServerPartyInvite
   | ServerPartyVitals
   | ServerWho
+  | ServerWorldItems
+  | ServerItemGranted
   | ServerPong
   | ServerError
   | ServerChat;
@@ -527,6 +628,32 @@ function isString(v: unknown): v is string {
 
 function isBool(v: unknown): v is boolean {
   return typeof v === 'boolean';
+}
+
+/**
+ * Deep sanity check on an untrusted item object (a dropped `ItemDef`). Rejects any NON-FINITE
+ * number anywhere in the tree — a NaN/Infinity stat would poison a PICKER's character sheet and
+ * combat math once it flows drop → grant → equip — and bounds depth + node count so a pathological
+ * object can't blow the stack or memory. Boundary hardening, not full schema validation: a
+ * finite-but-absurd stat still passes here (that's closed by server-authoritative items in the
+ * economy migration), but the crash/corruption vector is shut.
+ */
+function isSafeItemTree(v: unknown, depth: number, budget: { n: number }): boolean {
+  if (depth > 8) return false;
+  if (--budget.n < 0) return false;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (typeof v === 'string' || typeof v === 'boolean' || v === null) return true;
+  if (Array.isArray(v)) {
+    for (const el of v) if (!isSafeItemTree(el, depth + 1, budget)) return false;
+    return true;
+  }
+  if (typeof v === 'object') {
+    for (const val of Object.values(v as Record<string, unknown>)) {
+      if (!isSafeItemTree(val, depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  return false; // functions / symbols / undefined — never valid JSON item data
 }
 
 /**
@@ -647,6 +774,50 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (o.target !== undefined) party.target = o.target;
       return party;
     }
+    case 'gm': {
+      if (!isString(o.action) || !GM_ACTIONS.includes(o.action)) return null;
+      if (!isString(o.target) || o.target.length > MAX_CHAT_LEN) return null;
+      const gm: ClientGm = { t: 'gm', action: o.action as ClientGm['action'], target: o.target };
+      if (o.minutes !== undefined) {
+        if (!isFiniteNumber(o.minutes)) return null;
+        gm.minutes = o.minutes;
+      }
+      if (o.x !== undefined) {
+        if (!isFiniteNumber(o.x)) return null;
+        gm.x = o.x;
+      }
+      if (o.z !== undefined) {
+        if (!isFiniteNumber(o.z)) return null;
+        gm.z = o.z;
+      }
+      if (o.item !== undefined) {
+        if (!isString(o.item) || o.item.length > MAX_CHAT_LEN) return null;
+        gm.item = o.item;
+      }
+      if (o.qty !== undefined) {
+        if (!isFiniteNumber(o.qty)) return null;
+        gm.qty = o.qty;
+      }
+      return gm;
+    }
+    case 'dropItem': {
+      // The dropped item is a full ItemDef (procedural loot has no registry id). Structural
+      // gate only: an object with a string id + name and a positive integer qty; the server
+      // clamps qty and stamps the authoritative position. Semantic ownership isn't checkable
+      // while inventory is client-authoritative (see ClientDropItem's trust note).
+      if (typeof o.item !== 'object' || o.item === null) return null;
+      const item = o.item as Record<string, unknown>;
+      if (!isString(item.id) || !isString(item.name)) return null;
+      // Reject NaN/Infinity anywhere in the item + bound its size — a forged item is re-broadcast
+      // to and stored by OTHER players, so a poisoned stat can't be allowed through.
+      if (!isSafeItemTree(o.item, 0, { n: 256 })) return null;
+      if (!isNonNegInt(o.qty) || o.qty < 1) return null;
+      return { t: 'dropItem', item: o.item as unknown as ItemDef, qty: o.qty };
+    }
+    case 'pickupItem': {
+      if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_CHAT_LEN) return null;
+      return { t: 'pickupItem', id: o.id };
+    }
     default:
       return null;
   }
@@ -746,6 +917,17 @@ function isNetItemStack(v: unknown): v is NetItemStack {
   return isString(item.id) && isString(item.name);
 }
 
+/** A ground item on the wire (SERVER→client; trusted source, so a structural sanity check). */
+function isNetWorldItem(v: unknown): v is NetWorldItem {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  if (!isString(o.id) || !isFiniteNumber(o.qty)) return false;
+  if (!isFiniteNumber(o.x) || !isFiniteNumber(o.y) || !isFiniteNumber(o.z)) return false;
+  if (typeof o.item !== 'object' || o.item === null) return false;
+  const item = o.item as Record<string, unknown>;
+  return isString(item.id) && isString(item.name);
+}
+
 const FX_KINDS = new Set(['damage', 'heal', 'death', 'boss']);
 
 /** Validate one combat-visual record. Position + amount finite; kind known; optional boss text. */
@@ -769,7 +951,7 @@ export function decodeServer(raw: string): ServerMessage | null {
   const o = parseObject(raw);
   if (o === null) return null;
   switch (o.t) {
-    case 'welcome':
+    case 'welcome': {
       if (
         !isFiniteNumber(o.protocol) ||
         !isString(o.you) ||
@@ -779,7 +961,7 @@ export function decodeServer(raw: string): ServerMessage | null {
       ) {
         return null;
       }
-      return {
+      const welcome: ServerWelcome = {
         t: 'welcome',
         protocol: o.protocol,
         you: o.you,
@@ -787,6 +969,12 @@ export function decodeServer(raw: string): ServerMessage | null {
         tick: o.tick,
         tickRate: o.tickRate,
       };
+      if (o.gm !== undefined) {
+        if (!isBool(o.gm)) return null;
+        welcome.gm = o.gm;
+      }
+      return welcome;
+    }
     case 'snapshot': {
       if (!isFiniteNumber(o.tick) || !Array.isArray(o.players)) return null;
       if (!o.players.every(isNetPlayer)) return null;
@@ -896,6 +1084,24 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'who': {
       if (!Array.isArray(o.players) || !o.players.every(isNetWhoEntry)) return null;
       return { t: 'who', players: o.players };
+    }
+    case 'worldItems': {
+      if (
+        !isFiniteNumber(o.tick) ||
+        !Array.isArray(o.items) ||
+        !o.items.every(isNetWorldItem) ||
+        !Array.isArray(o.gone) ||
+        !o.gone.every(isString)
+      ) {
+        return null;
+      }
+      return { t: 'worldItems', tick: o.tick, items: o.items, gone: o.gone };
+    }
+    case 'grant': {
+      if (!isFiniteNumber(o.tick) || !Array.isArray(o.items) || !o.items.every(isNetItemStack)) {
+        return null;
+      }
+      return { t: 'grant', tick: o.tick, items: o.items };
     }
     default:
       return null;

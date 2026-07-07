@@ -17,6 +17,10 @@ export interface Account {
   id: string;
   email: string;
   passwordHash: string;
+  /** GM privilege — gates the /kick /ban /teleport /give tooling. */
+  isGm: boolean;
+  /** Banned accounts are refused at login (GM tooling). */
+  isBanned: boolean;
 }
 
 export interface Store {
@@ -27,6 +31,9 @@ export interface Store {
   /** Store (overwrite) the account's character blob. */
   putCharacter(accountId: string, character: CharacterSave): Promise<void>;
   getCharacter(accountId: string): Promise<CharacterSave | null>;
+  /** GM tooling: set an account's GM privilege / banned flag (persisted). */
+  setGm(accountId: string, isGm: boolean): Promise<void>;
+  setBanned(accountId: string, isBanned: boolean): Promise<void>;
   /** Flush any pending writes and release resources. */
   close(): Promise<void>;
 }
@@ -44,11 +51,35 @@ export class MemoryStore implements Store {
   createAccount(email: string, passwordHash: string): Promise<Account | null> {
     const key = normalizeEmail(email);
     if (this.byEmail.has(key)) return Promise.resolve(null);
-    const account: Account = { id: randomUUID(), email: key, passwordHash };
+    const account: Account = {
+      id: randomUUID(),
+      email: key,
+      passwordHash,
+      isGm: false,
+      isBanned: false,
+    };
     this.byId.set(account.id, account);
     this.byEmail.set(key, account.id);
     this.onMutate();
     return Promise.resolve(account);
+  }
+
+  setGm(accountId: string, isGm: boolean): Promise<void> {
+    const a = this.byId.get(accountId);
+    if (a !== undefined) {
+      a.isGm = isGm;
+      this.onMutate();
+    }
+    return Promise.resolve();
+  }
+
+  setBanned(accountId: string, isBanned: boolean): Promise<void> {
+    const a = this.byId.get(accountId);
+    if (a !== undefined) {
+      a.isBanned = isBanned;
+      this.onMutate();
+    }
+    return Promise.resolve();
   }
 
   getByEmail(email: string): Promise<Account | null> {
@@ -123,7 +154,8 @@ export class FileStore extends MemoryStore {
     const s = snap as Partial<Snapshot>;
     for (const a of s.accounts ?? []) {
       if (a && typeof a.id === 'string') {
-        this.byId.set(a.id, a);
+        // Default the GM/ban flags for snapshots written before they existed.
+        this.byId.set(a.id, { ...a, isGm: a.isGm ?? false, isBanned: a.isBanned ?? false });
         this.byEmail.set(a.email, a.id);
       }
     }

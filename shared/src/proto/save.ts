@@ -19,8 +19,6 @@
 
 import { WORLD_SEED } from '../core/constants.js';
 import type { ItemDef } from '../data/items.js';
-import type { MailLetterSave } from '../data/mail.js';
-import { starterInbox } from '../data/mail.js';
 import { defaultKeybinds, DEFAULT_KEYBINDS } from '../data/keybinds.js';
 import type { QuestLogState } from '../quests/log.js';
 import type { DeedState } from '../meta/deeds.js';
@@ -114,12 +112,10 @@ export interface CharacterSaveV7 extends CharacterSaveV6 {
   activeMount: string | null;
 }
 
-export interface CharacterSaveV8 extends CharacterSaveV7 {
-  /** Waymeet vault contents (shared storage, up to BANK_SIZE). */
-  bank: ItemStackSave[];
-  /** Mail inbox: letters from world NPCs with optional (claimable) gold gifts. */
-  mail: MailLetterSave[];
-}
+// v8 formerly added a Waymeet bank vault + mail inbox; both were scrapped (players trade by
+// dropping items on the ground instead). The version marker is kept for the migration chain; a
+// stored character's stale `bank`/`mail` fields are simply ignored on load.
+export type CharacterSaveV8 = CharacterSaveV7;
 
 /** Daily-bounty log: the day it was set, accepted bounties, and today's completions. */
 export interface BountyLogSave {
@@ -306,20 +302,6 @@ function materialMap(v: unknown): Record<string, number> {
   return out;
 }
 
-function mailInbox(v: unknown): MailLetterSave[] {
-  if (!Array.isArray(v)) return starterInbox();
-  return v
-    .filter((m): m is Record<string, unknown> => isRecord(m) && typeof m.id === 'string')
-    .map((m) => ({
-      id: str(m.id, ''),
-      sender: str(m.sender, 'Unknown'),
-      subject: str(m.subject, ''),
-      body: str(m.body, ''),
-      ...(typeof m.gold === 'number' && m.gold > 0 ? { gold: Math.floor(m.gold) } : {}),
-      claimed: m.claimed === true,
-    }));
-}
-
 function bountyLog(v: unknown): BountyLogSave {
   if (!isRecord(v)) return { day: 0, active: [], completed: [] };
   const active = Array.isArray(v.active)
@@ -369,8 +351,6 @@ function migrateCharacter(v: unknown): CharacterSaveV11 | null {
     deeds: deedState(v.deeds),
     mounts: strArray(v.mounts),
     activeMount: typeof v.activeMount === 'string' ? v.activeMount : null,
-    bank: itemStacks(v.bank),
-    mail: mailInbox(v.mail),
     bounties: bountyLog(v.bounties),
     learnedRecipes: strArray(v.learnedRecipes),
   };
@@ -494,8 +474,6 @@ export function createCharacter(
     deeds: { progress: {}, completed: [] },
     mounts: [],
     activeMount: null,
-    bank: [],
-    mail: starterInbox(),
     bounties: { day: 0, active: [], completed: [] },
     learnedRecipes: [],
   };

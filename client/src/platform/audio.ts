@@ -19,7 +19,7 @@ const TRACK_URL: Record<MusicTrack, string> = {
 };
 
 /** Short synthesized cues (no asset files). */
-export type Sfx = 'cast' | 'death' | 'levelup' | 'quest';
+export type Sfx = 'cast' | 'death' | 'levelup' | 'quest' | 'loot';
 
 class AudioManager {
   private ctx: AudioContext | null = null;
@@ -169,6 +169,11 @@ class AudioManager {
       case 'quest':
         this.blip(t, [660], 0.14, 'triangle', 0.28);
         this.blip(t + 0.12, [990], 0.22, 'triangle', 0.28);
+        break;
+      case 'loot':
+        // A soft two-note "pickup" chirp — brighter and shorter than the quest cue.
+        this.blip(t, [740], 0.08, 'sine', 0.22);
+        this.blip(t + 0.06, [880], 0.12, 'sine', 0.22);
         break;
     }
   }

@@ -26,16 +26,29 @@ import {
   type Intent,
   type MoveIntent,
   type MoveState,
+  type ItemDef,
   type NetCombatEvent,
   type NetCombatSelf,
   type NetEntity,
+  type NetItemStack,
   type NetPartyMember,
   type NetPartyVital,
   type NetPlayer,
+  type NetWorldItem,
+  type ClientGm,
   type NetWhoEntry,
   type ServerKill,
   type ServerSelf,
 } from '@pathlands/shared';
+
+/** Options for a GM action (only the fields the action uses are read). */
+export interface GmActionOpts {
+  minutes?: number;
+  x?: number;
+  z?: number;
+  item?: string;
+  qty?: number;
+}
 
 /** What the renderer needs to draw one remote player this frame. */
 export interface RemoteRenderState {
@@ -112,6 +125,8 @@ export interface NetClientOptions {
   onPartyVitals?: (vitals: NetPartyVital[]) => void;
   /** Called with the online-player roster in reply to a `/who` (requestWho). */
   onWho?: (players: NetWhoEntry[]) => void;
+  /** Called with this session's GM status (from the welcome; false on disconnect). */
+  onGm?: (isGm: boolean) => void;
 }
 
 interface Sample {
@@ -132,6 +147,9 @@ interface Track {
 }
 
 const DEFAULT_RENDER_DELAY_MS = 150;
+/** Client drop spacing — a hair above the server's 250 ms gate so a sent drop is never rejected
+ *  there (which would strand the item: removed from the bag locally, never spawned server-side). */
+const DROP_MIN_INTERVAL_MS = 300;
 const SAMPLE_HISTORY_MS = 1000;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
@@ -166,6 +184,12 @@ export class NetClient {
   private readonly enemySamples = new Map<string, Sample[]>();
   /** Our own authoritative combat state (hp / resource / target / cast), or null pre-join. */
   private lastCombatSelf: NetCombatSelf | null = null;
+  /** Ground items in our interest region (server-authoritative), keyed by id — for rendering. */
+  private readonly worldItemMap = new Map<string, NetWorldItem>();
+  /** Item stacks granted to us (a ground-item pickup) since the game last drained them. */
+  private readonly grantQueue: NetItemStack[] = [];
+  /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
+  private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
   private readonly killQueue: ServerKill[] = [];
   /** Authoritative combat visuals (floaters / sparks / death poofs) awaiting render. */
@@ -235,6 +259,7 @@ export class NetClient {
       case 'welcome':
         this.you = msg.you;
         this.seed = msg.seed;
+        this.opts.onGm?.(msg.gm === true); // GM status unlocks the client's GM commands
         this.connected = true;
         this.phase = 'connected';
         this.lastPongMs = this.nowMs(); // the welcome itself proves the link is alive
@@ -253,6 +278,9 @@ export class NetClient {
         this.enemyMap.clear();
         this.enemySamples.clear();
         for (const e of msg.entities) this.ingestEnemy(e, msg.tick);
+        // Ground items are re-seeded by a `worldItems` frame the server sends right after this
+        // snapshot; clear here so a rejoin starts from a clean set.
+        this.worldItemMap.clear();
         this.emitStatus();
         break;
       }
@@ -324,6 +352,13 @@ export class NetClient {
         break;
       case 'who':
         this.opts.onWho?.(msg.players);
+        break;
+      case 'worldItems':
+        for (const wi of msg.items) this.worldItemMap.set(wi.id, wi); // ENTER (immutable, no update)
+        for (const id of msg.gone) this.worldItemMap.delete(id); // LEAVE / picked up / despawned
+        break;
+      case 'grant':
+        for (const s of msg.items) this.grantQueue.push(s); // a pickup — the game adds to the bag
         break;
       default:
         break;
@@ -408,6 +443,8 @@ export class NetClient {
     this.clockInit = false;
     this.enemyMap.clear();
     this.enemySamples.clear();
+    this.worldItemMap.clear();
+    this.grantQueue.length = 0;
     this.lastCombatSelf = null;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
@@ -415,6 +452,7 @@ export class NetClient {
     // fresh session the server won't re-group), so clear the UI's roster + any pending invite.
     this.opts.onParty?.({ leaderId: '', members: [], selfId: '' });
     this.opts.onInvite?.(null);
+    this.opts.onGm?.(false); // GM status is re-established on the next welcome
     this.opts.onPartyVitals?.([]);
     if (!this.closedByUser) {
       this.phase = 'reconnecting';
@@ -500,6 +538,51 @@ export class NetClient {
   requestWho(): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'who' });
+  }
+
+  /**
+   * Drop a bag stack onto the ground (the server spawns it at our authoritative position). Returns
+   * whether the frame was actually SENT — the caller removes the stack from the (client-authoritative)
+   * bag only on `true`, so a drop the server would reject never vanishes the item. Self-rate-limits a
+   * hair ABOVE the server's drop gate so a frame we send is never silently dropped by that gate.
+   */
+  sendDropItem(item: ItemDef, qty: number): boolean {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null)
+      return false;
+    const now = this.nowMs();
+    if (now - this.lastDropMs < DROP_MIN_INTERVAL_MS) return false;
+    this.lastDropMs = now;
+    this.send({ t: 'dropItem', item, qty });
+    return true;
+  }
+
+  /** Ask to pick up a ground item by id (the server validates range + grants it if still there). */
+  sendPickupItem(id: string): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'pickupItem', id });
+  }
+
+  /** The ground items currently in our interest region (for the world renderer + pickup prompt). */
+  worldItems(): NetWorldItem[] {
+    return [...this.worldItemMap.values()];
+  }
+
+  /** Take and clear item stacks granted to us (ground-item pickups) since the last drain. */
+  drainGrants(): NetItemStack[] {
+    if (this.grantQueue.length === 0) return [];
+    return this.grantQueue.splice(0, this.grantQueue.length);
+  }
+
+  /** Send a GM action (the server re-checks GM privilege; a non-GM's frame is ignored). */
+  sendGm(action: ClientGm['action'], target: string, opts: GmActionOpts = {}): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    const msg: ClientGm = { t: 'gm', action, target };
+    if (opts.minutes !== undefined) msg.minutes = opts.minutes;
+    if (opts.x !== undefined) msg.x = opts.x;
+    if (opts.z !== undefined) msg.z = opts.z;
+    if (opts.item !== undefined) msg.item = opts.item;
+    if (opts.qty !== undefined) msg.qty = opts.qty;
+    this.send(msg);
   }
 
   // --- party (Phase 6 §Social) ---

@@ -20,8 +20,91 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 14 (…/ party / party-vitals / whisper / who)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(14);
+  it('is at protocol version 16 (…/ whisper / who / gm / ground items)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(16);
+  });
+
+  it('round-trips ground-item drop / pickup / replication / grant frames', () => {
+    const item = { id: 'sword_of_x', name: 'Sword of X' } as unknown as never;
+    // Client → server: drop (full item + qty) and pickup (id).
+    const drop: ClientMessage = { t: 'dropItem', item, qty: 3 };
+    expect(decodeClient(encodeClient(drop))).toEqual(drop);
+    const pick: ClientMessage = { t: 'pickupItem', id: 'g7' };
+    expect(decodeClient(encodeClient(pick))).toEqual(pick);
+    // qty must be a positive integer; a zero / fractional / non-item sinks the frame.
+    expect(decodeClient(JSON.stringify({ t: 'dropItem', item, qty: 0 }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'dropItem', item, qty: 1.5 }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'dropItem', item: { id: 'x' }, qty: 1 }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'pickupItem', id: '' }))).toBeNull();
+    // A forged item with a non-finite stat is rejected — it must not reach another player's bag.
+    // `1e999` is valid JSON syntax that JSON.parse yields as Infinity (the real over-the-wire vector;
+    // NaN/Infinity have no JSON literal), so the raw string exercises the guard.
+    expect(
+      decodeClient('{"t":"dropItem","item":{"id":"hax","name":"Hax","might":1e999},"qty":1}'),
+    ).toBeNull();
+    // A pathologically deep item is rejected (depth cap).
+    let deep: Record<string, unknown> = { id: 'd', name: 'Deep' };
+    for (let i = 0; i < 12; i++) deep = { id: 'd', name: 'Deep', nested: deep };
+    expect(decodeClient(JSON.stringify({ t: 'dropItem', item: deep, qty: 1 }))).toBeNull();
+    // Server → client: the interest-filtered world-items frame.
+    const wi: ServerMessage = {
+      t: 'worldItems',
+      tick: 42,
+      items: [{ id: 'g7', item, qty: 3, x: 10, y: 5, z: -4 }],
+      gone: ['g2'],
+    };
+    expect(decodeServer(encodeServer(wi))).toEqual(wi);
+    // A world item missing a coordinate sinks the frame.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'worldItems',
+          tick: 1,
+          items: [{ id: 'g', item, qty: 1, x: 0, z: 0 }],
+          gone: [],
+        }),
+      ),
+    ).toBeNull();
+    // Server → client: the pickup grant.
+    const grant: ServerMessage = { t: 'grant', tick: 9, items: [{ item, qty: 3 }] };
+    expect(decodeServer(encodeServer(grant))).toEqual(grant);
+    expect(decodeServer(JSON.stringify({ t: 'grant', tick: 9, items: [{ qty: 1 }] }))).toBeNull();
+  });
+
+  it('round-trips + validates a GM action + the welcome gm flag', () => {
+    const kick: ClientMessage = { t: 'gm', action: 'kick', target: 'Griefer' };
+    expect(decodeClient(encodeClient(kick))).toEqual(kick);
+    const mute: ClientMessage = { t: 'gm', action: 'mute', target: 'Loud', minutes: 15 };
+    expect(decodeClient(encodeClient(mute))).toEqual(mute);
+    const tp: ClientMessage = { t: 'gm', action: 'teleport', target: 'Lost', x: 10, z: -20 };
+    expect(decodeClient(encodeClient(tp))).toEqual(tp);
+    // Unknown action, or a non-string target, sinks the frame.
+    expect(decodeClient(JSON.stringify({ t: 'gm', action: 'nuke', target: 'X' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'gm', action: 'kick', target: 5 }))).toBeNull();
+    // The welcome's optional gm flag round-trips; a non-boolean sinks it.
+    const w: ServerMessage = {
+      t: 'welcome',
+      protocol: 15,
+      you: 'p1',
+      seed: 1,
+      tick: 0,
+      tickRate: 20,
+      gm: true,
+    };
+    expect(decodeServer(encodeServer(w))).toEqual(w);
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'welcome',
+          protocol: 15,
+          you: 'p',
+          seed: 1,
+          tick: 0,
+          tickRate: 20,
+          gm: 1,
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips the /who roster query + reply', () => {

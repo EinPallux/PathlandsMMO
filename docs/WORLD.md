@@ -96,7 +96,7 @@ Windswept heather, standing stones, peat bogs, drizzle; troll cairns on every ri
 
 ### 3.6 Waymeet & the Sunlit Coast — capital + endgame coast (city / levels 28–30)
 
-The hub: **Waymeet**, a walled market city where the Old Roads cross, built from the full building kit (inn, church, bathhouse, big houses, stables, fountain plaza, market stalls, bank, all master trainers, mailbox, bounty board). South of it, golden beaches, fishing piers, shipwrecks — and the half-drowned crypt entrance.
+The hub: **Waymeet**, a walled market city where the Old Roads cross, built from the full building kit (inn, church, bathhouse, big houses, stables, fountain plaza, market stalls, all master trainers, bounty board — the old bank/mailbox buildings remain only as decorative geometry; both systems were scrapped). South of it, golden beaches, fishing piers, shipwrecks — and the half-drowned crypt entrance.
 
 - **Waystones:** Waymeet Grand Waystone (always the first city one lit), Pierside, Cryptwatch.
 - **Enemies (coast only; city is safe):** wreck-scavenger crabs _(new model)_ (28–29), drowned dead _(new models: 2 variants)_ (28–30), crypt sentinels _(new model)_ (29–30 elite).

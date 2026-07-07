@@ -6,6 +6,78 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Scope change (2026-07-07):** the launch plan is refocused. **DESCOPED (cut from 1.0):** guilds,
+> friends list, duels, the 200-client load test, password reset / email verification, character
+> import. **Also scrapped entirely:** the Waymeet **Bank**, **Mail**, and any dedicated
+> player-to-player **trade window** — players exchange goods by **dropping items on the ground**
+> (a dropped stack is a world item anyone nearby can pick up; it despawns after 10 minutes).
+> **NEW launch priorities:** everything (player data + all content — items/enemies/NPCs/
+> quests) in **PostgreSQL** so a future **admin/map editor** can edit the world; **GM tooling**;
+> server-authoritative **quests / professions / economy**; **droppable ground items**; **shared quest credit**.
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 29: Droppable ground items (the trade surface).**
+> Players trade by **dropping items on the ground** now — a server-authoritative world item any
+> nearby player can pick up, despawning after **10 minutes**. New protocol (v16): `ClientDropItem`
+> / `ClientPickupItem` (client→server) and `ServerWorldItems` (interest-filtered ENTER/LEAVE, like
+> enemies) / `ServerItemGranted` (server→client). Server `GroundItems` store owns the stacks; a
+> **drop** spawns one at the player's authoritative position, a **pickup** removes it **atomically**
+> (first-come-wins — the anti-dup guarantee) and grants it back to the picker's bag; a TTL sweep
+> despawns unclaimed stacks. Client renders spinning rarity-coloured motes + a "press E to pick up"
+> prompt; **shift+right-click** a bag item to drop it. **417 tests green** (6 new: the `GroundItems`
+> store — drop/atomic-pickup/despawn/cap — and the wire path — replicate/grant/anti-dup/interest).
+> _Next: the quests / professions / economy server-authority migration + shared quest turn-in credit._
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 28: Scrap Bank, Mail & Trading.**
+> Owner call: the Waymeet Bank (item vault + mail inbox) and any dedicated trade window are
+> **removed**. There is no item storage beyond the character's bag; player exchange happens by
+> **dropping items on the ground** (world items, 10-minute despawn — implemented next). Deleted
+> `shared/data/mail.ts`, `client/ui/BankPanel.tsx`, the `toggleBank` keybind, `BANK_SIZE`, and all
+> bank/mail state + commands from the client store, game loop, and `CombatDirector`. Save v8's
+> `bank`/`mail` fields are dropped on load (the version marker stays as an inert migration step).
+> **410 tests green.** _Next: droppable ground items (the trade replacement), then the
+> quests / professions / economy server-authority migration + shared quest turn-in credit._
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 27: Game content in PostgreSQL.**
+> Enemies, quests, NPCs (quest-givers) and recipes now live as **editable Postgres rows** (a
+> `content` table, one JSONB `data` row per entity + promoted id/name), seeded from `shared/data`
+> on first boot **idempotently** — so a future admin/map editor writes to the DB, not to TypeScript.
+> `ContentStore` (`getAll`/`get`/`upsert`/`count`/`seedFromShared`). Items are procedurally
+> generated, so there's no fixed item catalog — an editor changes drops via enemy/loot data. The
+> sim still reads `shared/data` (kept identical by the seed); each system's server migration
+> reroutes to this store. **414 tests green** (pg-mem). _Next: the quests/professions/economy
+> server-authority migration (reads content from this store) + shared quest turn-in credit, then
+> player trade._
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 26: GM tooling.**
+> Live-server moderation, server-authoritative + GM-gated (`accounts.is_gm`, never client-trusted).
+> A GM (flagged in the DB, or bootstrapped via `GM_EMAILS`) gets a `gm` welcome that unlocks
+> `/kick`, `/mute [min]`, `/unmute`, `/ban`, `/unban`, `/tp <x> <z>`, `/give <gold>` (proto v15,
+> `ClientGm`). Banned accounts are refused at login; a non-GM's GM frame is silently dropped.
+> **411 tests green.** _Next: content tables + seed in Postgres (items/enemies/NPCs/quests), then
+> the quests / professions / economy server migration (which reads that content) + shared quest
+> turn-in credit, then player trade._
+>
+> ---
+>
+> **Phase 6 (2026-07-07) — Part 25: PostgreSQL player store.**
+> `PgStore` (`server/src/db/`) implements the `Store` contract on Postgres — accounts + characters,
+> the full versioned CharacterSave in a `jsonb` column with identity/position/level promoted to
+> real columns (queryable + editor-friendly). The server uses it whenever `DATABASE_URL` is set
+> (compose now runs a `db` service by default, game waits on its healthcheck), falling back to the
+> FileStore otherwise. Schema applied idempotently on connect; extensible for the content tables
+> next. Tested headlessly against **pg-mem** (real SQL, no live server). **405 tests green.**
+> _Next: content tables + seed (items/enemies/NPCs/quests in Postgres), then GM tooling._
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 24: `/who` online roster (Social layer).**
 > A small utility: `/who` lists everyone online (name · level · class), server-answered so it's
 > global. Protocol v14 (`ClientWho` / `ServerWho` with `NetWhoEntry`); the gateway caps the reply

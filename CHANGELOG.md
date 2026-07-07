@@ -4,6 +4,176 @@ All notable changes to Pathlands are documented here, per working session. Forma
 
 ## [Phase 6 — The MMO: Server Authority & Launch] — in progress
 
+> **Scope change (2026-07-07):** cut from 1.0 — guilds, friends, duels, 200-client load test,
+> password reset / email verification, character import. **Also scrapped: Bank, Mail & Trading**
+> (players trade by dropping items on the ground). Refocused on: everything (player data +
+> content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
+> **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
+
+### Part 29 — Droppable ground items (2026-07-07)
+
+The player-to-player trade surface that replaces bank / mail / a trade window: **drop items on the
+ground and let another player pick them up.** Server-authoritative end to end — the atomic pickup is
+the anti-duplication guarantee.
+
+#### Added
+
+- **Protocol v16** (`shared/proto/net.ts`): `ClientDropItem` (full item + qty) / `ClientPickupItem`
+  (id) client→server, and `ServerWorldItems` (interest-filtered ENTER/LEAVE, no UPDATE — a ground
+  item is immutable) / `ServerItemGranted` (bag grant on pickup) server→client, plus the `NetWorldItem`
+  view and decoders/guards.
+- **`server/src/groundItems.ts` (`GroundItems`)**: the authoritative world-item store —
+  `drop` / `get` / `tryPickup` (atomic, range-checked, first-come-wins) / `expire` (TTL sweep) /
+  `netItems`, with a 2048-item memory cap that evicts the oldest.
+- **Gateway wiring**: `dropItem` spawns a stack at the player's **authoritative** position (rate-gated,
+  qty-clamped); `pickupItem` removes it atomically within `PICKUP_RADIUS` and grants it back; a
+  per-tick sweep despawns stacks past the **10-minute** lifetime (`GROUND_ITEM_TTL_MS` → sim ticks).
+  Ground items are interest-replicated per connection (`knownItems` set + `ServerWorldItems` diff),
+  seeded on join alongside the snapshot.
+- **Interest helpers** (`server/src/interest.ts`): `buildItemCellIndex` / `visibleItems` (the
+  world-item analogue of the enemy interest functions).
+- **Client**: `NetClient` ingests `worldItems` + `grant`, exposes `worldItems()` / `drainGrants()` /
+  `sendDropItem` / `sendPickupItem`; `CombatDirector.applyServerGrants` adds granted stacks to the bag
+  (loot cue, not a death cue) and `dropInventory` removes a stack to drop; `GroundItemRenderer` draws
+  spinning rarity-coloured motes; a proximity `GroundLootPrompt` ("press **E** to pick up") + the E
+  interaction; **shift+right-click** a bag item on the character sheet to drop it. New `loot` SFX.
+- **Tests** (+7): `server/test/groundItems.test.ts` — the `GroundItems` store (drop, atomic pickup,
+  out-of-range, despawn, cap eviction) and the wire path (replicate to a nearby player, grant +
+  remove on pickup, anti-dup race, interest filtering); `shared/test/net.test.ts` — v16 round-trips.
+
+#### Fixed / hardened (adversarial-review pass)
+
+- **Item loss on a full bag (pickup).** The server pickup is atomic (removes the world item, sends a
+  grant), so refusing the grant on a full bag lost the item. Pickups are now gated client-side on
+  `bagHasRoom()` (a full player never removes an item it can't hold), and a grant is **always**
+  accepted — over-cap is a transient, self-correcting state.
+- **Item loss on a rejected drop.** The client now sends the drop FIRST and removes the stack from
+  the (client-authoritative) bag only on a confirmed send; `NetClient.sendDropItem` returns whether
+  it sent and self-rate-limits a hair above the server's gate, so a rate-limited / disconnected drop
+  can no longer strand the item (removed locally, never spawned).
+- **Drop-then-crash dupe (mitigation).** A bag mutation from a drop/pickup now triggers an immediate
+  client persist, shrinking the window in which a crash could roll the bag back to a pre-drop state
+  while the server-side world item persists. The complete fix is server-side inventory authority
+  (the pending economy migration).
+- **Forged-item hardening.** The drop decoder rejects any **non-finite** number (`1e999` → Infinity)
+  anywhere in the item and bounds its depth/size — a crafted `ItemDef` re-broadcast into other
+  players' bags can no longer poison their character sheet / combat math.
+- **Dead-player guard.** Drop and pickup are refused for a frozen/dead player (matches the movement
+  freeze). Renderer rarity lookup now requires an actual number (a `constructor`-keyed rarity can't
+  yield a function).
+
+### Part 28 — Scrap Bank, Mail & Trading (2026-07-07)
+
+Owner call: the Waymeet **Bank** (item vault) and **Mail** inbox are removed, and no dedicated
+player-to-player **trade window** will ship. Player exchange happens by **dropping items on the
+ground** — a dropped stack becomes a world item any nearby player can pick up, despawning after
+**10 minutes** (the ground-items system lands in the next part).
+
+#### Removed
+
+- **`shared/data/mail.ts`** and its test — the `MailLetter` schema, `STARTER_MAIL`, and the
+  level-5 `WAYMEET_WELCOME` letter are gone.
+- **`client/src/ui/BankPanel.tsx`** — the Vault/Mail panel and its **B** toggle.
+- **`BANK_SIZE`** (`shared/data/items.ts`), the **`toggleBank`** keybind (`shared/data/keybinds.ts`),
+  and the bank/mail state, setters, and commands (`depositItem` / `withdrawItem` / `claimMail`,
+  `bank` / `mail` / `showBank`, `setBank` / `setMail` / `toggleBank`) from `client/game/store.ts`.
+- **`CombatDirector`** bank/mail internals: the `bank`/`mail` fields, the `characterBank`/
+  `characterMail` getters, `depositItem`/`withdrawItem`/`claimMail`/`deliverMail`/`publishBankMail`,
+  the welcome-mail delivery on level-up, and the `bank`/`mail` snapshot fields in `game.ts`.
+
+#### Changed
+
+- **Save v8** is now an inert migration step: a stored character's stale `bank`/`mail` fields are
+  ignored on load (`CharacterSaveV8 = CharacterSaveV7`), so old saves upgrade cleanly with no data
+  loss for anything else. `SAVE_VERSION` is unchanged.
+- Docs (GDD §14, ARCHITECTURE §3, WORLD §3.6, ROADMAP) updated to describe ground-drop trading and
+  mark the old bank/mailbox buildings as decorative geometry only.
+
+### Part 27 — Game content in PostgreSQL (2026-07-07)
+
+The marquee storage move: **enemies, quests, NPCs (quest-givers) and recipes live as editable
+Postgres rows**, so a future admin/map editor writes to the DB instead of TypeScript.
+
+#### Added
+
+- **`content` table** (`server/src/db/schema.ts`): one row per authored entity — `kind`
+  (`enemy`/`quest`/`npc`/`recipe`) + `id` (composite PK) + a promoted `name` + the full typed def in
+  a `jsonb data` column (editable). Items are procedurally generated (loot rolls), so there's no
+  fixed item catalog — an editor changes drops by editing enemy/loot data.
+- **`server/src/db/contentStore.ts` (`ContentStore`)**: `getAll` / `get` / `upsert` (the editor's
+  save path) / `count`, plus `seedFromShared()` — on first boot it populates each kind from the
+  `ENEMIES` / `QUESTS` / `QUEST_GIVERS` / `RECIPES` registries, **idempotently** (skips a kind that
+  already has rows, so a restart never clobbers an editor's edits). Seeded from `shared/` so
+  Postgres starts identical to the shipped content, then becomes the source of truth.
+- **Startup wiring** (`index.ts`): with `DATABASE_URL` set, the server shares one pool between the
+  `PgStore` (schema apply) and the `ContentStore` (seed), logging the seed counts on first boot.
+
+> The running sim still reads `shared/data` (the seed keeps them identical); each system's
+> server-authority migration reroutes its content reads to this store, and the editor's write API
+> lands with the editor. This slice makes **all authored content live + editable in Postgres**.
+
+#### Tests
+
+- **`server/test/content.test.ts`** (+3, pg-mem): the seed populates every kind at the right
+  counts + round-trips a def through jsonb; a re-seed adds nothing (idempotent); an `upsert` edits
+  an entity in place (one row, updated).
+
+### Part 26 — GM tooling (2026-07-07)
+
+Live-server moderation: kick, mute, ban, teleport, and gold-grant — server-authoritative and
+gated on an account's GM flag (never trusted from the client).
+
+#### Added
+
+- **GM privilege** (`accounts.is_gm` / `is_banned`, now on the `Store`): the gateway loads the
+  account on login, **refuses banned accounts**, and marks the session GM from `is_gm` or the
+  `GM_EMAILS` bootstrap env (first GM without hand-editing the DB; auto-persisted). `ServerWelcome`
+  carries a `gm` flag that unlocks the client's GM commands.
+- **GM channel** (`shared/src/proto/net.ts`, `NET_PROTOCOL_VERSION` → **15**): `ClientGm`
+  (action + target NAME + per-action args), validated at the boundary; the server re-checks GM
+  privilege before acting (a non-GM's frame is silently dropped).
+- **Actions** (`server/src/gateway.ts` `handleGm`): `kick` (terminate the socket), `mute [minutes]`
+  (drop the target's chat + whisper until it expires), `unmute`, `ban` (persist + kick; refused at
+  next login), `unban`, `teleport <x> <z>` (`ServerSim.teleport`), `give <gold>` (grant gold via a
+  ServerKill with no quest credit). Every action reports its result to the GM on the system channel.
+  Item-granting by id lands with the content catalog.
+- **Client** (`netClient` `sendGm` + `onGm`; `store` `gm` flag + command; `Chat.tsx` parses
+  `/kick /mute /unmute /ban /unban /tp /give` **only** for a GM session; `game.ts` wiring).
+
+#### Tests
+
+- **`server/test/gm.test.ts`** (+5): a GM token gets `welcome.gm` (a guest doesn't); `/kick`
+  terminates the target socket; `/mute` drops the target's later chat; `/give` grants gold; a
+  non-GM's GM frame is ignored. **`shared/test/net.test.ts`**: the v15 codec round-trips a GM
+  action + the welcome `gm` flag (bad action / non-string target / non-bool flag rejected).
+
+### Part 25 — PostgreSQL player store (2026-07-07)
+
+The production storage layer: **all player data in Postgres**, with the schema built to grow into
+the content tables an admin/map editor will edit.
+
+#### Added
+
+- **`server/src/db/schema.ts`**: the idempotent Postgres schema (`CREATE TABLE IF NOT EXISTS`),
+  applied on connect. `accounts` (email / password hash / `is_gm` / `is_banned`) and `characters`
+  (the full versioned `CharacterSave` in a `jsonb` `data` column, with `name`/`class`/`level`/`xp`/
+  position promoted to real columns for querying + the server's authoritative write-back). UUIDs
+  are generated in Node, so no `pgcrypto` extension is needed.
+- **`server/src/db/pgStore.ts` (`PgStore`)**: implements the `Store` contract on Postgres via a
+  minimal `Queryable` (satisfied by `pg.Pool` and by pg-mem alike). `createAccount` is a
+  check-then-insert with the UNIQUE constraint as the race guard; `putCharacter` upserts on the
+  `account_id` PK; jsonb round-trips the blob (tolerating string or parsed reads).
+- **Store selection** (`index.ts` + `config.ts`): the server uses `PgStore` when `DATABASE_URL`
+  is set, else the `FileStore` (local dev). The gateway + auth API are unchanged — same contract.
+- **Compose**: the `db` (postgres:16) service now runs by default with a healthcheck; `game`
+  waits on it and gets `DATABASE_URL`. Deploy docs updated (pg_dump backups, nightly cron).
+
+#### Tests
+
+- **`server/test/db.test.ts`** (+3, pg-mem): accounts (normalise + reject duplicates), the
+  character jsonb round-trip + upsert, and the promoted identity/position columns — real SQL,
+  headless.
+
 ### Part 24 — `/who` online roster (2026-07-07)
 
 A small social utility for the shared world: `/who` lists everyone currently online (name, level,

@@ -28,6 +28,7 @@ import { Environment } from '../engine/environment.js';
 import { CameraRig } from '../engine/camera.js';
 import { ModelObject } from '../engine/voxelModel.js';
 import { RemotePlayerRenderer } from '../engine/remotePlayers.js';
+import { GroundItemRenderer } from '../engine/groundItemRenderer.js';
 import { NetClient } from '../net/netClient.js';
 import { resolveServerUrl } from '../net/serverUrl.js';
 import { Input } from './input.js';
@@ -48,6 +49,10 @@ const FREE_FLY_SPEED = 28;
 const MAX_FRAME_DT = 0.1;
 // How far below the local surface counts as "indoors/underground" for mount rules.
 const UNDERGROUND_MARGIN = 3;
+
+// How close (world units) to a dropped item the "Press E to pick up" prompt appears. A hair under
+// the server's PICKUP_RADIUS (3) so a shown prompt always yields a successful server-side pickup.
+const PICKUP_PROMPT_RANGE = 2.8;
 
 // Phase-6 reconciliation smoothing: the error offset decays with this time constant
 // (~95% gone in ~3τ ≈ 0.18 s); corrections larger than the snap distance are applied
@@ -111,6 +116,15 @@ export class Game {
    */
   private readonly net: NetClient | null;
   private readonly remoteRenderer: RemotePlayerRenderer | null;
+  /** Renders the server's dropped ground items (the trade motes); null in a server-free build. */
+  private readonly groundItems: GroundItemRenderer | null;
+  /**
+   * Optional "persist now" callback (set by the UI to its save function). Fired right after a
+   * ground-item drop / pickup mutates the bag, so the client-authoritative bag can't roll back a
+   * drop (30 s autosave) while the server-side world item persists — the interim dupe mitigation
+   * until inventory authority moves server-side.
+   */
+  onPersist: (() => void) | null = null;
   /**
    * Cosmetic reconciliation error: the residual between our prediction and the server's
    * authority after a reconcile, added to the RENDERED position and decayed to zero so a
@@ -193,8 +207,6 @@ export class Game {
             inventory: character.inventory,
             equipment: character.equipment,
             discoveredWaystones: character.discoveredWaystones,
-            bank: character.bank,
-            mail: character.mail,
           }
         : undefined,
     );
@@ -298,10 +310,12 @@ export class Game {
           emote: false,
         });
       },
+      onGm: (isGm) => useStore.getState().setGm(isGm),
       ...(onAuthError !== undefined ? { onAuthError } : {}),
     });
     this.net = net;
     this.remoteRenderer = new RemotePlayerRenderer(this.scene);
+    this.groundItems = new GroundItemRenderer(this.scene);
     // Stage 2b: the combat director takes its enemies + own combat state from the server and
     // forwards combat intents to it (the server is authoritative over all combat outcomes).
     this.combat.setNetSink({
@@ -309,8 +323,11 @@ export class Game {
       combatSelf: () => net.combatSelf(),
       drainKills: () => net.drainKills(),
       drainFx: () => net.drainFx(),
+      drainGrants: () => net.drainGrants(),
       send: (intent) => net.sendIntent(intent),
     });
+    // Persist promptly whenever a ground-item drop/pickup mutates the bag (dupe-window mitigation).
+    this.combat.setBagMutationHook(() => this.onPersist?.());
     // Fresh session: clear any scrollback + party state left from a previous game instance.
     useStore.setState({
       chat: [],
@@ -318,6 +335,8 @@ export class Game {
       party: null,
       partyInvite: null,
       partyVitals: {},
+      gm: false,
+      nearbyLoot: null,
     });
     net.connect();
 
@@ -423,6 +442,16 @@ export class Game {
       equipItem: (index) => this.combat.equipItem(index),
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
+      dropItem: (index) => {
+        // Send the drop FIRST, remove from the local bag only on a confirmed send. A drop the
+        // server would reject (rate-limited, or the socket isn't open) must not vanish the item —
+        // there is no inventory ack to restore it (the bag is client-authoritative).
+        const stack = this.combat.peekInventory(index);
+        if (stack === null) return;
+        if (this.net?.sendDropItem(stack.item, stack.qty) === true) {
+          this.combat.removeInventoryAt(index);
+        }
+      },
       buyItem: (index) => this.combat.buyItem(index),
       buybackItem: (index) => this.combat.buybackItem(index),
       closeVendor: () => this.combat.closeVendor(),
@@ -437,9 +466,6 @@ export class Game {
       buyMount: () => this.mount.buyMount(),
       toggleMount: () => this.mount.toggle(),
       selectMount: (id) => this.mount.selectMount(id),
-      depositItem: (index) => this.combat.depositItem(index),
-      withdrawItem: (index) => this.combat.withdrawItem(index),
-      claimMail: (id) => this.combat.claimMail(id),
       acceptBounty: (id) => this.bounties.accept(id),
       turnInBounty: (id) => this.bounties.turnIn(id),
       interactWaystone: () => void this.combat.interactWaystone(),
@@ -447,6 +473,12 @@ export class Game {
       sendChat: (text) => this.net?.sendChat(text),
       whisper: (name, text) => this.whisperByName(name, text),
       who: () => this.net?.requestWho(),
+      gm: (action, target, opts) =>
+        this.net?.sendGm(
+          action as Parameters<NonNullable<typeof this.net>['sendGm']>[0],
+          target,
+          opts,
+        ),
       partyInvite: (name) => this.inviteByName(name),
       partyAccept: () => this.net?.partyAccept(),
       partyDecline: () => this.net?.partyDecline(),
@@ -532,7 +564,6 @@ export class Game {
     if (tapped('toggleProfessions')) store.toggleProfessions();
     if (tapped('toggleCrafting')) store.toggleCrafting();
     if (tapped('toggleJournal')) store.toggleJournal();
-    if (tapped('toggleBank')) store.toggleBank();
     if (tapped('toggleBounties')) {
       const p = this.controller.physics;
       this.bounties.toggle(p.x, p.z);
@@ -548,8 +579,8 @@ export class Game {
       if (this.input.wasTapped(code)) this.combat.castSlot(i);
     }
 
-    // Interact (E by default): advance dialogue → attune/use a Waystone → trade with a
-    // merchant → talk to an NPC.
+    // Interact (E by default): advance dialogue → pick up a nearby ground item → attune/use a
+    // Waystone → trade with a merchant → talk to an NPC.
     if (tapped('interact')) {
       const px = this.controller.physics.x;
       const pz = this.controller.physics.z;
@@ -559,6 +590,12 @@ export class Game {
         this.quests.closeDialog();
       } else if (store.vendor) {
         this.combat.closeVendor();
+      } else if (store.nearbyLoot) {
+        // A dropped item is the most immediate intent — the server validates range + grants it.
+        // Gate on bag room FIRST so a full-bag player never removes an item it can't hold (the
+        // server-side removal is authoritative, so an un-holdable grant would otherwise be lost).
+        if (this.combat.bagHasRoom()) this.net?.sendPickupItem(store.nearbyLoot.id);
+        else this.combat.notifyBagFull();
       } else if (
         !this.combat.interactWaystone() &&
         !this.gather.interact(px, this.controller.physics.y, pz)
@@ -698,6 +735,31 @@ export class Game {
           sx: (this.plateProj.x * 0.5 + 0.5) * sw,
           sy: (-this.plateProj.y * 0.5 + 0.5) * sh,
         });
+      }
+    }
+
+    // Server-dropped ground items: render the loot motes and find the nearest one in pickup reach
+    // so the HUD can prompt "Press E to pick up". Uses AUTHORITATIVE physics (the same position the
+    // server range-checks), so a shown prompt always yields a successful pickup.
+    if (this.net !== null && this.groundItems !== null) {
+      const items = this.net.worldItems();
+      this.groundItems.sync(items, dt);
+      const lootSt = useStore.getState();
+      const busy = lootSt.dialogue !== null || lootSt.vendor !== null || lootSt.showTravel;
+      let nearest: { id: string; name: string } | null = null;
+      if (!busy) {
+        const pp = this.controller.physics;
+        let best = PICKUP_PROMPT_RANGE * PICKUP_PROMPT_RANGE;
+        for (const wi of items) {
+          const d2 = (wi.x - pp.x) ** 2 + (wi.z - pp.z) ** 2;
+          if (d2 <= best) {
+            best = d2;
+            nearest = { id: wi.id, name: wi.item.name };
+          }
+        }
+      }
+      if ((lootSt.nearbyLoot?.id ?? null) !== (nearest?.id ?? null)) {
+        lootSt.setNearbyLoot(nearest);
       }
     }
 
@@ -908,8 +970,6 @@ export class Game {
       deeds: this.meta.state.deeds,
       mounts: this.mount.state.mounts,
       activeMount: this.mount.state.activeMount,
-      bank: this.combat.characterBank,
-      mail: this.combat.characterMail,
       bounties: this.bounties.state,
       x: ph.x,
       y: ph.y,
@@ -935,6 +995,7 @@ export class Game {
     );
     this.net?.dispose();
     this.remoteRenderer?.dispose();
+    this.groundItems?.dispose();
     if (this.net !== null) {
       useStore.getState().setNet(null); // hide the HUD on teardown
       useStore.setState({ chat: [], chatTyping: false }); // clear chat + release the input gate

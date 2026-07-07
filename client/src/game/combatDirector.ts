@@ -47,9 +47,6 @@ import {
   SETTLEMENTS,
   isAlive,
   inCombat,
-  BANK_SIZE,
-  WAYMEET_WELCOME,
-  type MailLetterSave,
   type CombatState,
   type SpawnerState,
   type SpawnRegion,
@@ -81,8 +78,6 @@ import {
   type InventoryUi,
   type Nameplate,
   type WaystoneUi,
-  type BankUi,
-  type MailUi,
 } from './store.js';
 
 const PLAYER_ID = 'player';
@@ -107,8 +102,6 @@ export interface Progression {
   inventory: ItemStackSave[];
   equipment: Record<string, ItemDef>;
   discoveredWaystones: string[];
-  bank?: ItemStackSave[];
-  mail?: MailLetterSave[];
 }
 
 interface RenderEnemy {
@@ -162,10 +155,6 @@ export class CombatDirector {
   private inventory: ItemStackSave[];
   private equipment: Record<string, ItemDef>;
   private discovered: Set<string>;
-  /** Waymeet vault contents + the mail inbox (GDD §Supporting systems). */
-  private bank: ItemStackSave[];
-  private mail: MailLetterSave[];
-
   /** The merchant the player is currently trading with (null = no vendor open). */
   private activeVendor: { name: string; stock: VendorStockItem[] } | null = null;
   /** Recently sold stacks, buyable back at the sold price (most-recent first). */
@@ -206,6 +195,8 @@ export class CombatDirector {
     combatSelf: () => NetCombatSelf | null;
     drainKills: () => ServerKill[];
     drainFx: () => NetCombatEvent[];
+    /** Item stacks granted to us by the server (a ground-item pickup) to add to the bag. */
+    drainGrants: () => ItemStackSave[];
     send: (intent: Intent) => void;
   } | null = null;
 
@@ -237,8 +228,6 @@ export class CombatDirector {
     this.inventory = progression?.inventory ? [...progression.inventory] : [];
     this.equipment = progression?.equipment ? { ...progression.equipment } : {};
     this.discovered = new Set(progression?.discoveredWaystones ?? []);
-    this.bank = progression?.bank ? [...progression.bank] : [];
-    this.mail = progression?.mail ? progression.mail.map((m) => ({ ...m })) : [];
     this.spawnX = spawnX;
     this.spawnZ = spawnZ;
     this.respawnAt = respawnAt;
@@ -251,11 +240,6 @@ export class CombatDirector {
     this.regions = [...WORLD_SPAWNS];
 
     this.state.entities.set(PLAYER_ID, this.makePlayer(spawnX, spawnZ));
-    // A character who is already past the Waymeet band (migrated/high-level save)
-    // never crosses level 5 in-session, so back-fill the Steward's letter here.
-    // deliverMail dedups by id, so this is a no-op if it was already received.
-    if (this.level >= 5) this.deliverMail({ ...WAYMEET_WELCOME, claimed: false });
-    this.publishBankMail();
   }
 
   /** Sum equipped items into a stat block + armor/crit (fed to deriveCombatStats). */
@@ -316,12 +300,6 @@ export class CombatDirector {
   }
   get characterWaystones(): string[] {
     return [...this.discovered];
-  }
-  get characterBank(): ItemStackSave[] {
-    return this.bank.map((s) => ({ item: s.item, qty: s.qty }));
-  }
-  get characterMail(): MailLetterSave[] {
-    return this.mail.map((m) => ({ ...m }));
   }
 
   /** True while the player is flagged in combat (drives mount dismount rules). */
@@ -511,76 +489,6 @@ export class CombatDirector {
   closeVendor(): void {
     this.activeVendor = null;
     useStore.getState().setVendor(null);
-  }
-
-  // --- bank + mail (GDD §Supporting systems) ---------------------------------
-
-  /** Move a bag stack into the Waymeet vault (if the vault has room). */
-  depositItem(bagIndex: number): void {
-    const stack = this.inventory[bagIndex];
-    if (!stack) return;
-    if (this.bank.length >= BANK_SIZE) {
-      this.pushFloater(this.player, 'Vault full', 'miss');
-      return;
-    }
-    this.inventory.splice(bagIndex, 1);
-    this.bank.push(stack);
-    this.publishBankMail();
-    this.rebuildPlayer(); // republishes the bag
-  }
-
-  /** Move a vault stack back into the bag (if the bag has room). */
-  withdrawItem(bankIndex: number): void {
-    const stack = this.bank[bankIndex];
-    if (!stack) return;
-    if (this.inventory.length >= this.bagCap()) {
-      this.pushFloater(this.player, 'Bag full', 'miss');
-      return;
-    }
-    this.bank.splice(bankIndex, 1);
-    this.inventory.push(stack);
-    this.publishBankMail();
-    this.rebuildPlayer();
-  }
-
-  /** Claim a letter's gold gift (once); the letter stays in the inbox as read. */
-  claimMail(id: string): void {
-    const letter = this.mail.find((m) => m.id === id);
-    if (!letter || letter.claimed) return;
-    letter.claimed = true;
-    if (letter.gold && letter.gold > 0) {
-      this.gold += letter.gold;
-      this.pushFloater(this.player, `+${letter.gold} gold`, 'xp');
-    }
-    this.publishBankMail();
-  }
-
-  /** Deliver a new letter into the inbox (world NPCs; player mail is Phase 6). */
-  deliverMail(letter: MailLetterSave): void {
-    if (this.mail.some((m) => m.id === letter.id)) return; // never duplicate
-    this.mail.push({ ...letter });
-    this.publishBankMail();
-  }
-
-  /** Push the vault + inbox to the store (they change rarely, so only on demand). */
-  private publishBankMail(): void {
-    const bank: BankUi = {
-      size: BANK_SIZE,
-      items: this.bank.map((s) => ({ item: s.item, qty: s.qty })),
-    };
-    const mail: MailUi = {
-      letters: this.mail.map((m) => ({
-        id: m.id,
-        sender: m.sender,
-        subject: m.subject,
-        body: m.body,
-        gold: m.gold ?? 0,
-        claimed: m.claimed,
-      })),
-      unread: this.mail.filter((m) => !m.claimed && (m.gold ?? 0) > 0).length,
-    };
-    useStore.getState().setBank(bank);
-    useStore.getState().setMail(mail);
   }
 
   /** Push the current vendor stock + buyback list to the store. */
@@ -831,7 +739,6 @@ export class CombatDirector {
   private relevelIfNeeded(): void {
     const prog = levelProgressFromTotalXp(this.totalXp);
     if (prog.level <= this.level) return;
-    const crossedFive = this.level < 5 && prog.level >= 5;
     this.level = prog.level;
     audio.sfx('levelup');
     // Level-up: a golden fountain rising off the player.
@@ -852,8 +759,6 @@ export class CombatDirector {
     leveled.autoAttack = cur.autoAttack;
     this.state.entities.set(PLAYER_ID, leveled);
     this.pushFloater(leveled, `Level ${this.level}!`, 'xp');
-    // Reaching level 5 opens Waymeet (WORLD.md) — the Steward writes a welcome.
-    if (crossedFive) this.deliverMail({ ...WAYMEET_WELCOME, claimed: false });
   }
 
   private dist(a: CombatEntity, b: CombatEntity): number {
@@ -905,6 +810,7 @@ export class CombatDirector {
       }
       this.reconcileFromServer();
       this.applyServerKills();
+      this.applyServerGrants();
       if (this.netSink !== null) this.renderServerFx(this.netSink.drainFx());
       return;
     }
@@ -1120,6 +1026,71 @@ export class CombatDirector {
     for (const kill of kills) {
       this.applyKillLoot(kill.enemyId, kill.gold, kill.items, this.player);
     }
+  }
+
+  /**
+   * Apply the server's item grants — the authoritative result of picking a ground item up (Part
+   * 29). Unlike a kill this plays a loot cue (not a death cue) and never advances quest objectives:
+   * it's purely "these stacks entered your bag." The grant is ALWAYS accepted, even if it pushes the
+   * bag over capacity: the server has already atomically removed the item from the world, so refusing
+   * it here would LOSE it. A full-bag player is stopped BEFORE the pickup is ever sent (bagHasRoom
+   * gates the interact), so over-cap only happens in a rare double-pickup race and self-corrects the
+   * moment the player drops the excess.
+   */
+  private applyServerGrants(): void {
+    const grants = this.netSink?.drainGrants();
+    if (grants === undefined || grants.length === 0) return;
+    for (const stack of grants) {
+      this.inventory.push({ item: stack.item, qty: stack.qty });
+      this.pushFloater(this.player, stack.item.name, 'heal');
+    }
+    audio.sfx('loot');
+    this.bagMutationHook?.(); // a pickup changed the bag — persist promptly (dupe-window shrink)
+  }
+
+  /** Whether the bag has room for one more stack — gates a ground-item pickup client-side so a
+   *  full-bag player never removes an item from the world it then can't hold. */
+  bagHasRoom(): boolean {
+    return this.inventory.length < this.bagCap();
+  }
+
+  /** Surface a "Bag full" floater when a pickup is refused for lack of room. */
+  notifyBagFull(): void {
+    this.pushFloater(this.player, 'Bag full', 'miss');
+  }
+
+  /**
+   * A hook fired whenever a ground-item drop or pickup mutates the bag, so the client can persist
+   * immediately. This shrinks the drop-then-crash dupe window (a client-authoritative bag saved
+   * only every 30 s could roll back a drop while the server-side world item persists) from the
+   * autosave interval to the IndexedDB flush latency. The real fix is server-side inventory
+   * authority (the pending economy migration); this is the interim mitigation.
+   */
+  private bagMutationHook: (() => void) | null = null;
+  setBagMutationHook(fn: () => void): void {
+    this.bagMutationHook = fn;
+  }
+
+  /** Peek a bag stack WITHOUT removing it — the drop path sends to the server first and only
+   *  removes on a confirmed send (so a rate-limited / disconnected drop never loses the item). */
+  peekInventory(index: number): ItemStackSave | null {
+    if (index < 0 || index >= this.inventory.length) return null;
+    const s = this.inventory[index];
+    return s === undefined ? null : { item: s.item, qty: s.qty };
+  }
+
+  /**
+   * Remove a bag stack after its drop was confirmed sent (the server will spawn the authoritative
+   * ground item). Returns the removed stack, or null for an out-of-range slot. Fires the bag-mutation
+   * hook so the client persists the post-drop bag promptly.
+   */
+  removeInventoryAt(index: number): ItemStackSave | null {
+    if (index < 0 || index >= this.inventory.length) return null;
+    const removed = this.inventory.splice(index, 1)[0];
+    if (removed === undefined) return null;
+    this.pushFloater(this.player, `Dropped ${removed.item.name}`, 'miss');
+    this.bagMutationHook?.();
+    return { item: removed.item, qty: removed.qty };
   }
 
   /**

@@ -17,6 +17,7 @@ import { CombatHud } from './CombatHud.js';
 import { CharacterPanel } from './CharacterPanel.js';
 import { WaystonePanel } from './WaystonePanel.js';
 import { VendorPanel } from './VendorPanel.js';
+import { GroundLootPrompt } from './GroundLootPrompt.js';
 import { QuestDialog } from './QuestDialog.js';
 import { QuestLogPanel } from './QuestLogPanel.js';
 import { QuestTracker } from './QuestTracker.js';
@@ -25,7 +26,6 @@ import { GatherPrompt } from './GatherPrompt.js';
 import { ProfessionsPanel } from './ProfessionsPanel.js';
 import { CraftingPanel } from './CraftingPanel.js';
 import { Journal } from './Journal.js';
-import { BankPanel } from './BankPanel.js';
 import { BountyBoard } from './BountyBoard.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { FirstTimeTips } from './FirstTimeTips.js';
@@ -103,6 +103,9 @@ export function App(): JSX.Element {
       // Character + account persist together (Path Points/perks are account-wide).
       if (snap) void upsertCharacterAndAccount(snap, game.snapshotAccount());
     };
+    // Persist immediately after a ground-item drop/pickup so a crash can't roll the bag back to a
+    // pre-drop state while the server-side world item persists (the drop-then-crash dupe window).
+    game.onPersist = save;
     const autosave = window.setInterval(save, 30_000);
     window.addEventListener('beforeunload', save);
 
@@ -147,6 +150,7 @@ export function App(): JSX.Element {
         {ready && <CharacterPanel />}
         {ready && <WaystonePanel />}
         {ready && <VendorPanel />}
+        {ready && <GroundLootPrompt />}
         {ready && <QuestTracker />}
         {ready && <QuestToasts />}
         {ready && <QuestDialog />}
@@ -155,7 +159,6 @@ export function App(): JSX.Element {
         {ready && <ProfessionsPanel />}
         {ready && <CraftingPanel />}
         {ready && <Journal />}
-        {ready && <BankPanel />}
         {ready && <BountyBoard />}
         {ready && <SettingsPanel />}
         {ready && <FirstTimeTips />}

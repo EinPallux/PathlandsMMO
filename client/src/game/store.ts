@@ -236,11 +236,6 @@ export interface JournalUi {
   }>;
 }
 
-export interface BankUi {
-  size: number;
-  items: ItemStackSave[];
-}
-
 export interface BountyUi {
   hub: string;
   day: number;
@@ -255,19 +250,6 @@ export interface BountyUi {
     state: 'available' | 'active' | 'ready' | 'done';
   }>;
   activeCount: number;
-}
-
-export interface MailUi {
-  letters: Array<{
-    id: string;
-    sender: string;
-    subject: string;
-    body: string;
-    gold: number;
-    claimed: boolean;
-  }>;
-  /** Letters with an unclaimed gold gift (drives the mail badge). */
-  unread: number;
 }
 
 export interface MountUi {
@@ -303,10 +285,12 @@ export interface GameCommands {
   cycleTarget(): void;
   toggleAutoAttack(): void;
   releaseSpirit(): void;
-  /** Inventory: equip a bag item, unequip a slot, sell a bag item. */
+  /** Inventory: equip a bag item, unequip a slot, sell a bag item, drop a bag stack on the ground. */
   equipItem(index: number): void;
   unequipItem(slot: string): void;
   sellItem(index: number): void;
+  /** Drop a whole bag stack onto the ground for other players to pick up (the trade mechanic). */
+  dropItem(index: number): void;
   /** Vendors: buy a stock item, buy back a sold item, close the shop. */
   buyItem(index: number): void;
   buybackItem(index: number): void;
@@ -320,10 +304,6 @@ export interface GameCommands {
   buyMount(): void;
   toggleMount(): void;
   selectMount(id: string): void;
-  /** Bank + mail: deposit a bag item, withdraw a vault item, claim a letter's gift. */
-  depositItem(index: number): void;
-  withdrawItem(index: number): void;
-  claimMail(id: string): void;
   /** Bounties: accept a posted bounty, turn a completed one in. */
   acceptBounty(id: string): void;
   turnInBounty(id: string): void;
@@ -342,6 +322,12 @@ export interface GameCommands {
   whisper(name: string, text: string): void;
   /** Request the online-player roster (`/who`); the reply prints to chat. */
   who(): void;
+  /** GM tooling (only sent when the session is a GM): kick/mute/ban/teleport/give by player name. */
+  gm(
+    action: string,
+    target: string,
+    opts?: { minutes?: number; x?: number; z?: number; qty?: number },
+  ): void;
   /** Party: invite a nearby player by name (resolved to a session id client-side), accept /
    *  decline a pending invite, leave the party, kick a member (leader-only) by session id. */
   partyInvite(name: string): void;
@@ -429,6 +415,8 @@ export interface UiState {
   party: PartyUi | null;
   /** A pending party invite awaiting accept/decline; null ⇒ none. Drives the invite toast. */
   partyInvite: PartyInviteUi | null;
+  /** True when this session's account has GM privileges (unlocks the chat GM commands). */
+  gm: boolean;
   /** Live vitals of each party member, keyed by session id (Part 20 ally frames). */
   partyVitals: Record<string, PartyVitalUi>;
 
@@ -477,6 +465,9 @@ export interface UiState {
   /** Name of a merchant within trade range (drives the "Press E to trade" prompt). */
   nearbyVendor: string | null;
 
+  /** Nearest pickuppable ground item (id + name), or null — drives the "Press E to pick up" prompt. */
+  nearbyLoot: { id: string; name: string } | null;
+
   questLog: QuestEntryUi[] | null;
   questTracker: QuestEntryUi[];
   questDialog: QuestDialogUi | null;
@@ -493,9 +484,6 @@ export interface UiState {
   journal: JournalUi | null;
   showJournal: boolean;
   mount: MountUi | null;
-  bank: BankUi | null;
-  mail: MailUi | null;
-  showBank: boolean;
   bounties: BountyUi | null;
   showBounties: boolean;
   /** Rebindable action → KeyboardEvent.code (read live by the game each frame). */
@@ -514,6 +502,8 @@ export interface UiState {
   setParty: (p: PartyUi) => void;
   /** Set (or clear, with null) the pending party invite. */
   setPartyInvite: (i: PartyInviteUi | null) => void;
+  /** Set this session's GM privilege (from the welcome). */
+  setGm: (gm: boolean) => void;
   /** Replace the party vitals map from a vitals frame (keyed by member session id). */
   setPartyVitals: (vitals: Array<PartyVitalUi & { id: string }>) => void;
   toggleMap: () => void;
@@ -528,6 +518,7 @@ export interface UiState {
   setWaystone: (w: WaystoneUi) => void;
   setVendor: (v: VendorUi | null) => void;
   setNearbyVendor: (name: string | null) => void;
+  setNearbyLoot: (loot: { id: string; name: string } | null) => void;
   setQuestLog: (q: QuestEntryUi[]) => void;
   setQuestTracker: (q: QuestEntryUi[]) => void;
   setQuestDialog: (q: QuestDialogUi | null) => void;
@@ -543,9 +534,6 @@ export interface UiState {
   setJournal: (j: JournalUi) => void;
   toggleJournal: () => void;
   setMount: (m: MountUi) => void;
-  setBank: (b: BankUi) => void;
-  setMail: (m: MailUi) => void;
-  toggleBank: () => void;
   setBounties: (b: BountyUi) => void;
   toggleBounties: () => void;
   setKeybinds: (k: Record<string, string>) => void;
@@ -571,6 +559,7 @@ export const useStore = create<UiState>((set) => ({
   party: null,
   partyInvite: null,
   partyVitals: {},
+  gm: false,
   ready: false,
   loadProgress: 0,
 
@@ -615,6 +604,7 @@ export const useStore = create<UiState>((set) => ({
   showTravel: false,
   vendor: null,
   nearbyVendor: null,
+  nearbyLoot: null,
 
   questLog: null,
   questTracker: [],
@@ -632,9 +622,6 @@ export const useStore = create<UiState>((set) => ({
   journal: null,
   showJournal: false,
   mount: null,
-  bank: null,
-  mail: null,
-  showBank: false,
   bounties: null,
   showBounties: false,
   keybinds: defaultKeybinds(),
@@ -657,6 +644,7 @@ export const useStore = create<UiState>((set) => ({
     // drops any lingering vitals so a rejoin never shows a stale bar.
     set(p.members.length > 0 ? { party: p, partyInvite: null } : { party: null, partyVitals: {} }),
   setPartyInvite: (partyInvite) => set({ partyInvite }),
+  setGm: (gm) => set({ gm }),
   setPartyVitals: (vitals) =>
     set(() => {
       const map: Record<string, PartyVitalUi> = {};
@@ -684,6 +672,7 @@ export const useStore = create<UiState>((set) => ({
   setWaystone: (waystone) => set({ waystone }),
   setVendor: (vendor) => set({ vendor }),
   setNearbyVendor: (nearbyVendor) => set({ nearbyVendor }),
+  setNearbyLoot: (nearbyLoot) => set({ nearbyLoot }),
   setQuestLog: (questLog) => set({ questLog }),
   setQuestTracker: (questTracker) => set({ questTracker }),
   setQuestDialog: (questDialog) => set({ questDialog }),
@@ -699,9 +688,6 @@ export const useStore = create<UiState>((set) => ({
   setJournal: (journal) => set({ journal }),
   toggleJournal: () => set((st) => ({ showJournal: !st.showJournal })),
   setMount: (mount) => set({ mount }),
-  setBank: (bank) => set({ bank }),
-  setMail: (mail) => set({ mail }),
-  toggleBank: () => set((st) => ({ showBank: !st.showBank })),
   setBounties: (bounties) => set({ bounties }),
   toggleBounties: () => set((st) => ({ showBounties: !st.showBounties })),
   setKeybinds: (keybinds) => set({ keybinds }),

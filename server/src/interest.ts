@@ -7,7 +7,7 @@
 // This is a REPLICATION policy (a knob), deliberately not a shared/ simulation rule —
 // it changes what is sent, never what is true. The authoritative sim is unaffected.
 
-import { CHUNK_SIZE, type NetEntity } from '@pathlands/shared';
+import { CHUNK_SIZE, type NetEntity, type NetWorldItem } from '@pathlands/shared';
 import type { ServerPlayer } from './sim.js';
 
 /** Chebyshev radius in cells: 1 ⇒ the 3×3 block of chunks around the viewer. */
@@ -76,6 +76,36 @@ export function visibleEntities(
   index: Map<number, NetEntity[]>,
 ): NetEntity[] {
   const out: NetEntity[] = [];
+  const cx = cellOf(viewer.phys.x);
+  const cz = cellOf(viewer.phys.z);
+  const r = INTEREST_RADIUS_CELLS;
+  for (let dz = -r; dz <= r; dz++) {
+    for (let dx = -r; dx <= r; dx++) {
+      const bucket = index.get(cellKey(cx + dx, cz + dz));
+      if (bucket !== undefined) out.push(...bucket);
+    }
+  }
+  return out;
+}
+
+/** Bucket ground items by chunk cell — the world-item analogue of buildEntityCellIndex. */
+export function buildItemCellIndex(items: readonly NetWorldItem[]): Map<number, NetWorldItem[]> {
+  const index = new Map<number, NetWorldItem[]>();
+  for (const wi of items) {
+    const key = cellKey(cellOf(wi.x), cellOf(wi.z));
+    const bucket = index.get(key);
+    if (bucket === undefined) index.set(key, [wi]);
+    else bucket.push(wi);
+  }
+  return index;
+}
+
+/** The ground items within `viewer`'s 3×3 interest region (same policy as players / enemies). */
+export function visibleItems(
+  viewer: ServerPlayer,
+  index: Map<number, NetWorldItem[]>,
+): NetWorldItem[] {
+  const out: NetWorldItem[] = [];
   const cx = cellOf(viewer.phys.x);
   const cz = cellOf(viewer.phys.z);
   const r = INTEREST_RADIUS_CELLS;

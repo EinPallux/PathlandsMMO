@@ -348,26 +348,20 @@ Title screen → (Phase 6: login/register) → character list → creation (clas
 
 ## 14. UI Screen Inventory
 
-HUD (frames, hotbar, XP, buffs, minimap, tracker, chat[P6]) · Character sheet · Inventory/bags · Skill book · Path (spec) picker · Quest log · World map · Wayfarer's Journal (Deeds/titles/perks/stats) · Professions & crafting · Vendor · Trainer · Bank · Mailbox · Settings (graphics/audio/keybinds/interface) · Title/character screens · (P6) Social panel, party/guild frames, trade, login. Style per ART_GUIDE §UI.
+HUD (frames, hotbar, XP, buffs, minimap, tracker, chat[P6]) · Character sheet · Inventory/bags · Skill book · Path (spec) picker · Quest log · World map · Wayfarer's Journal (Deeds/titles/perks/stats) · Professions & crafting · Vendor · Trainer · Settings (graphics/audio/keybinds/interface) · Title/character screens · (P6) Social panel, party frames, login. Style per ART_GUIDE §UI.
 
-> **Implementation (Phase 4 Part 7) — Bank & Mailbox.** The **Waymeet Bank** is a
-> single `BankPanel` (opened with **B**) with two tabs: a **Vault** (shared item storage,
-> `BANK_SIZE` = 50 slots; click to move stacks between bag and vault) and **Mail** (an
-> inbox of letters from world NPCs, each with an optional gold gift claimed once). Bank +
-> mail persist per-character in **save v8**; mail is seeded from `STARTER_MAIL`
-> (`shared/data/mail.ts`), and reaching **level 5** (the Waymeet band, WORLD.md) delivers
-> the Steward's welcome letter. Provisional for now: the panel is key-toggled from anywhere
-> rather than gated to the physical bank building / mailbox prop (like the crafting panel —
-> station-proximity gating is a later pass); mail gifts are gold-only (item attachments and
-> player-to-player mail arrive with Phase 6); the vault is per-character (account-shared
-> storage is a Phase-6 consideration).
+> **Removed (2026-07-07) — Bank, Mail & Trading.** The Waymeet Bank (vault + mail inbox)
+> and any dedicated player-to-player trade window are scrapped. There is no item storage
+> beyond the character's bag. **Players exchange goods by dropping items on the ground:** a
+> dropped stack becomes a world item any nearby player can pick up, and it despawns after
+> **10 minutes** if left. This is the entire trade surface — simple and old-school by design.
 >
 > **Implementation (Phase 4 Part 13) — Settings & keybind remapping.** A `SettingsPanel`
 > (opened with **Escape** when no other transient dialog is open; ✕ to close) exposes three
 > groups: **Display** (view distance, 3–12 chunks), **Audio** (master volume — the persisted
 > setting; the audio bus itself lands in Phase 5), and **Keybinds** — a rebindable list of the
-> **14** panel/action keys (world map, character sheet, quest log, professions, crafting,
-> journal, bank & mail, bounty board, mount, free-fly, interact, cycle-target, auto-attack,
+> panel/action keys (world map, character sheet, quest log, professions, crafting,
+> journal, bounty board, mount, free-fly, interact, cycle-target, auto-attack,
 > release-spirit). The bindable set and its defaults are pure data in
 > `shared/data/keybinds.ts`; the game reads the live map every frame, so a rebind takes effect
 > immediately. Rebinding: click a row, press a key — the keypress is captured in the DOM
