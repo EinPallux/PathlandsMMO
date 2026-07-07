@@ -179,4 +179,42 @@ describe('inventory — over the wire', () => {
 
     c.close();
   });
+
+  it('validates an equip action server-side and re-replicates', async () => {
+    const res = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'ringbearer@example.com', password: 'longenough' }),
+    });
+    const token = ((await res.json()) as { token: string }).token;
+    const acct = (await store.getByEmail('ringbearer@example.com'))!;
+    const y = createServerWorld().surfaceSpawnY(120, 120);
+    const ch = createCharacter('c2', 'Bearer', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    const ring = mkItem({ id: 'ring', name: 'Ring', slot: EquipSlot.Ring1, reqLevel: 1 });
+    ch.inventory = [{ item: ring, qty: 1 }];
+    await store.putCharacter(acct.id, ch);
+
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Bearer', 'warrior', 5, token);
+    await until(() => (c.lastInventory?.bag.length ?? 0) === 1, 3000, 'seeded bag replicated');
+
+    // Equip the ring at index 0 → the authoritative inventory moves it to the ring slot + empties bag.
+    c.invAction('equip', { index: 0 });
+    await until(
+      () => c.lastInventory?.equipment?.ring1 !== undefined,
+      3000,
+      'ring equipped server-side',
+    );
+    expect(c.lastInventory!.bag).toHaveLength(0);
+
+    // An equip of an empty slot is a validated no-op (nothing to replicate / no crash).
+    c.invAction('equip', { index: 3 });
+    // Unequip the ring back to the bag.
+    c.invAction('unequip', { slot: 'ring1' });
+    await until(() => (c.lastInventory?.bag.length ?? 0) === 1, 3000, 'ring unequipped to bag');
+    expect(c.lastInventory!.equipment.ring1).toBeUndefined();
+
+    c.close();
+  });
 });

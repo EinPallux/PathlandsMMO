@@ -233,6 +233,13 @@ export class TestClient {
   pickupItem(id: string): void {
     this.send({ t: 'pickupItem', id });
   }
+  /** Send a server-validated inventory action (equip / unequip / sell / buy / buyback). */
+  invAction(
+    action: 'equip' | 'unequip' | 'sell' | 'buy' | 'buyback',
+    opts: { index?: number; slot?: string; seed?: number; tier?: number } = {},
+  ): void {
+    this.send({ t: 'inv', action, ...opts });
+  }
   /** Send a GM action (target by name). */
   gmAction(
     action: 'kick' | 'mute' | 'unmute' | 'ban' | 'unban' | 'teleport' | 'give',

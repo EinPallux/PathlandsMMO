@@ -38,6 +38,8 @@ export interface PlayerInventory {
   gold: number;
   equipment: Record<string, ItemDef>;
   buyback: BuybackEntry[];
+  /** Extra bag slots from Path perks (Deep Pockets) — added to BAG_SIZE for this player's cap. */
+  bagBonus: number;
   /** Set when the bag/gold/equipment changed since the last replication; cleared after sending. */
   dirty: boolean;
 }
@@ -49,6 +51,8 @@ export interface InventorySeed {
   inventory: ItemStackSave[];
   gold: number;
   equipment: Record<string, ItemDef>;
+  /** Extra bag slots from account Path perks (0 for a guest). */
+  bagBonus?: number;
 }
 
 function sanitizeClass(raw: string): CharacterClass {
@@ -70,6 +74,7 @@ export class Inventories {
       gold: Math.max(0, Math.floor(seed.gold)),
       equipment: { ...seed.equipment },
       buyback: [],
+      bagBonus: Math.max(0, Math.floor(seed.bagBonus ?? 0)),
       dirty: true, // replicate the seeded state on the first broadcast
     });
   }
@@ -82,15 +87,16 @@ export class Inventories {
     return this.map.get(id) ?? null;
   }
 
-  /** The authoritative bag capacity (base slots; Path-perk bonus lands when perks migrate). */
-  bagCap(): number {
-    return BAG_SIZE;
+  /** The authoritative bag capacity for a player (base slots + their Deep-Pockets bonus). */
+  bagCap(id: string): number {
+    const inv = this.map.get(id);
+    return inv === undefined ? BAG_SIZE : BAG_SIZE + inv.bagBonus;
   }
 
   /** Whether the player's bag has room for one more stack. */
   hasRoom(id: string): boolean {
     const inv = this.map.get(id);
-    return inv !== undefined && inv.bag.length < this.bagCap();
+    return inv !== undefined && inv.bag.length < BAG_SIZE + inv.bagBonus;
   }
 
   /**
@@ -101,7 +107,7 @@ export class Inventories {
   addStack(id: string, item: ItemDef, qty: number): boolean {
     const inv = this.map.get(id);
     if (inv === undefined) return false;
-    if (inv.bag.length >= this.bagCap()) return false;
+    if (inv.bag.length >= BAG_SIZE + inv.bagBonus) return false;
     inv.bag.push({ item, qty: Math.max(1, Math.floor(qty)) });
     inv.dirty = true;
     return true;
@@ -178,7 +184,7 @@ export class Inventories {
     if (inv === undefined) return false;
     const item = inv.equipment[slot];
     if (item === undefined) return false;
-    if (inv.bag.length >= this.bagCap()) return false;
+    if (inv.bag.length >= BAG_SIZE + inv.bagBonus) return false;
     delete inv.equipment[slot];
     inv.bag.push({ item, qty: 1 });
     inv.dirty = true;
@@ -204,7 +210,7 @@ export class Inventories {
   buy(id: string, item: ItemDef, price: number): 'ok' | 'full' | 'poor' | 'gone' {
     const inv = this.map.get(id);
     if (inv === undefined) return 'gone';
-    if (inv.bag.length >= this.bagCap()) return 'full';
+    if (inv.bag.length >= BAG_SIZE + inv.bagBonus) return 'full';
     if (inv.gold < price) return 'poor';
     inv.gold -= price;
     inv.bag.push({ item, qty: 1 });
@@ -218,7 +224,7 @@ export class Inventories {
     if (inv === undefined) return 'gone';
     const entry = inv.buyback[index];
     if (entry === undefined) return 'gone';
-    if (inv.bag.length >= this.bagCap()) return 'full';
+    if (inv.bag.length >= BAG_SIZE + inv.bagBonus) return 'full';
     if (inv.gold < entry.price) return 'poor';
     inv.gold -= entry.price;
     inv.bag.push({ item: entry.item, qty: entry.qty });

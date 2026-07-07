@@ -49,6 +49,9 @@ const PARTY_ACTIONS = ['invite', 'accept', 'decline', 'leave', 'kick'];
 /** Valid GM actions on the wire (the server re-checks GM privilege before acting). */
 const GM_ACTIONS = ['kick', 'mute', 'unmute', 'ban', 'unban', 'teleport', 'give'];
 
+/** Valid inventory actions on the wire (the server re-validates each against the authoritative bag). */
+const INV_ACTIONS = ['equip', 'unequip', 'sell', 'buy', 'buyback'];
+
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
 
@@ -283,6 +286,23 @@ export interface ClientPickupItem {
   id: string;
 }
 
+/**
+ * A server-validated inventory action (economy migration, Stage 1b). Each mutates the recipient's
+ * OWN authoritative inventory, which the server re-validates before applying (capacity, gold,
+ * equippability, valid index/slot) — a cheat client can't equip what it can't wear or oversell.
+ * `equip`/`sell`/`buyback` carry a bag/buyback `index`; `unequip` a `slot`; `buy` the vendor's
+ * `seed` + `tier` + stock `index` (the server recomputes the deterministic stock + price, so the
+ * client can't set its own price).
+ */
+export interface ClientInvAction {
+  t: 'inv';
+  action: 'equip' | 'unequip' | 'sell' | 'buy' | 'buyback';
+  index?: number;
+  slot?: string;
+  seed?: number;
+  tier?: number;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientIntent
@@ -292,7 +312,8 @@ export type ClientMessage =
   | ClientWho
   | ClientGm
   | ClientDropItem
-  | ClientPickupItem;
+  | ClientPickupItem
+  | ClientInvAction;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -835,6 +856,28 @@ export function decodeClient(raw: string): ClientMessage | null {
     case 'pickupItem': {
       if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_CHAT_LEN) return null;
       return { t: 'pickupItem', id: o.id };
+    }
+    case 'inv': {
+      if (!isString(o.action) || !INV_ACTIONS.includes(o.action)) return null;
+      const act: ClientInvAction = { t: 'inv', action: o.action as ClientInvAction['action'] };
+      // Optional fields are validated when present; the gateway enforces which each action needs.
+      if (o.index !== undefined) {
+        if (!isNonNegInt(o.index)) return null;
+        act.index = o.index;
+      }
+      if (o.slot !== undefined) {
+        if (!isString(o.slot) || o.slot.length > 32) return null;
+        act.slot = o.slot;
+      }
+      if (o.seed !== undefined) {
+        if (!isFiniteNumber(o.seed)) return null;
+        act.seed = o.seed;
+      }
+      if (o.tier !== undefined) {
+        if (!isNonNegInt(o.tier)) return null;
+        act.tier = o.tier;
+      }
+      return act;
     }
     default:
       return null;

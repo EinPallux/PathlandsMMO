@@ -18,8 +18,10 @@ import {
   findEmote,
   lootTurnRecipient,
   NET_PROTOCOL_VERSION,
+  vendorStock,
   WORLD_SEED,
   type ClientGm,
+  type ClientInvAction,
   type ClientParty,
   type ItemDef,
   type ItemStackSave,
@@ -677,6 +679,43 @@ export class GameServer {
         this.inventories.addStack(conn.id, picked.item, picked.qty);
         this.groundChanged = true; // the stack left the world — replicate its removal
         return;
+      }
+      case 'inv': {
+        if (conn.id === null) return; // must be joined
+        this.handleInvAction(conn.id, msg);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Apply a server-validated inventory action against the player's OWN authoritative inventory
+   * (economy migration, Stage 1b). Every path re-validates server-side (capacity, gold, equippability,
+   * index/slot); an invalid action is silently a no-op. A successful mutation marks the inventory
+   * dirty, so the updated bag/gold/equipment replicates on the next broadcast.
+   */
+  private handleInvAction(id: string, msg: ClientInvAction): void {
+    switch (msg.action) {
+      case 'equip':
+        if (msg.index !== undefined) this.inventories.equip(id, msg.index);
+        break;
+      case 'unequip':
+        if (msg.slot !== undefined) this.inventories.unequip(id, msg.slot);
+        break;
+      case 'sell':
+        if (msg.index !== undefined) this.inventories.sell(id, msg.index);
+        break;
+      case 'buyback':
+        if (msg.index !== undefined) this.inventories.buyback(id, msg.index);
+        break;
+      case 'buy': {
+        if (msg.seed === undefined || msg.tier === undefined || msg.index === undefined) break;
+        // Recompute the deterministic vendor stock server-side, so the client can't set its own
+        // price — it only picks (seed, tier, index); the server owns what that resolves to.
+        const tier = Math.max(1, Math.min(40, Math.floor(msg.tier)));
+        const entry = vendorStock(msg.seed, tier)[msg.index];
+        if (entry !== undefined) this.inventories.buy(id, entry.item, entry.price);
+        break;
       }
     }
   }

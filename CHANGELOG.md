@@ -10,6 +10,25 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 31 — Server-validated inventory actions, Stage 1b·A (2026-07-07)
+
+The server can now **validate and apply** inventory actions against its authoritative model, ahead
+of the client flip. Backward-compatible: the client doesn't send these yet, so nothing changes for
+players — this lands the validated server capability + tests first.
+
+#### Added
+
+- **`ClientInvAction`** (`shared/proto/net.ts`): one client→server frame for `equip` / `unequip` /
+  `sell` / `buy` / `buyback`, with a per-action decoder (bag index / equip slot / vendor seed+tier).
+  Additive — no protocol bump (the shared version constant keeps client and server in lockstep).
+- **Gateway `handleInvAction`**: routes each to the `Inventories` model, which re-validates
+  server-side (capacity, gold, equippability, index/slot). **Buy recomputes the deterministic vendor
+  stock from (seed, tier)** server-side, so a client can't set its own price — it only picks the slot.
+- **Perk-aware bag cap**: the model's `bagCap` is now per-player (`BAG_SIZE` + a Deep-Pockets bonus),
+  plumbed through the seed (sourced from account perks when the client flip lands).
+- **Tests** (+1): a wire test that an `equip` action validates server-side and re-replicates the
+  updated bag/equipment.
+
 ### Part 30 — Server-authoritative inventory, Stage 1a (2026-07-07)
 
 The economy migration begins: the player's **bag, gold, and worn equipment** start becoming server
