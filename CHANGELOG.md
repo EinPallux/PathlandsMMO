@@ -10,6 +10,29 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 36 — Quest event re-validation, Stage 2b (migration #138) (2026-07-09)
+
+Closes the interim trust the flip left on the client-reported objective events. The server now
+re-validates each `ClientQuestEvent` against the player's **authoritative position** before applying
+it, so a cheat can't advance an objective from somewhere it isn't standing.
+
+#### Changed
+
+- **`explore` uses the server position.** The gateway ignores the client-supplied `x` / `z` and
+  advances explore objectives from the player's authoritative sim position — no teleport-explore.
+- **`talk` / `deliver` / `use` require proximity.** The event is applied only when the player is
+  within `QUEST_INTERACT_RADIUS` (12 m) of the target quest giver (settlement plaza + offset, built
+  into a `GIVER_POS` index) or Waystone (`waystoneById`). A target with no known position passes
+  through (documented residual trust — all authored talk/use targets resolve today). `gather` has no
+  position to check.
+
+#### Tests (+2, 447 green)
+
+- Over the wire: an explore objective advances from a player standing at the area but **not** from
+  one forging the coords while elsewhere; a talk objective advances only when the player is **near**
+  the target NPC, and a forged talk from across the map is dropped. (Two prior explore tests now spawn
+  the character at the objective, matching the authoritative-position rule.)
+
 ### Part 35 — Quest client flip, Stage 2 (migration #138) (2026-07-09)
 
 The flip: the **client now renders the server's quest log as authoritative** and drives it entirely by

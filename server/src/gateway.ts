@@ -21,8 +21,11 @@ import {
   lootTurnRecipient,
   makeRng,
   NET_PROTOCOL_VERSION,
+  QUEST_GIVERS,
   scaledQuestXp,
+  settlementById,
   vendorStock,
+  waystoneById,
   WORLD_SEED,
   type ClientGm,
   type ClientInvAction,
@@ -39,6 +42,7 @@ import {
   type NetPlayer,
   type NetWhoEntry,
   type NetWorldItem,
+  type QuestEvent,
   type QuestLogState,
   type QuestReward,
   type ServerChat,
@@ -163,6 +167,19 @@ const MAX_DROP_QTY = 999;
 
 /** Cap on players listed in a /who reply, so the frame stays bounded in a crowded world. */
 const WHO_MAX_ENTRIES = 100;
+
+/** How close (world units) a player must be to a quest giver / Waystone to satisfy a talk / deliver
+ *  / use objective (quest migration #138, Stage 2b) — generous enough to absorb client↔server
+ *  position lag, tight enough to reject a teleport-cheat reporting the event from across the map. */
+const QUEST_INTERACT_RADIUS = 12;
+
+/** Quest-giver world positions (settlement plaza centre + the giver's offset), for re-validating
+ *  talk / deliver events against the player's authoritative position. Pure world data, built once. */
+const GIVER_POS = new Map<string, { x: number; z: number }>();
+for (const g of QUEST_GIVERS) {
+  const s = settlementById(g.settlement);
+  if (s !== undefined) GIVER_POS.set(g.id, { x: s.cx + g.dx, z: s.cz + g.dz });
+}
 
 /** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
 const CHAT_BROADCAST_MAX = 200;
@@ -793,10 +810,13 @@ export class GameServer {
       }
       case 'questEvent': {
         if (conn.id === null) return; // must be joined
-        // A client-reported objective source (explore / talk / deliver / use / gather) — applied to
-        // the authoritative log. Interim-trusted this stage; proximity re-validation lands with the
-        // client flip. kill/boss/collect are server-driven (drainKills), never accepted here.
-        this.quests.applyEvent(conn.id, msg.ev);
+        // A client-reported objective source (explore / talk / deliver / use / gather). Re-validate
+        // it against the player's AUTHORITATIVE position (Stage 2b): explore uses the server position
+        // (not the client-supplied coords), and talk / deliver / use must be near the target NPC /
+        // Waystone — so a cheat can't reach an area or attune a stone it isn't standing at.
+        // kill/boss/collect are server-driven (drainKills), never accepted here.
+        const ev = this.sanitizeQuestEvent(conn.id, msg.ev);
+        if (ev !== null) this.quests.applyEvent(conn.id, ev);
         return;
       }
     }
@@ -867,6 +887,39 @@ export class GameServer {
       const rng = makeRng(WORLD_SEED, 'questReward', key, questId, String(i));
       this.giveOrDrop(conn, generateItem(rng, { ...spec, forClass: cls }), 1);
     });
+  }
+
+  /**
+   * Re-validate a client-reported objective event against the player's AUTHORITATIVE position (quest
+   * migration #138, Stage 2b), returning the event to apply or null to drop it:
+   *   - `explore` uses the SERVER position (client coords ignored), so the objective advances only
+   *     from where the player actually stands — no teleport-explore.
+   *   - `talk` / `deliver` / `use` must be within `QUEST_INTERACT_RADIUS` of the target giver /
+   *     Waystone; a target with no known position passes through (documented interim trust).
+   *   - `gather` (and any future kind) has no position to check and passes through.
+   */
+  private sanitizeQuestEvent(id: string, ev: QuestEvent): QuestEvent | null {
+    const player = this.sim.players.get(id);
+    if (player === undefined) return null;
+    const px = player.phys.x;
+    const pz = player.phys.z;
+    const near = (x: number, z: number): boolean =>
+      (px - x) * (px - x) + (pz - z) * (pz - z) <= QUEST_INTERACT_RADIUS * QUEST_INTERACT_RADIUS;
+    switch (ev.kind) {
+      case 'explore':
+        return { kind: 'explore', x: px, z: pz }; // authoritative position, not the client's coords
+      case 'talk':
+      case 'deliver': {
+        const pos = GIVER_POS.get(ev.npcId);
+        return pos === undefined || near(pos.x, pos.z) ? ev : null;
+      }
+      case 'use': {
+        const ws = waystoneById(ev.objectId);
+        return ws === undefined || near(ws.x, ws.z) ? ev : null;
+      }
+      default:
+        return ev; // gather — no position to validate
+    }
   }
 
   /**

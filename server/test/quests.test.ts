@@ -6,7 +6,14 @@
 //      SERVER-SIDE (no claimReward), while an unfinished turn-in is rejected.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createCharacter, createQuestLog, EquipSlot, type QuestLogState } from '@pathlands/shared';
+import {
+  createCharacter,
+  createQuestLog,
+  EquipSlot,
+  QUEST_GIVERS,
+  settlementById,
+  type QuestLogState,
+} from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
 import { ServerSim } from '../src/sim.js';
 import { GameServer } from '../src/gateway.js';
@@ -88,8 +95,14 @@ describe('quests — over the wire', () => {
     await server.close();
   });
 
-  /** Register an account + persist a character (optionally with a pre-set quest log), return a token. */
-  async function persist(email: string, id: string, name: string, quests?: QuestLogState) {
+  /** Register an account + persist a character (optional pre-set quest log + spawn), return a token. */
+  async function persist(
+    email: string,
+    id: string,
+    name: string,
+    quests?: QuestLogState,
+    spawn?: { x: number; z: number },
+  ) {
     const res = await fetch(base + '/auth/register', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -97,15 +110,22 @@ describe('quests — over the wire', () => {
     });
     const token = ((await res.json()) as { token: string }).token;
     const acct = (await store.getByEmail(email))!;
-    const y = createServerWorld().surfaceSpawnY(120, 120);
-    const ch = createCharacter(id, name, 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    const sx = spawn?.x ?? 120;
+    const sz = spawn?.z ?? 120;
+    const y = createServerWorld().surfaceSpawnY(sx, sz);
+    const ch = createCharacter(id, name, 'warrior', { skin: 0, hair: 0 }, sx, y, sz);
     if (quests) ch.quests = quests;
     await store.putCharacter(acct.id, ch);
     return token;
   }
 
   it('accept → explore event → turn in: replicates the log + grants the gold reward', async () => {
-    const token = await persist('walker@example.com', 'cq1', 'Walker');
+    // Spawn AT the q_find_feet fountain (1536,1536) — the server advances explore from the
+    // authoritative position now (Stage 2b), not the client-supplied coords.
+    const token = await persist('walker@example.com', 'cq1', 'Walker', undefined, {
+      x: 1536,
+      z: 1536,
+    });
     const c = new TestClient(wsUrl);
     await c.opened();
     c.hello('Walker', 'warrior', 1, token);
@@ -258,7 +278,11 @@ describe('quests — over the wire', () => {
   });
 
   it('persists the authoritative quest log on disconnect (server-owned now, Stage 2)', async () => {
-    const token = await persist('journal@example.com', 'cq6', 'Journal');
+    // Spawn at the fountain so the explore advances from the authoritative position (Stage 2b).
+    const token = await persist('journal@example.com', 'cq6', 'Journal', undefined, {
+      x: 1536,
+      z: 1536,
+    });
     const acct = (await store.getByEmail('journal@example.com'))!;
     const c = new TestClient(wsUrl);
     await c.opened();
@@ -292,5 +316,100 @@ describe('quests — over the wire', () => {
     }
     expect(saved!.quests.turnedIn).toContain('q_find_feet');
     expect(saved!.quests.active.some((p) => p.id === 'q_find_feet')).toBe(false);
+  });
+
+  it('advances an explore objective from the player’s authoritative position, ignoring forged coords (Stage 2b)', async () => {
+    // A stands AT the q_find_feet fountain (1536,1536, r7); B stands far away (120,120).
+    const tokenA = await persist('atsite@example.com', 'cq7', 'AtSite', undefined, {
+      x: 1536,
+      z: 1536,
+    });
+    const tokenB = await persist('faker@example.com', 'cq8', 'Faker'); // default spawn (120,120)
+
+    const a = new TestClient(wsUrl);
+    await a.opened();
+    a.hello('AtSite', 'warrior', 1, tokenA);
+    await until(() => a.lastQuestLog !== null, 3000, 'A seeded');
+    a.questAction('accept', 'q_find_feet');
+    await until(
+      () => a.lastQuestLog?.active.some((p) => p.id === 'q_find_feet') === true,
+      3000,
+      'A accepted',
+    );
+    // A reports explore (coords irrelevant) — the server uses A's authoritative position, which is at
+    // the fountain, so the objective advances.
+    a.questEvent({ kind: 'explore', x: 0, z: 0 });
+    await until(
+      () => (a.lastQuestLog?.active.find((p) => p.id === 'q_find_feet')?.counts[0] ?? 0) >= 1,
+      3000,
+      'A advanced from its real position',
+    );
+
+    const b = new TestClient(wsUrl);
+    await b.opened();
+    b.hello('Faker', 'warrior', 1, tokenB);
+    await until(() => b.lastQuestLog !== null, 3000, 'B seeded');
+    b.questAction('accept', 'q_find_feet');
+    await until(
+      () => b.lastQuestLog?.active.some((p) => p.id === 'q_find_feet') === true,
+      3000,
+      'B accepted',
+    );
+    // B forges the fountain coords while standing at (120,120) — the server ignores the coords and
+    // uses B's authoritative position, which is nowhere near, so the objective does NOT advance.
+    b.questEvent({ kind: 'explore', x: 1536, z: 1536 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(b.lastQuestLog!.active.find((p) => p.id === 'q_find_feet')!.counts[0]).toBe(0);
+
+    a.close();
+    b.close();
+  });
+
+  it('advances a talk objective only when the player is near the target NPC (Stage 2b)', async () => {
+    // q_word_from_millstead has a talk objective at wardenTuck; seed it active (bypassing prereqs).
+    const tuck = QUEST_GIVERS.find((g) => g.id === 'wardenTuck')!;
+    const set = settlementById(tuck.settlement)!;
+    const tuckPos = { x: set.cx + tuck.dx, z: set.cz + tuck.dz };
+    const active: QuestLogState = {
+      active: [{ id: 'q_word_from_millstead', counts: [0], pinned: false }],
+      turnedIn: [],
+    };
+
+    // Near Tuck → the talk advances.
+    const tokenNear = await persist('pilgrim@example.com', 'cq9', 'Pilgrim', active, tuckPos);
+    const near = new TestClient(wsUrl);
+    await near.opened();
+    near.hello('Pilgrim', 'warrior', 1, tokenNear);
+    await until(
+      () => near.lastQuestLog?.active.some((p) => p.id === 'q_word_from_millstead') === true,
+      3000,
+      'near seeded',
+    );
+    near.questEvent({ kind: 'talk', npcId: 'wardenTuck' });
+    await until(
+      () =>
+        (near.lastQuestLog?.active.find((p) => p.id === 'q_word_from_millstead')?.counts[0] ?? 0) >=
+        1,
+      3000,
+      'talk advanced when near',
+    );
+    near.close();
+
+    // Far from Tuck (default spawn) → the forged talk is dropped.
+    const tokenFar = await persist('spoofer@example.com', 'cqA', 'Spoofer', active);
+    const far = new TestClient(wsUrl);
+    await far.opened();
+    far.hello('Spoofer', 'warrior', 1, tokenFar);
+    await until(
+      () => far.lastQuestLog?.active.some((p) => p.id === 'q_word_from_millstead') === true,
+      3000,
+      'far seeded',
+    );
+    far.questEvent({ kind: 'talk', npcId: 'wardenTuck' });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(far.lastQuestLog!.active.find((p) => p.id === 'q_word_from_millstead')!.counts[0]).toBe(
+      0,
+    );
+    far.close();
   });
 });

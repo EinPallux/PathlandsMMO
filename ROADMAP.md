@@ -42,10 +42,11 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > * **Stage 2 (done, Part 35):** the client renders `ServerQuestLog` as authoritative (`QuestDirector`
 >   is a mirror + intent-sender), the quest `claimReward` path is retired, and the server persists the
 >   log (the `MAX_ACTIVE` seed clamp is now load-bearing).
-> * **Next — Stage 2b (hardening):** proximity re-validation (server checks the player's authoritative
->   position for explore / talk instead of trusting the client-reported one); a party-per-member
->   kill-credit **wire** test (the fan-out is unit-tested, the end-to-end gateway path isn't yet); and
->   a client playtest of the quest UX. Then professions (#139).
+> * **Stage 2b (done, Part 36):** the server re-validates each `ClientQuestEvent` against the player's
+>   authoritative position — explore advances from the server position (not client coords), and
+>   talk / deliver / use require proximity (`QUEST_INTERACT_RADIUS`) to the giver / Waystone.
+> * **Next:** a party-per-member kill-credit **wire** test (the fan-out is unit-tested, the end-to-end
+>   gateway path isn't yet) + a client playtest of the quest UX; then professions (#139).
 >
 > ---
 >
