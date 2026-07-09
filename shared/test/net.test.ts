@@ -49,6 +49,9 @@ describe('net protocol codec', () => {
       decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'kill', enemyId: 'boar' } })),
     ).toBeNull();
     expect(
+      decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'boss', enemyId: 'gloomlord' } })),
+    ).toBeNull();
+    expect(
       decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'collect', tag: 'tail' } })),
     ).toBeNull();
     // A malformed explore (non-finite coord) sinks it.

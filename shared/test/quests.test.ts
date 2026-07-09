@@ -62,6 +62,25 @@ describe('Quest state machine (GDD §8)', () => {
     expect(progressOf(log, 'q_boar_trouble')!.counts[0]).toBe(5);
   });
 
+  it('advances a kill objective by exactly 1 per kill (kill + boss pair is not double-counted)', () => {
+    // Every slain enemy emits BOTH a `kill` and a `boss` event (client onKill / server applyKill).
+    // A `boss` event must NOT also satisfy a plain `kill` objective, or "cull 5 boars" would finish
+    // in 3 kills (tracker showing 2/5 after one). One kill = one increment.
+    const log = createQuestLog();
+    acceptQuest(log, 'q_boar_trouble', 1); // kill thornbackBoar x5
+    applyQuestEvent(log, { kind: 'kill', enemyId: 'thornbackBoar' });
+    applyQuestEvent(log, { kind: 'boss', enemyId: 'thornbackBoar' });
+    expect(progressOf(log, 'q_boar_trouble')!.counts[0]).toBe(1);
+    // The full five pairs complete it (never before the fifth).
+    for (let i = 1; i < 5; i++) {
+      applyQuestEvent(log, { kind: 'kill', enemyId: 'thornbackBoar' });
+      applyQuestEvent(log, { kind: 'boss', enemyId: 'thornbackBoar' });
+    }
+    expect(isQuestComplete(questById('q_boar_trouble')!, progressOf(log, 'q_boar_trouble')!)).toBe(
+      true,
+    );
+  });
+
   it('collect objectives accumulate by n', () => {
     const log = createQuestLog();
     acceptQuest(log, 'q_verminous', 1);

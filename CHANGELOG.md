@@ -46,13 +46,30 @@ bridge for quests is Stage 2.
   advances an objective the player genuinely holds, and the **reward is server-computed** — a client
   can no longer mint arbitrary gold/items through a quest.
 
-#### Tests (+8, 441 green)
+#### Fixed (folded from the Stage-1 adversarial review)
 
-- Model: seed/dirty; availability + level-gated + duplicate accept; kill/collect drive from an
-  authoritative kill (with overkill clamped); complete-gated turn-in. Over the wire: accept → explore
-  event → turn-in replicates the log + grants the gold reward; a pre-completed quest's **reward items
-  are granted server-side** on turn-in (no `claimReward`); an unfinished turn-in is **rejected**.
-  Codec: the quest action / event / log frames round-trip and reject malformed / server-only kinds.
+- **Kill objectives were double-counted** (a pre-existing shared-engine bug the server would have
+  inherited): every slain enemy emits both a `kill` and a `boss` event, and `matches()` let a `boss`
+  event also satisfy a plain `kill` objective — so "cull 5 boars" finished in 3 kills (the tracker
+  showing 2/5 after one). Fixed engine-wide (a `boss` event now matches only `boss` objectives), which
+  corrects the client and the new server engine **together** (no divergence); the full suite + the
+  P4.10 XP-sufficiency acceptance stay green. A kill now advances a kill objective by exactly one.
+- **Quest reward now always grants one choice**: `grantQuestReward` clamps a missing / out-of-range
+  `choiceIndex` to 0 instead of silently dropping the item (which, at the Stage-2 flip, would have
+  consumed a choices-only quest for gold + XP with no item).
+- **Hardening**: `setPinned` replicates only on a real pin flip (not every call); `cloneLog` bounds a
+  (potentially crafted) uploaded log to `MAX_ACTIVE` / objective / turned-in caps.
+
+#### Tests (+11, 444 green)
+
+- Model: seed/dirty; availability + level-gated + duplicate accept; kill/collect drive by **exactly
+  one per kill**; complete-gated turn-in. Over the wire: accept → explore event → turn-in replicates
+  the log + grants the gold reward; a pre-completed quest's **reward items are granted server-side**
+  on turn-in (the chosen slot honored + a `gen:` id + reward XP through server progression, no
+  `claimReward`); an unfinished turn-in is **rejected**; a level-gated accept is **rejected against
+  the authoritative level**; abandon removes an accepted quest. Engine: a kill+boss pair advances a
+  kill objective by one. Codec: the quest action / event / log frames round-trip and reject malformed
+  / server-only kinds (kill / boss / collect).
 
 ### Part 33 — Inventory-flip hardening: adversarial-review fixes (2026-07-07)
 

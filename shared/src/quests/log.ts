@@ -133,7 +133,7 @@ function matches(o: Objective, ev: QuestEvent): boolean {
     case 'kill':
       return o.kind === 'kill' && o.target === ev.enemyId;
     case 'boss':
-      return (o.kind === 'boss' || o.kind === 'kill') && o.target === ev.enemyId;
+      return o.kind === 'boss' && o.target === ev.enemyId;
     case 'collect':
       return o.kind === 'collect' && o.target === ev.tag;
     case 'gather':

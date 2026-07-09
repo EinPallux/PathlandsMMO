@@ -17,15 +17,19 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >
 > - XP + items rolled on a deterministic per-(account, quest) RNG and granted via `giveOrDrop` — so a
 >   quest can no longer mint arbitrary gold/items through the trusted `claimReward` bridge.
->   **441 tests green** (8 new: model accept/kill-drive/turn-in + the wire accept→progress→turn-in,
->   server-side reward items, and unfinished-turn-in rejection + the v20 codec).
+>   **444 tests green.** The Stage-1 adversarial review folded in: fixed a pre-existing shared-engine
+>   **kill-objective double-count** (a `boss` event no longer also satisfies a plain `kill` objective —
+>   corrects client + server together, "cull 5" now needs 5 kills), a `grantQuestReward` choiceIndex
+>   clamp, and seed/replication hardening.
 >   _Quest migration plan (strangler-fig, mirroring the economy):_
 >
 > * **Stage 1 (done):** server engine + protocol + gateway (accept/turn-in/event/kill-drive) +
 >   server-computed rewards + replication. Non-breaking — the client still owns its log this stage.
 > * **Next — Stage 2 (the flip):** the client renders `ServerQuestLog` as authoritative (its
 >   `QuestDirector` becomes a mirror + intent-sender), retiring the quest `claimReward` path; the
->   server persists the log; proximity re-validation for talk / explore. Then professions (#139).
+>   server persists the log (with the `MAX_ACTIVE` seed clamp becoming load-bearing); proximity
+>   re-validation for talk / explore; and a party-per-member kill-credit **wire** test (the fan-out is
+>   unit-tested today, the end-to-end gateway path lands with the flip). Then professions (#139).
 >
 > ---
 >

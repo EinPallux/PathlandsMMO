@@ -837,8 +837,13 @@ export class GameServer {
     if (reward.xp > 0) this.combat.grantXp(conn.id, scaledQuestXp(reward.xp));
     const cls = this.inventories.get(conn.id)?.cls ?? CharacterClass.Warrior;
     const specs: GeneratedItemSpec[] = [...(reward.items ?? [])];
-    if (reward.choices !== undefined && choiceIndex !== undefined) {
-      const chosen = reward.choices[choiceIndex];
+    if (reward.choices !== undefined && reward.choices.length > 0) {
+      // Always grant exactly one choice. A missing / out-of-range index defaults to 0 rather than
+      // silently dropping the reward item (which would consume the quest for gold + XP only) — the
+      // decoder already rejects a negative / fractional index.
+      const idx =
+        choiceIndex !== undefined && choiceIndex < reward.choices.length ? choiceIndex : 0;
+      const chosen = reward.choices[idx];
       if (chosen !== undefined) specs.push(chosen);
     }
     const key = conn.accountId ?? conn.id;

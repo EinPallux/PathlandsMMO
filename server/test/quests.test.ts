@@ -6,7 +6,7 @@
 //      SERVER-SIDE (no claimReward), while an unfinished turn-in is rejected.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createCharacter, createQuestLog, type QuestLogState } from '@pathlands/shared';
+import { createCharacter, createQuestLog, EquipSlot, type QuestLogState } from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
 import { ServerSim } from '../src/sim.js';
 import { GameServer } from '../src/gateway.js';
@@ -36,17 +36,20 @@ describe('Quests model', () => {
     expect(q.accept('p1', 'not_a_quest', 30)).toBe(false); // unknown id
   });
 
-  it('drives kill + collect objectives from an authoritative kill', () => {
+  it('drives kill + collect objectives by exactly one per authoritative kill', () => {
     const q = new Quests();
     q.seed('p1', createQuestLog());
     q.accept('p1', 'q_boar_trouble', 1); // kill thornbackBoar x5
     q.accept('p1', 'q_verminous', 1); // collect ratTail x4 (blightrat's drop tag)
-    for (let i = 0; i < 5; i++) q.applyKill('p1', 'thornbackBoar');
+    // applyKill emits kill+boss+collect; a kill objective must advance by exactly 1 (not 2), so it's
+    // still 4/5 after four kills — the fix for the boss-event double-count.
+    for (let i = 0; i < 4; i++) q.applyKill('p1', 'thornbackBoar');
+    expect(q.get('p1')!.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(4);
     for (let i = 0; i < 4; i++) q.applyKill('p1', 'blightrat');
     const log = q.get('p1')!;
-    expect(log.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(5);
-    expect(log.active.find((p) => p.id === 'q_verminous')!.counts[0]).toBe(4);
-    // Overkill is clamped to the objective count, not stacked past it.
+    expect(log.active.find((p) => p.id === 'q_verminous')!.counts[0]).toBe(4); // collect via drop tag
+    // The fifth boar completes it; overkill is clamped to the objective count.
+    q.applyKill('p1', 'thornbackBoar');
     q.applyKill('p1', 'thornbackBoar');
     expect(q.get('p1')!.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(5);
   });
@@ -154,7 +157,7 @@ describe('quests — over the wire', () => {
     const bagBefore = c.lastInventory?.bag.length ?? 0;
     const goldBefore = c.lastInventory?.gold ?? 0;
 
-    // Turn in choosing reward choice 0 (Uncommon Hands). Gold + one generated item are granted.
+    // Turn in choosing reward choice 0 (Uncommon Hands). Gold + XP + one generated item are granted.
     c.questAction('turnIn', 'q_boar_trouble', 0);
     await until(
       () => c.lastQuestLog?.turnedIn.includes('q_boar_trouble') === true,
@@ -167,6 +170,18 @@ describe('quests — over the wire', () => {
       'reward item granted into the bag',
     );
     expect(c.lastInventory!.gold).toBe(goldBefore + 12);
+    // The chosen slot (0 = Hands) was honored and the item was rolled SERVER-SIDE (a `gen:` id).
+    expect(
+      c.lastInventory!.bag.some(
+        (s) => s.item.slot === EquipSlot.Hands && String(s.item.id).startsWith('gen:'),
+      ),
+    ).toBe(true);
+    // Reward XP (260 → scaledQuestXp 520) was granted through server progression.
+    await until(
+      () => (c.lastCombatSelf?.totalXp ?? 0) >= 520,
+      3000,
+      'reward xp granted server-side',
+    );
 
     c.close();
   });
@@ -192,6 +207,52 @@ describe('quests — over the wire', () => {
     expect(c.lastQuestLog!.active.some((p) => p.id === 'q_boar_trouble')).toBe(true);
     expect(c.lastQuestLog!.turnedIn).not.toContain('q_boar_trouble');
     expect(c.lastInventory?.gold ?? 0).toBe(goldBefore); // no reward granted
+
+    c.close();
+  });
+
+  it('rejects accepting a level-gated quest against the authoritative level', async () => {
+    // A level-1 player forges an accept of q_strayed_flock (minLevel 2). The server checks the
+    // AUTHORITATIVE combat level, not a client-supplied one, so it never enters the log.
+    const token = await persist('lowbie@example.com', 'cq4', 'Lowbie');
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Lowbie', 'warrior', 1, token);
+    await until(() => c.lastQuestLog !== null, 3000, 'seeded');
+
+    c.questAction('accept', 'q_strayed_flock'); // minLevel 2, we are level 1
+    // Also accept a valid quest so a later frame proves replication is flowing (not just silence).
+    c.questAction('accept', 'q_boar_trouble');
+    await until(
+      () => c.lastQuestLog?.active.some((p) => p.id === 'q_boar_trouble') === true,
+      3000,
+      'valid quest accepted',
+    );
+    expect(c.lastQuestLog!.active.some((p) => p.id === 'q_strayed_flock')).toBe(false);
+
+    c.close();
+  });
+
+  it('abandons an accepted quest over the wire', async () => {
+    const token = await persist('quitter@example.com', 'cq5', 'Quitter');
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Quitter', 'warrior', 1, token);
+    await until(() => c.lastQuestLog !== null, 3000, 'seeded');
+
+    c.questAction('accept', 'q_boar_trouble');
+    await until(
+      () => c.lastQuestLog?.active.some((p) => p.id === 'q_boar_trouble') === true,
+      3000,
+      'accepted',
+    );
+    c.questAction('abandon', 'q_boar_trouble');
+    await until(
+      () => c.lastQuestLog?.active.some((p) => p.id === 'q_boar_trouble') === false,
+      3000,
+      'abandoned',
+    );
+    expect(c.lastQuestLog!.turnedIn).not.toContain('q_boar_trouble'); // abandon ≠ turn-in
 
     c.close();
   });

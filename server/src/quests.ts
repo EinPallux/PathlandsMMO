@@ -9,6 +9,7 @@
 // has the RNG + inventory + combat it needs; `turnIn` returns the pure `QuestReward` for it to grant.
 
 import {
+  MAX_ACTIVE,
   QUEST_DROP_TAGS,
   abandonQuest,
   acceptQuest,
@@ -21,6 +22,11 @@ import {
   type QuestNotice,
   type QuestReward,
 } from '@pathlands/shared';
+
+/** Defensive bounds on a (potentially crafted) uploaded quest log — the per-kill iteration + the
+ *  owner-only replication cost are kept sane even if a client forges an oversized `ch.quests`. */
+const MAX_OBJECTIVE_COUNTS = 16;
+const MAX_TURNED_IN = 512; // comfortably above the ~111 authored quests
 
 interface PlayerQuests {
   log: QuestLogState;
@@ -68,8 +74,10 @@ export class Quests {
   setPinned(id: string, questId: string, pinned: boolean): void {
     const q = this.map.get(id);
     if (q === undefined) return;
-    setPinned(q.log, questId, pinned);
-    q.dirty = true;
+    const prog = q.log.active.find((p) => p.id === questId);
+    const before = prog?.pinned;
+    setPinned(q.log, questId, pinned); // no-ops if absent / at MAX_PINNED
+    if (prog !== undefined && prog.pinned !== before) q.dirty = true; // only replicate a real flip
   }
 
   /** Apply a client-reported world event (explore / talk / deliver / use / gather) to the log. */
@@ -121,15 +129,18 @@ export class Quests {
   }
 }
 
-/** Deep-copy (and defensively repair) a quest log so the server owns a mutable copy of its own. */
+/** Deep-copy (and defensively repair + bound) a quest log so the server owns a mutable copy of its
+ *  own — a crafted upload can't seed an oversized log (capped at MAX_ACTIVE / objective / turned-in). */
 function cloneLog(log: QuestLogState | null | undefined): QuestLogState {
   if (!log || !Array.isArray(log.active) || !Array.isArray(log.turnedIn)) return createQuestLog();
   return {
-    active: log.active.map((p) => ({
+    active: log.active.slice(0, MAX_ACTIVE).map((p) => ({
       id: String(p.id),
-      counts: Array.isArray(p.counts) ? p.counts.map((c) => Math.max(0, Math.floor(c))) : [],
+      counts: Array.isArray(p.counts)
+        ? p.counts.slice(0, MAX_OBJECTIVE_COUNTS).map((c) => Math.max(0, Math.floor(c)))
+        : [],
       pinned: p.pinned === true,
     })),
-    turnedIn: log.turnedIn.map((s) => String(s)),
+    turnedIn: log.turnedIn.slice(0, MAX_TURNED_IN).map((s) => String(s)),
   };
 }
