@@ -149,6 +149,18 @@ interface Track {
   samples: Sample[];
 }
 
+/** A trusted economy claim buffered because the socket had no live session (the reconnect window,
+ *  `you === null`). Flushed in order on the next welcome so a quest reward / craft / travel fee
+ *  earned mid-reconnect isn't silently dropped. Safe against double-apply: the client bag is a pure
+ *  server mirror, so an un-sent claim is absent from the seed the server restores on reconnect. */
+type PendingClaim =
+  | { kind: 'claimReward'; gold: number; items: ItemStackSave[] }
+  | { kind: 'spendGold'; amount: number };
+
+/** Cap the buffered-claim queue so a permanently-disconnected client can't grow it without bound
+ *  (and a flush stays well under the server's per-second frame limit). Oldest is dropped past this. */
+const MAX_BUFFERED_CLAIMS = 32;
+
 const DEFAULT_RENDER_DELAY_MS = 150;
 /** Client drop spacing — a hair above the server's 250 ms gate so a sent drop is never rejected
  *  there (which would strand the item: removed from the bag locally, never spawned server-side). */
@@ -193,6 +205,10 @@ export class NetClient {
   private readonly grantQueue: NetItemStack[] = [];
   /** The latest authoritative inventory frame (bag/gold/equipment), last-wins until drained. */
   private pendingInventory: ServerInventory | null = null;
+  /** Trusted claims (quest reward / craft / travel fee) that couldn't be sent because we had no
+   *  live session; flushed in order on the next welcome. Deliberately NOT cleared on disconnect —
+   *  surviving the reconnect is the whole point. */
+  private readonly claimBuffer: PendingClaim[] = [];
   /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
   private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
@@ -275,6 +291,10 @@ export class NetClient {
         this.pendingSelf = null;
         this.clockInit = false;
         this.updateClock(msg.tick);
+        // Flush any trusted claims buffered while we had no session (the reconnect window), in the
+        // order they were made. The server has already seeded the inventory by the time it sent this
+        // welcome, so each claim applies on top of the restored bag/gold and re-replicates.
+        this.flushClaimBuffer();
         this.emitStatus();
         break;
       case 'snapshot': {
@@ -596,16 +616,40 @@ export class NetClient {
     this.send({ t: 'inv', ...a });
   }
 
-  /** Send a trusted reward claim (quest turn-in / crafted item) — the server grants it. */
+  /** Send a trusted reward claim (quest turn-in / crafted item) — the server grants it. Buffered
+   *  for the next welcome if we have no live session, so a reward earned mid-reconnect isn't lost. */
   sendClaimReward(gold: number, items: ItemStackSave[]): void {
-    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) {
+      this.bufferClaim({ kind: 'claimReward', gold, items });
+      return;
+    }
     this.send({ t: 'claimReward', gold, items });
   }
 
-  /** Send a trusted gold debit (travel fee / mount) — the server spends it if affordable. */
+  /** Send a trusted gold debit (travel fee / mount) — the server spends it if affordable. Buffered
+   *  for the next welcome if we have no live session (the player still owes the fee on reconnect). */
   sendSpendGold(amount: number): void {
-    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) {
+      this.bufferClaim({ kind: 'spendGold', amount });
+      return;
+    }
     this.send({ t: 'spendGold', amount });
+  }
+
+  /** Queue a trusted claim that couldn't be sent (no live session), dropping the oldest past the cap. */
+  private bufferClaim(claim: PendingClaim): void {
+    this.claimBuffer.push(claim);
+    if (this.claimBuffer.length > MAX_BUFFERED_CLAIMS) this.claimBuffer.shift();
+  }
+
+  /** Send every buffered claim, in order, then clear the buffer (called from the welcome handler). */
+  private flushClaimBuffer(): void {
+    if (this.claimBuffer.length === 0) return;
+    const pending = this.claimBuffer.splice(0, this.claimBuffer.length);
+    for (const c of pending) {
+      if (c.kind === 'claimReward') this.send({ t: 'claimReward', gold: c.gold, items: c.items });
+      else this.send({ t: 'spendGold', amount: c.amount });
+    }
   }
 
   /** Send a GM action (the server re-checks GM privilege; a non-GM's frame is ignored). */

@@ -374,18 +374,31 @@ export class GameServer {
 
   /** Write a live player's authoritative position + progression back into its stored blob. */
   private async persistPosition(accountId: string, player: ServerPlayer): Promise<void> {
+    // Capture the authoritative state SYNCHRONOUSLY, before the first `await` — `onClose` fires this
+    // fire-and-forget and then removes the player from the combat + inventory maps on the same tick,
+    // so reading them AFTER the await would see the deletions (null) and silently skip the XP +
+    // inventory writes. Snapshotting up front wins that race; the store I/O then uses the snapshot.
+    const px = player.phys.x;
+    const py = player.phys.y;
+    const pz = player.phys.z;
+    const pyaw = player.phys.yaw;
+    const prog = this.combat.progressionOf(player.id);
+    const invSnap = this.inventories.get(player.id);
+    const bag = invSnap !== null ? invSnap.bag.map((s) => ({ item: s.item, qty: s.qty })) : null;
+    const gold = invSnap !== null ? invSnap.gold : null;
+    const equipment = invSnap !== null ? { ...invSnap.equipment } : null;
+
     const ch = await this.store.getCharacter(accountId);
     if (ch === null) return; // guest-with-account who never uploaded a character
-    ch.x = player.phys.x;
-    ch.y = player.phys.y;
-    ch.z = player.phys.z;
-    ch.yaw = player.phys.yaw;
+    ch.x = px;
+    ch.y = py;
+    ch.z = pz;
+    ch.yaw = pyaw;
     // Server-authoritative kill XP (Stage 2c-1), persisted as a MONOTONIC high-water mark.
     // The server only sees kill XP; the client is the aggregator that also holds quest /
     // Waystone XP and cloud-saves the complete total (putCharacter). Writing the server's
     // partial total unconditionally would clobber that complete total, so only advance the
     // stored XP when the server genuinely leads it — never regress it.
-    const prog = this.combat.progressionOf(player.id);
     if (prog !== null && prog.totalXp > ch.xp) {
       ch.xp = prog.totalXp;
       ch.level = prog.level;
@@ -393,11 +406,10 @@ export class GameServer {
     // Server-authoritative inventory (economy migration): the bag / gold / equipment are the
     // server's truth now, so write them back. Read-modify-write preserves the still-client-owned
     // fields (quests / professions / deeds) already on the loaded blob.
-    const inv = this.inventories.get(player.id);
-    if (inv !== null) {
-      ch.inventory = inv.bag.map((s) => ({ item: s.item, qty: s.qty }));
-      ch.gold = inv.gold;
-      ch.equipment = { ...inv.equipment };
+    if (bag !== null && gold !== null && equipment !== null) {
+      ch.inventory = bag;
+      ch.gold = gold;
+      ch.equipment = equipment;
     }
     await this.store.putCharacter(accountId, ch);
   }
@@ -680,14 +692,26 @@ export class GameServer {
           PICKUP_RADIUS,
         );
         if (picked === null) return; // gone, already taken, or out of range — no grant
-        this.send(conn.ws, {
-          t: 'grant',
-          tick: this.sim.tick,
-          items: [{ item: picked.item, qty: picked.qty }],
-        });
-        // Mirror the grant into the authoritative inventory (parallel with the client bag this stage).
-        this.inventories.addStack(conn.id, picked.item, picked.qty);
-        this.groundChanged = true; // the stack left the world — replicate its removal
+        // Add to the authoritative bag. If it fits, cue the pickup floater; if the bag was full
+        // (a stale client gate raced the server), put it straight back on the ground rather than
+        // let it vanish — tryPickup already removed it from the world.
+        if (this.inventories.addStack(conn.id, picked.item, picked.qty)) {
+          this.send(conn.ws, {
+            t: 'grant',
+            tick: this.sim.tick,
+            items: [{ item: picked.item, qty: picked.qty }],
+          });
+        } else {
+          this.groundItems.drop(
+            picked.item,
+            picked.qty,
+            player.phys.x,
+            player.phys.y,
+            player.phys.z,
+            this.sim.tick,
+          );
+        }
+        this.groundChanged = true; // the stack left the world (or moved) — replicate the change
         return;
       }
       case 'inv': {
@@ -700,7 +724,9 @@ export class GameServer {
         // Trusted bridge (quest turn-in reward) — the client validated the quest; grant into the
         // authoritative inventory. Server-side quest validation replaces the trust when quests migrate.
         this.inventories.addGold(conn.id, msg.gold);
-        for (const s of msg.items) this.inventories.addStack(conn.id, s.item, s.qty);
+        // Over-cap reward items spill to the ground (giveOrDrop) rather than vanish — a full bag at
+        // turn-in must never eat the reward.
+        for (const s of msg.items) this.giveOrDrop(conn.id, s.item, s.qty);
         return;
       }
       case 'spendGold': {
@@ -742,6 +768,20 @@ export class GameServer {
         break;
       }
     }
+  }
+
+  /**
+   * Credit an item stack to a player's authoritative bag, or — if the bag is full — drop it on the
+   * ground at their feet so it is never silently lost. This is the overflow-safe grant path for
+   * kill loot and quest-reward turn-ins (a full bag at the moment of the grant must not eat the
+   * item). Marks the ground dirty when it spills so nearby players see the new stack.
+   */
+  private giveOrDrop(id: string, item: ItemDef, qty: number): void {
+    if (this.inventories.addStack(id, item, qty)) return;
+    const player = this.sim.players.get(id);
+    if (player === undefined) return; // no body to drop at (player gone) — nothing more to do
+    this.groundItems.drop(item, qty, player.phys.x, player.phys.y, player.phys.z, this.sim.tick);
+    this.groundChanged = true;
   }
 
   // --- GM tooling (server-authoritative; gated on conn.isGm) ---
@@ -1053,12 +1093,14 @@ export class GameServer {
         const inv = this.inventories.get(conn.id);
         if (inv !== null) {
           const bag: NetItemStack[] = inv.bag.map((s) => ({ item: s.item, qty: s.qty }));
+          const buyback: NetItemStack[] = inv.buyback.map((b) => ({ item: b.item, qty: b.qty }));
           this.send(conn.ws, {
             t: 'inventory',
             tick: this.sim.tick,
             bag,
             gold: inv.gold,
             equipment: { ...inv.equipment },
+            buyback,
           });
           this.inventories.markClean(conn.id);
         }
@@ -1087,10 +1129,10 @@ export class GameServer {
           gold: kill.gold,
           items: kill.items,
         });
-        // Credit the same loot to the authoritative inventory (the client still aggregates it
-        // locally this stage; the server model runs in parallel toward becoming the source of truth).
+        // Credit the same loot to the authoritative inventory. A full bag spills the item to the
+        // ground (giveOrDrop) instead of eating it, so hard-won kill loot is never silently lost.
         this.inventories.addGold(conn.id, kill.gold);
-        for (const stack of kill.items) this.inventories.addStack(conn.id, stack.item, stack.qty);
+        for (const stack of kill.items) this.giveOrDrop(conn.id, stack.item, stack.qty);
       }
 
       // 1d) Authoritative combat visuals near this viewer (Stage 2c-3): incoming hits, other

@@ -112,7 +112,6 @@ const WAYSTONE_RANGE = 7; // metres to attune / use a Waystone
 // 2·maxRegionRadius + margin so an active region's mobs are never wrongly culled.
 const ACTIVATE_MARGIN = 80;
 const DESPAWN_RADIUS = 170;
-const BUYBACK_MAX = 12;
 
 /** Progression a character carries into the world (from the save). */
 export interface Progression {
@@ -453,12 +452,9 @@ export class CombatDirector {
     const stack = this.inventory[index];
     if (!stack) return;
     this.netSink?.sendInvAction({ action: 'sell', index });
-    // Mirror the sale into the CLIENT's buyback list for the vendor UI (the server keeps its own in
-    // the same order, so a later buyback-by-index resolves to the same stack).
-    const price = sellPrice(stack.item, stack.qty);
-    this.buyback.unshift({ item: stack.item, qty: stack.qty, price });
-    if (this.buyback.length > BUYBACK_MAX) this.buyback.pop();
-    this.publishVendor();
+    // The server applies the sale and re-replicates the bag + buyback list (ServerInventory frame,
+    // proto v19); applyServerInventory mirrors it and refreshes the shop UI. No optimistic mutation
+    // here — that dual-tracking is exactly what desynced on a stale index / double-click.
   }
 
   /** Open the merchant's shop: build its stock from settlement tier + its seed. */
@@ -511,8 +507,8 @@ export class CombatDirector {
       return;
     }
     this.netSink?.sendInvAction({ action: 'buyback', index });
-    this.buyback.splice(index, 1); // mirror the server's buyback removal for the UI
-    this.publishVendor();
+    // The server removes the entry + adds the item, then re-replicates; applyServerInventory
+    // mirrors the updated bag/gold/buyback and refreshes the shop UI. No optimistic mutation.
   }
 
   /** Close the shop (clears the vendor UI slice). */
@@ -1088,9 +1084,18 @@ export class CombatDirector {
     if (frame === undefined || frame === null) return;
     this.inventory = frame.bag.map((s) => ({ item: s.item, qty: s.qty }));
     this.gold = frame.gold;
+    // The buyback list is a pure mirror of the server's now (proto v19) — re-derive each price from
+    // the deterministic sellPrice, so a stale/double-clicked sale can't desync the shop UI.
+    this.buyback = frame.buyback.map((b) => ({
+      item: b.item,
+      qty: b.qty,
+      price: sellPrice(b.item, b.qty),
+    }));
     const equipChanged = !sameEquipment(this.equipment, frame.equipment);
     this.equipment = { ...frame.equipment };
     if (equipChanged) this.rebuildPlayer();
+    // If a vendor window is open, refresh it so the mirrored buyback list is reflected immediately.
+    if (this.activeVendor) this.publishVendor();
     this.bagMutationHook?.();
   }
 

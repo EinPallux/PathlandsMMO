@@ -10,6 +10,40 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 33 — Inventory-flip hardening: adversarial-review fixes (2026-07-07)
+
+Folds the flip's (Part 32) adversarial review into fixes. Closes a disconnect data-loss/dupe race, a
+reconnect reward-loss, a buyback UI desync, silent reward/loot loss on a full bag, and a bag-cap DoS.
+
+#### Fixed
+
+- **Disconnect persisted a null inventory + stale XP (data loss + item dupe).** `onClose` fired
+  `persistPosition` fire-and-forget, then synchronously removed the player from the combat + inventory
+  maps — so the async write read `null` after its first `await` and silently skipped the XP/inventory
+  save. `persistPosition` now **snapshots** position + progression + bag/gold/equipment *before* the
+  first `await` and writes from that snapshot.
+- **Trusted claims lost during a reconnect (quest reward / craft / travel fee vanished).**
+  `sendClaimReward` / `sendSpendGold` were dropped silently while `you === null` (the reconnect
+  window). They're now **buffered** (capped, in order) and **flushed on the next welcome** — safe
+  from double-apply because the client bag is a pure server mirror, so an un-sent claim is absent
+  from the seed the server restores.
+- **Vendor buyback list desynced from the server** on a stale index / double-click (the client kept
+  its own parallel copy). The **buyback list is now replicated on `ServerInventory`** (item + qty per
+  remembered sale, proto **v19**); the client re-derives each price from the deterministic
+  `sellPrice` and its shop UI is a pure mirror — the optimistic local `buyback` mutation is gone.
+- **A full bag silently ate quest-reward / kill loot** (`addStack` returned false and the item was
+  dropped). A new server **`giveOrDrop`** spills the over-cap stack to the ground at the player's feet
+  instead. The ground **pickup** path likewise re-drops rather than vanish an item if a stale client
+  gate raced a full bag (and only cues the pickup floater when the stack actually fit).
+- **Unbounded `bagBonus` in the hello could inflate the bag cap into a memory DoS.** `Inventories.seed`
+  now **clamps** it to `MAX_BAG_BONUS` (96) — comfortably above any legitimate Deep-Pockets value.
+
+#### Tests (+3)
+
+- Model: a hostile `bagBonus` is clamped. Over the wire: a sell **replicates the buyback list**, and
+  an over-cap `claimReward` **spills to the ground** while the bag stays full. Codec: the `inventory`
+  frame round-trips its buyback list and rejects a missing/malformed one; protocol asserted at **19**.
+
 ### Part 32 — Inventory authority flip, Stage 1b·B (2026-07-07)
 
 The economy migration's flip: the **client now renders the server's inventory as authoritative** and

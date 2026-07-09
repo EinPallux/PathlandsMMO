@@ -39,9 +39,12 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  *     equipment) as the economy migration begins moving inventory authority server-side;
  * v18 completed the inventory flip: the client renders the server's inventory + drives it via
  *     ClientInvAction / ClientClaimReward / ClientSpendGold (the last two trusted bridges for the
- *     not-yet-migrated quest-reward / travel / mount sources), and ClientHello carries bagBonus.
+ *     not-yet-migrated quest-reward / travel / mount sources), and ClientHello carries bagBonus;
+ * v19 replicated the vendor buyback list on ServerInventory (item + qty per remembered sale) so the
+ *     client's shop UI is a pure mirror of the server's buyback state instead of a parallel copy that
+ *     desynced on a stale/double-clicked sale.
  */
-export const NET_PROTOCOL_VERSION = 18;
+export const NET_PROTOCOL_VERSION = 19;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -639,6 +642,9 @@ export interface ServerInventory {
   gold: number;
   /** Equip slot id → the worn item (a full ItemDef, same shape as the save's equipment map). */
   equipment: Record<string, ItemDef>;
+  /** The vendor buyback list (most-recent-sold first). The client re-derives each price from the
+   *  deterministic `sellPrice(item, qty)`, so only item + qty travel — the shop UI mirrors this. */
+  buyback: NetItemStack[];
 }
 
 export type ServerMessage =
@@ -1239,9 +1245,17 @@ export function decodeServer(raw: string): ServerMessage | null {
     case 'inventory': {
       if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.gold)) return null;
       if (!Array.isArray(o.bag) || !o.bag.every(isNetItemStack)) return null;
+      if (!Array.isArray(o.buyback) || !o.buyback.every(isNetItemStack)) return null;
       const equipment = decodeEquipment(o.equipment);
       if (equipment === null) return null;
-      return { t: 'inventory', tick: o.tick, bag: o.bag, gold: o.gold, equipment };
+      return {
+        t: 'inventory',
+        tick: o.tick,
+        bag: o.bag,
+        gold: o.gold,
+        equipment,
+        buyback: o.buyback,
+      };
     }
     default:
       return null;

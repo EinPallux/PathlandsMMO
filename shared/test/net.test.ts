@@ -20,8 +20,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 18 (…/ ground items / inventory / inventory-action flip)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(18);
+  it('is at protocol version 19 (…/ inventory-action flip / buyback replication)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(19);
   });
 
   it('round-trips the inventory-action + trusted-bridge frames + hello bagBonus', () => {
@@ -49,7 +49,7 @@ describe('net protocol codec', () => {
     // Hello carries the optional bagBonus.
     const hello: ClientMessage = {
       t: 'hello',
-      protocol: 18,
+      protocol: 19,
       name: 'A',
       cls: 'warrior',
       level: 5,
@@ -58,7 +58,7 @@ describe('net protocol codec', () => {
     expect(decodeClient(encodeClient(hello))).toEqual(hello);
   });
 
-  it('round-trips the server-authoritative inventory frame', () => {
+  it('round-trips the server-authoritative inventory frame (incl. buyback)', () => {
     const item = { id: 'ring_of_x', name: 'Ring of X' } as unknown as never;
     const inv: ServerMessage = {
       t: 'inventory',
@@ -66,10 +66,18 @@ describe('net protocol codec', () => {
       bag: [{ item, qty: 1 }],
       gold: 250,
       equipment: { ring1: item },
+      buyback: [{ item, qty: 2 }],
     };
     expect(decodeServer(encodeServer(inv))).toEqual(inv);
-    // Empty bag + no equipment round-trips.
-    const empty: ServerMessage = { t: 'inventory', tick: 0, bag: [], gold: 0, equipment: {} };
+    // Empty bag + no equipment + empty buyback round-trips.
+    const empty: ServerMessage = {
+      t: 'inventory',
+      tick: 0,
+      bag: [],
+      gold: 0,
+      equipment: {},
+      buyback: [],
+    };
     expect(decodeServer(encodeServer(empty))).toEqual(empty);
     // A malformed equipment value (missing name) sinks the frame; so does a non-number gold.
     expect(
@@ -80,12 +88,36 @@ describe('net protocol codec', () => {
           bag: [],
           gold: 0,
           equipment: { ring1: { id: 'x' } },
+          buyback: [],
         }),
       ),
     ).toBeNull();
     expect(
       decodeServer(
-        JSON.stringify({ t: 'inventory', tick: 1, bag: [], gold: 'lots', equipment: {} }),
+        JSON.stringify({
+          t: 'inventory',
+          tick: 1,
+          bag: [],
+          gold: 'lots',
+          equipment: {},
+          buyback: [],
+        }),
+      ),
+    ).toBeNull();
+    // A missing / malformed buyback list sinks the frame (it's a required, validated field now).
+    expect(
+      decodeServer(JSON.stringify({ t: 'inventory', tick: 1, bag: [], gold: 0, equipment: {} })),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'inventory',
+          tick: 1,
+          bag: [],
+          gold: 0,
+          equipment: {},
+          buyback: [{ item: { id: 'x' }, qty: 1 }],
+        }),
       ),
     ).toBeNull();
   });

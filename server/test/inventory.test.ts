@@ -126,6 +126,21 @@ describe('Inventories model', () => {
     expect(inv.get('p1')!.gold).toBe(0);
     expect(inv.get('p1')!.bag[0]!.item.id).toBe('blade');
   });
+
+  it('clamps a hostile bagBonus so the bag cap can’t be inflated into a memory DoS', () => {
+    const inv = new Inventories();
+    inv.seed('p1', {
+      cls: 'warrior',
+      level: 1,
+      inventory: [],
+      gold: 0,
+      equipment: {},
+      bagBonus: 1e9, // a forged hello value
+    });
+    // Clamped to BASE + MAX_BAG_BONUS (96), not the billion the client asked for.
+    expect(inv.bagCap('p1')).toBe(BAG_SIZE + 96);
+    expect(inv.get('p1')!.bagBonus).toBe(96);
+  });
 });
 
 describe('inventory — over the wire', () => {
@@ -214,6 +229,66 @@ describe('inventory — over the wire', () => {
     c.invAction('unequip', { slot: 'ring1' });
     await until(() => (c.lastInventory?.bag.length ?? 0) === 1, 3000, 'ring unequipped to bag');
     expect(c.lastInventory!.equipment.ring1).toBeUndefined();
+
+    c.close();
+  });
+
+  it('replicates the buyback list on the inventory frame after a sell', async () => {
+    const res = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'seller@example.com', password: 'longenough' }),
+    });
+    const token = ((await res.json()) as { token: string }).token;
+    const acct = (await store.getByEmail('seller@example.com'))!;
+    const y = createServerWorld().surfaceSpawnY(120, 120);
+    const ch = createCharacter('c3', 'Seller', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    const relic = mkItem({ id: 'relic', name: 'Relic', value: 80 });
+    ch.inventory = [{ item: relic, qty: 1 }];
+    await store.putCharacter(acct.id, ch);
+
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Seller', 'warrior', 5, token);
+    await until(() => (c.lastInventory?.bag.length ?? 0) === 1, 3000, 'seeded bag replicated');
+    expect(c.lastInventory!.buyback).toHaveLength(0);
+
+    // Sell it: the server empties the bag AND remembers it in the buyback list, replicated to us.
+    c.invAction('sell', { index: 0 });
+    await until(() => (c.lastInventory?.buyback.length ?? 0) === 1, 3000, 'buyback replicated');
+    expect(c.lastInventory!.bag).toHaveLength(0);
+    expect(c.lastInventory!.buyback[0]!.item.id).toBe('relic');
+
+    c.close();
+  });
+
+  it('spills an over-cap reward to the ground (giveOrDrop) instead of eating it', async () => {
+    const res = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'packrat@example.com', password: 'longenough' }),
+    });
+    const token = ((await res.json()) as { token: string }).token;
+    const acct = (await store.getByEmail('packrat@example.com'))!;
+    const y = createServerWorld().surfaceSpawnY(120, 120);
+    const ch = createCharacter('c4', 'Packrat', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    // Fill the bag to the base cap so the next grant can't fit.
+    ch.inventory = Array.from({ length: BAG_SIZE }, (_v, i) => ({
+      item: mkItem({ id: `f${i}` }),
+      qty: 1,
+    }));
+    await store.putCharacter(acct.id, ch);
+
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Packrat', 'warrior', 5, token);
+    await until(() => (c.lastInventory?.bag.length ?? 0) === BAG_SIZE, 3000, 'full bag replicated');
+
+    // Claim a reward that can't fit — it must land on the ground, not vanish, and the bag stays full.
+    c.claimReward(0, [{ item: mkItem({ id: 'prize', name: 'Prize' }), qty: 1 }]);
+    await until(() => c.worldItems.size >= 1, 3000, 'over-cap reward dropped to the ground');
+    expect([...c.worldItems.values()].some((w) => w.item.id === 'prize')).toBe(true);
+    expect(c.lastInventory!.bag).toHaveLength(BAG_SIZE); // unchanged — nothing was eaten
 
     c.close();
   });

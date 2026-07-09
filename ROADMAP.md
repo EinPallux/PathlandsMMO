@@ -25,6 +25,11 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >   travel-fee / mount / crafted-gear are trusted-bridged (`ClientClaimReward` / `ClientSpendGold`)
 >   until quests (#138) / professions (#139) add server validation; inventory persists server-side.
 >   Proto **v18**. **427 tests green.**
+> - **1b·B hardening (Part 33, done):** folded the flip's adversarial review — fixed a disconnect
+>   null-persist data-loss/dupe race, reconnect loss of trusted claims (now buffered + flushed on
+>   welcome), a vendor-buyback UI desync (**buyback replicated on `ServerInventory`**, proto **v19**),
+>   silent full-bag loss of reward/kill loot (**`giveOrDrop`** spills to the ground), and a `bagBonus`
+>   memory-DoS (clamped). **430 tests green.**
 > - **Next:** server-authoritative quests (#138) — retires the claimReward trust; then professions (#139).
 >
 > ---

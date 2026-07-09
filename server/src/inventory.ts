@@ -23,6 +23,11 @@ import {
 /** How many buyback slots a vendor remembers per player (mirrors the client). */
 const BUYBACK_MAX = 12;
 
+/** Hard ceiling on the client-supplied Deep-Pockets bonus. The real perk grants a handful of slots;
+ *  this clamp keeps a hostile `bagBonus` in the hello from inflating the bag cap into a memory DoS
+ *  (an attacker could otherwise hold billions of stacks). Comfortably above any legitimate value. */
+const MAX_BAG_BONUS = 96;
+
 /** One remembered sale, re-purchasable at the price it sold for. */
 export interface BuybackEntry {
   item: ItemDef;
@@ -74,7 +79,7 @@ export class Inventories {
       gold: Math.max(0, Math.floor(seed.gold)),
       equipment: { ...seed.equipment },
       buyback: [],
-      bagBonus: Math.max(0, Math.floor(seed.bagBonus ?? 0)),
+      bagBonus: Math.min(MAX_BAG_BONUS, Math.max(0, Math.floor(seed.bagBonus ?? 0))),
       dirty: true, // replicate the seeded state on the first broadcast
     });
   }

@@ -106,9 +106,13 @@ export class TestClient {
   readonly worldItems = new Map<string, NetWorldItem>();
   /** Item stacks from the most recent pickup grant, appended in arrival order. */
   readonly grants: NetItemStack[] = [];
-  /** Latest server-authoritative inventory (bag / gold / equipment), or null before the first. */
-  lastInventory: { bag: NetItemStack[]; gold: number; equipment: Record<string, unknown> } | null =
-    null;
+  /** Latest server-authoritative inventory (bag / gold / equipment / buyback), or null before it. */
+  lastInventory: {
+    bag: NetItemStack[];
+    gold: number;
+    equipment: Record<string, unknown>;
+    buyback: NetItemStack[];
+  } | null = null;
   deltaCount = 0;
   private seq = 0;
 
@@ -188,7 +192,12 @@ export class TestClient {
         for (const s of msg.items) this.grants.push(s);
         break;
       case 'inventory':
-        this.lastInventory = { bag: msg.bag, gold: msg.gold, equipment: msg.equipment };
+        this.lastInventory = {
+          bag: msg.bag,
+          gold: msg.gold,
+          equipment: msg.equipment,
+          buyback: msg.buyback,
+        };
         break;
       default:
         break;
@@ -239,6 +248,14 @@ export class TestClient {
     opts: { index?: number; slot?: string; seed?: number; tier?: number } = {},
   ): void {
     this.send({ t: 'inv', action, ...opts });
+  }
+  /** Send a trusted reward claim (quest turn-in / crafted item) — the server grants it. */
+  claimReward(gold: number, items: NetItemStack[]): void {
+    this.send({ t: 'claimReward', gold, items });
+  }
+  /** Send a trusted gold debit (travel fee / mount) — spent server-side if affordable. */
+  spendGold(amount: number): void {
+    this.send({ t: 'spendGold', amount });
   }
   /** Send a GM action (target by name). */
   gmAction(
