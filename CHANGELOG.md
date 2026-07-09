@@ -47,6 +47,12 @@ it until professions migrate, #139).
 - **Verification**: typecheck + lint + build + the server-side wire/persistence tests are green; the
   client quest UI itself is not automatically testable (no headless browser) — **playtest the quest
   flow before relying on it.**
+- **Review fold**: two adversarial reviews confirmed the flip sound (XP counted once, side-effects
+  fire once, persistence race safe, dialogue re-clicks are server no-ops). Folded the cosmetic /
+  defensive items: restored the **reward item-name floater** on turn-in (the item is server-granted,
+  so the client floats its spec label + the chosen one, tracked from the turn-in intent); re-arm the
+  quest **baseline on reconnect** (`resetBaseline`, so a post-reconnect frame replays no toasts /
+  side effects); and corrected the stale `adoptServerXp` comment (it adopts kill **and** quest XP now).
 
 #### Tests (+1, 445 green)
 

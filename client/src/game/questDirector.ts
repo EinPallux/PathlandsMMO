@@ -79,8 +79,12 @@ export class QuestDirector {
   private log: QuestLogState;
   private readonly combat: CombatDirector;
   private netSink: QuestNetSink | null = null;
-  /** False until the first authoritative frame lands, so the login baseline fires no toasts. */
+  /** False until the first authoritative frame lands, so the login (and post-reconnect) baseline
+   *  fires no toasts / side effects — reset on disconnect (`resetBaseline`). */
   private seeded = false;
+  /** quest id → the reward choice the player picked at turn-in, so the item-name floater on the
+   *  next authoritative frame (which detects the turn-in) can show the chosen item, not just item 0. */
+  private readonly pendingChoice = new Map<string, number>();
   private toastId = 1;
   private exploreTimer = 0;
   private lastEx = 0;
@@ -174,12 +178,21 @@ export class QuestDirector {
       }
     }
     // Newly turned-in quests → the Waystone unlock + Deed progress the server doesn't own (the gold /
-    // items / XP were granted server-side and arrive via the inventory + combat-self frames).
+    // items / XP were granted server-side and arrive via the inventory + combat-self frames). NOTE:
+    // repeatable quests never enter `turnedIn` (they're only removed from `active`), so these side
+    // effects would be missed for them — inert today (no authored quest is repeatable); revisit when
+    // the first one lands (diff active-removal, or a server turn-in event).
     for (const id of next.turnedIn) {
       if (prevTurned.has(id)) continue;
       const def = questById(id);
       if (!def) continue;
       this.combat.applyQuestRewardCosmetic(def.reward);
+      // Float the reward item names (the items themselves are server-granted via the inventory frame).
+      const idx = this.pendingChoice.get(id) ?? 0;
+      this.pendingChoice.delete(id);
+      for (const s of def.reward.items ?? []) this.combat.floatRewardLine(specLabel(s));
+      const choice = def.reward.choices?.[idx];
+      if (choice) this.combat.floatRewardLine(specLabel(choice));
       this.onQuestTurnedIn?.();
       this.toast(`Turned in: ${def.name}`, 'complete');
     }
@@ -225,8 +238,17 @@ export class QuestDirector {
 
   turnIn(id: string, choiceIndex: number): void {
     // The reward (gold / items / XP) is computed + granted server-side; the Waystone unlock + Deed
-    // progress fire from `diffNotices` when the quest lands in `turnedIn` on the next frame.
+    // progress + item-name floaters fire from `diffNotices` when the quest lands in `turnedIn` on the
+    // next frame. Remember the picked choice so that floater shows the item the player actually chose.
+    this.pendingChoice.set(id, choiceIndex);
     this.netSink?.sendQuestAction('turnIn', id, choiceIndex);
+  }
+
+  /** Re-arm the baseline so the next authoritative frame (a fresh login or a reconnect) fires no
+   *  toasts / turn-in side effects for state that predates it. Called on disconnect by the game. */
+  resetBaseline(): void {
+    this.seeded = false;
+    this.pendingChoice.clear();
   }
 
   abandon(id: string): void {

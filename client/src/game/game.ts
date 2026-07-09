@@ -275,8 +275,12 @@ export class Game {
         bagBonus: perkMagnitude(this.account.perks, 'bagSlots'),
         ...(serverToken !== null ? { token: serverToken } : {}),
       },
-      onStatus: (st) =>
-        useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+      onStatus: (st) => {
+        // On a drop, re-arm the quest baseline so the post-reconnect log frame is treated as a fresh
+        // baseline (no replayed toasts / turn-in side effects) rather than diffed against stale state.
+        if (st.phase === 'reconnecting') this.quests.resetBaseline();
+        useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs });
+      },
       onChat: (line) =>
         useStore.getState().pushChat({
           from: line.from,

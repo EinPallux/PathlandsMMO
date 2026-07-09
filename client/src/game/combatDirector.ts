@@ -725,6 +725,12 @@ export class CombatDirector {
     if (reward.waystoneUnlock) this.discovered.add(reward.waystoneUnlock);
   }
 
+  /** Float a quest-reward line (the item's spec label — the item itself is server-granted + arrives
+   *  on the inventory frame; this is the on-screen "you received…" cue the old client-side grant had). */
+  floatRewardLine(text: string): void {
+    this.pushFloater(this.player, text, 'heal');
+  }
+
   /** Generate a reward item for the player's class (floats its name; caller bridges it to the bag). */
   private generateRewardItem(s: GeneratedItemSpec): ItemStackSave {
     const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
@@ -955,12 +961,13 @@ export class CombatDirector {
   }
 
   /**
-   * Adopt server-authoritative kill XP without dropping our client-side quest / Waystone XP.
+   * Adopt server-authoritative XP without dropping our client-side Waystone XP.
    *
-   * The server only awards + replicates *kill* XP; our `totalXp` is the full total (kills +
-   * quests + Waystone attunements). So we adopt the server's value as a **delta** off the last
-   * frame — the increment since the previous frame is exactly the kill XP the server just
-   * granted — and add that to our (larger) total. The first frame of a session only sets the
+   * The server awards + replicates kill AND quest XP now (quest migration #138); our `totalXp` is the
+   * full total (server kill + quest XP, plus client-side Waystone attunements). So we adopt the
+   * server's value as a **delta** off the last frame — the increment since the previous frame is
+   * exactly the XP the server just granted — and add that to our (larger) total. The first frame of a
+   * session only sets the
    * baseline (silently taking the server's stored total if it happens to lead ours — kills a
    * crash lost before our last autosave — but without replaying a level-up presentation for
    * prior-session XP).
