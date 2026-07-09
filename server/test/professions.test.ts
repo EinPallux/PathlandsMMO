@@ -166,6 +166,43 @@ describe('Professions model', () => {
     p.seed('p1', 'p1', { professions: { mining: 999 } });
     expect(p.get('p1')!.skills.mining).toBe(100);
   });
+
+  it('sanitizes a forged save blob: unknown ids dropped, counts clamped, learned filtered', () => {
+    const p = new Professions();
+    p.seed('p1', 'p1', {
+      materials: { copperOre: 1e9, notARealMaterial: 5 },
+      consumables: { healthPotion: 1e12, fakeConsumable: 3 },
+      // A real discovery id (kept), a known-by-default recipe id (dropped), garbage (dropped).
+      learnedRecipes: ['r_crystaliumBlade', 'r_copperBar', 'notARecipe'],
+    });
+    const s = p.get('p1')!;
+    expect(s.materials.copperOre).toBe(100_000); // clamped, not 1e9-worth of infinite crafts
+    expect(s.materials.notARealMaterial).toBeUndefined(); // unknown id dropped
+    expect(s.consumables.healthPotion).toBe(100_000);
+    expect(s.consumables.fakeConsumable).toBeUndefined();
+    expect(s.learned).toEqual(['r_crystaliumBlade']); // only the real discovery recipe survives
+  });
+
+  it('does not advance the craft RNG stream on a failed craft', () => {
+    // Both players key 'k' and craft the SAME draw-bearing recipe (master potion at skill 85 rolls a
+    // green skill-up + a discovery); one first spams unaffordable crafts. With seq advancing only on
+    // success, both land on stream position 0 for that craft → byte-identical result. If a failed
+    // craft advanced seq, the spammer would land on a later position and diverge.
+    const blob = { professions: { alchemy: 85 }, materials: { duskpetal: 2 } };
+    const clean = new Professions();
+    clean.seed('k', 'k', { ...blob, materials: { duskpetal: 2 } });
+    clean.craftRecipe('k', 'r_masterHealthPotion');
+
+    const spammed = new Professions();
+    spammed.seed('k', 'k', { ...blob, materials: { duskpetal: 2 } });
+    for (let i = 0; i < 5; i++) expect(spammed.craftRecipe('k', 'r_copperBar').kind).toBe('none'); // no copperOre
+    spammed.craftRecipe('k', 'r_masterHealthPotion');
+
+    const a = clean.get('k')!;
+    const b = spammed.get('k')!;
+    expect(b.skills.alchemy).toBe(a.skills.alchemy); // same green skill-up outcome
+    expect(b.learned).toEqual(a.learned); // same discovery outcome
+  });
 });
 
 describe('professions — over the wire', () => {

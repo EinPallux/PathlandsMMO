@@ -223,6 +223,17 @@ export class ServerCombat {
     e.yaw = yaw;
   }
 
+  /**
+   * Draw an unpredictable server-held nonce from the world combat RNG — the same evolving, seeded
+   * stream loot rolls use, whose state depends on ALL prior server activity, so a client can't
+   * predict it (unlike a `makeRng(WORLD_SEED, …, seq)` stream keyed only on public + client-known
+   * values). Used to seed the crafted-gear roll (profession migration #139) so gear stats can't be
+   * pre-computed and grinded. No `Math.random` — it's the seeded shared RNG.
+   */
+  rollNonce(): number {
+    return this.state.rng.int(0, 0x7fffffff);
+  }
+
   /** Apply a validated combat intent (cast / target / auto / release) for a player. */
   applyPlayerIntent(id: string, intent: Intent): void {
     if (intent.type === 'Move') return; // movement is the ServerSim's authority, not combat's

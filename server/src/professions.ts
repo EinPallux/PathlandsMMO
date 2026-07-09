@@ -15,9 +15,11 @@ import {
   canGather,
   consumableById,
   craft,
+  DISCOVERY_RECIPES,
   gatherNode,
   initialSkills,
   makeRng,
+  materialById,
   recipeById,
   rollFish,
   WORLD_SEED,
@@ -27,12 +29,22 @@ import {
   type Profession,
 } from '@pathlands/shared';
 
-/** Defensive bounds on an uploaded (potentially crafted) profession blob — a forged save can't seed
- *  an oversized stash / recipe set (the id-space of real materials + recipes is tiny). */
+/** Defensive bounds on an uploaded (potentially crafted) profession blob — the character save is
+ *  client-uploaded and NOT deeply validated at the HTTP boundary, so a forged save must not be able
+ *  to seed unknown / oversized materials, a discovery recipe the player never learned, or an over-cap
+ *  skill. The id-space of real materials / consumables / recipes is tiny, so unknown ids are dropped
+ *  and counts are clamped. */
 const MAX_STASH_KINDS = 128;
 const MAX_LEARNED = 128;
+/** Per-material / per-consumable count cap — comfortably above any legitimate stash, well below a
+ *  quantity that would matter economically (a forged `1e9` can't seed effectively-infinite crafts). */
+const MAX_STASH_QTY = 100_000;
 const SKILL_MIN = 1;
 const SKILL_MAX = 100;
+
+/** The discovery-recipe ids a forged `learnedRecipes` may legitimately contain (everything else is
+ *  known-by-default and needs no unlock, so it's meaningless in `learned`). */
+const DISCOVERY_IDS = new Set(DISCOVERY_RECIPES.map((r) => r.id));
 
 /** One gather-node candidate near a player, resolved by the gateway from the deterministic worldgen
  *  scatter + the player's authoritative position. The gateway sorts these nearest-first; the model
@@ -46,9 +58,10 @@ export interface GatherCandidate {
 
 /** The outcome of a craft: nothing (couldn't craft), a stash output already banked (material /
  *  consumable), or a gear spec the gateway forges + grants server-side (retiring the old trusted
- *  `claimReward` bridge). `seq` is the RNG stream position for a deterministic, unique gear roll. */
+ *  `claimReward` bridge). The gateway rolls the gear on a server-held nonce (not a client-predictable
+ *  seed), so no stream position rides here. */
 export type CraftOutcome =
-  { kind: 'none' } | { kind: 'stash' } | { kind: 'gear'; spec: GeneratedItemSpec; seq: number };
+  { kind: 'none' } | { kind: 'stash' } | { kind: 'gear'; spec: GeneratedItemSpec };
 
 interface PlayerProf {
   skills: Record<string, number>;
@@ -90,9 +103,15 @@ export class Professions {
   ): void {
     this.map.set(id, {
       skills: cloneSkills(blob?.professions),
-      materials: cloneStash(blob?.materials),
-      consumables: cloneStash(blob?.consumables),
-      learned: new Set((blob?.learnedRecipes ?? []).slice(0, MAX_LEARNED).map((s) => String(s))),
+      materials: cloneStash(blob?.materials, (mid) => materialById(mid) !== undefined),
+      consumables: cloneStash(blob?.consumables, (cid) => consumableById(cid) !== undefined),
+      // Only real discovery-recipe ids may be pre-learned; a forged list can't unlock capstone gear.
+      learned: new Set(
+        (blob?.learnedRecipes ?? [])
+          .slice(0, MAX_LEARNED)
+          .map((s) => String(s))
+          .filter((s) => DISCOVERY_IDS.has(s)),
+      ),
       depleted: new Map(),
       key,
       seq: 0,
@@ -211,9 +230,12 @@ export class Professions {
     const recipe = recipeById(recipeId);
     if (recipe === undefined) return { kind: 'none' };
     const skill = p.skills[recipe.profession] ?? SKILL_MIN;
-    const rng = makeRng(WORLD_SEED, 'craft', p.key, recipeId, String(p.seq++));
+    // Peek the stream position for the craft roll; only ADVANCE it on a successful craft, so a hostile
+    // client can't walk the RNG stream for free with unaffordable / under-skilled craft spam.
+    const rng = makeRng(WORLD_SEED, 'craft', p.key, recipeId, String(p.seq));
     const res = craft(rng, recipe, p.materials, skill, p.learned);
     if (res === null) return { kind: 'none' };
+    p.seq += 1;
     p.skills[recipe.profession] = res.newSkill;
     if (res.discovered !== undefined) p.learned.add(res.discovered);
     const notice: NetProfNotice = { kind: 'craft', recipe: recipeId };
@@ -229,13 +251,10 @@ export class Professions {
       p.consumables[out.id] = (p.consumables[out.id] ?? 0) + out.qty;
       return { kind: 'stash' };
     }
-    // Gear: the gateway forges it for the player's class on its own RNG stream (keyed on `seq`) and
-    // grants it into the authoritative bag (overflow-safe). The inputs are already consumed above.
-    return {
-      kind: 'gear',
-      spec: { slot: out.slot, rarity: out.rarity, reqLevel: out.reqLevel },
-      seq: p.seq++,
-    };
+    // Gear: the gateway forges it for the player's class on a SERVER-HELD nonce (not a client-
+    // predictable seed) and grants it into the authoritative bag (overflow-safe). The inputs are
+    // already consumed above.
+    return { kind: 'gear', spec: { slot: out.slot, rarity: out.rarity, reqLevel: out.reqLevel } };
   }
 
   /**
@@ -310,15 +329,21 @@ function cloneSkills(src: Record<string, number> | null | undefined): Record<str
   return out;
 }
 
-/** Clone + bound a stash (material / consumable) map: positive integer counts, capped kind count. */
-function cloneStash(src: Record<string, number> | null | undefined): Record<string, number> {
+/** Clone + bound a stash (material / consumable) map: drop unknown ids (`valid`), keep positive
+ *  integer counts clamped to `MAX_STASH_QTY`, and cap the number of kinds — so a forged save can't
+ *  seed unknown or effectively-infinite items into the server-authoritative stash. */
+function cloneStash(
+  src: Record<string, number> | null | undefined,
+  valid: (id: string) => boolean,
+): Record<string, number> {
   const out: Record<string, number> = {};
   if (!src) return out;
   let kinds = 0;
   for (const [k, v] of Object.entries(src)) {
     if (kinds >= MAX_STASH_KINDS) break;
+    if (!valid(k)) continue; // unknown material / consumable id — drop it
     if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
-      out[k] = Math.floor(v);
+      out[k] = Math.min(MAX_STASH_QTY, Math.floor(v));
       kinds += 1;
     }
   }

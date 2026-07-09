@@ -95,6 +95,10 @@ export class GatherDirector {
   private clock = 0;
   private channel: Channel | null = null;
   private actionSeq = 1;
+  /** Monotonic id source for gather/craft toasts (negative, to stay distinct from quest toasts).
+   *  Separate from `actionSeq` because the gather/craft RNG that used to bump it moved server-side —
+   *  without its own counter consecutive toasts would collide on one React key. */
+  private toastSeq = 1;
   private nearby: { label: string; kind: string } | null = null;
 
   /** Meta hooks (set by the game): a craft finished / a gathering skill increased. */
@@ -397,10 +401,13 @@ export class GatherDirector {
   }
 
   private toast(text: string): void {
-    // Reuse the quest toast channel for a light gathering notice.
+    // Reuse the quest toast channel for a light gathering notice. A dedicated monotonic id (negative,
+    // to stay distinct from the quest toasts' positive ids) — consecutive gather toasts must not
+    // collide on one React key (they would before, now that the gather RNG that bumped `actionSeq`
+    // moved server-side).
     const store = useStore.getState();
     store.setQuestToasts(
-      [...store.questToasts, { id: -this.actionSeq, text, kind: 'progress' as const }].slice(-4),
+      [...store.questToasts, { id: -this.toastSeq++, text, kind: 'progress' as const }].slice(-4),
     );
   }
 

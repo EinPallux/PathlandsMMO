@@ -58,11 +58,31 @@ server owns the yields, the skill-ups, node depletion, and the material / consum
   learnedRecipes back to the stored character (snapshotted before the first `await`, like the quest /
   inventory state), replacing the client-owned blob.
 
-#### Tests (+16, 465 green)
+#### Adversarial review (folded)
+
+- **Forged-save hardening (HIGH).** The uploaded character blob isn't deeply validated at the HTTP
+  boundary, so the profession seed now sanitizes it: unknown material / consumable ids are **dropped**,
+  counts **clamped** (`MAX_STASH_QTY`), and `learnedRecipes` **filtered to real discovery-recipe ids** —
+  a forged save can't seed effectively-infinite materials, an unlearned capstone recipe, or unknown
+  items into the server-authoritative stash. (Skill clamping to 1–100 was already in.)
+- **Craft RNG stream (MEDIUM).** A **failed** craft no longer advances the RNG `seq` (it was bumped
+  before the affordability check), so a client can't walk the stream for free with unaffordable-craft
+  spam. And the crafted-gear roll is now seeded from an **unpredictable server-held nonce** (drawn from
+  the evolving combat RNG) instead of a `WORLD_SEED` + client-known-id stream — gear stats can't be
+  pre-computed and grinded for best-in-slot.
+- **Gather CPU edge-gate (LOW).** A per-connection wall-clock floor (`GATHER_EDGE_MIN_INTERVAL_MS`)
+  bounds the 3×3-chunk node scatter / water scan before the model's (tick-based) cadence applies, so a
+  gather-frame flood can't burn that work.
+- **Gather-toast ids (client).** `GatherDirector` toasts now use a dedicated monotonic counter — the
+  gather RNG that used to bump `actionSeq` (and give each toast a distinct React key) moved server-side,
+  so consecutive gather toasts would otherwise have collided on one key.
+
+#### Tests (+18, 467 green)
 
 - The `Professions` model in isolation: seed defaults + dirty tracking, gather yield / skill-up +
   per-player depletion + cadence gate + skill gating, fishing, crafting (stash + gear outputs, input
-  consumption, unaffordable-refusal), consumable use, and forged-skill clamping.
+  consumption, unaffordable-refusal), consumable use, forged-skill clamping, **forged-blob sanitizing**
+  (unknown ids dropped / counts clamped / learned filtered), and **no seq advance on a failed craft**.
 - Over the wire: a player gathers a real worldgen node from its authoritative position; a gather far
   from any node yields nothing; crafted **gear is forged server-side into the bag** (no `claimReward`,
   a `gen:` weapon, inputs consumed); a consumable is debited server-side. Plus the protocol round-trip

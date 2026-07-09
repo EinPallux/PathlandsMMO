@@ -104,6 +104,9 @@ interface Conn {
   mutedUntilMs: number;
   /** Wall-clock (ms) of this connection's last accepted item drop — an anti-spam-drop gate. */
   lastDropMs: number;
+  /** Wall-clock (ms) of this connection's last gather / fish action — an edge gate that bounds the
+   *  node-scatter / water-scan work BEFORE the model's authoritative (tick-based) cadence applies. */
+  lastGatherMs: number;
   /** Token bucket bounding ground-item SPILLS (a full-bag `giveOrDrop` from kill loot / reward
    *  claims). A burst covers a reconnect-flush of buffered rewards; the sustained refill caps how
    *  fast a client can flood the world with interest-replicated motes. Refilled lazily on use. */
@@ -151,6 +154,11 @@ const WHO_MIN_INTERVAL_MS = 2000;
 
 /** Minimum spacing between one connection's item drops (ms) — bounds spawned-entity spam. */
 const DROP_MIN_INTERVAL_MS = 250;
+
+/** Minimum spacing between one connection's gather / fish actions (ms) — an EDGE gate that bounds the
+ *  node-scatter / water-scan CPU before the model's authoritative (tick-based) cadence runs. Well
+ *  below the ~2–3 s gather channel + fishing minigame, so it never rejects legit play. */
+const GATHER_EDGE_MIN_INTERVAL_MS = 500;
 
 /** Ground-item SPILL throttle (a full-bag `giveOrDrop` from kill loot / reward claims). A token
  *  bucket: a burst of `SPILL_BUCKET_CAP` covers a reconnect-flush of buffered rewards + multi-item
@@ -405,6 +413,7 @@ export class GameServer {
       isGm: false,
       mutedUntilMs: 0,
       lastDropMs: 0,
+      lastGatherMs: 0,
       spillTokens: SPILL_BUCKET_CAP,
       spillRefillMs: 0,
     };
@@ -897,6 +906,13 @@ export class GameServer {
     if (conn.id === null) return;
     const player = this.sim.players.get(conn.id);
     if (player === undefined) return;
+    // Edge rate-gate the position-scanning actions (gather / fish) on wall-clock, BEFORE the scatter /
+    // water scan, so a flood of frames can't burn that CPU (the model still owns the real cadence).
+    if (msg.action === 'gather' || msg.action === 'fish') {
+      const now = Date.now();
+      if (now - conn.lastGatherMs < GATHER_EDGE_MIN_INTERVAL_MS) return;
+      conn.lastGatherMs = now;
+    }
     switch (msg.action) {
       case 'gather': {
         const candidates = this.nearbyGatherNodes(player.phys.x, player.phys.z);
@@ -922,11 +938,11 @@ export class GameServer {
         if (msg.id === undefined) return; // craft needs a recipe id
         const outcome = this.professions.craftRecipe(conn.id, msg.id);
         if (outcome.kind === 'gear') {
-          // Forge the gear for the player's class on a DETERMINISTIC per-(player, recipe, seq) stream
-          // (never a client seed) and credit it overflow-safe — the server owns the crafted item now.
+          // Forge the gear for the player's class on a SERVER-HELD nonce (the evolving combat RNG,
+          // unpredictable to the client — not a `WORLD_SEED` + client-known-id stream a client could
+          // pre-compute + grind for best-in-slot rolls) and credit it overflow-safe.
           const cls = this.inventories.get(conn.id)?.cls ?? CharacterClass.Warrior;
-          const key = conn.accountId ?? conn.id;
-          const rng = makeRng(WORLD_SEED, 'craftGear', key, msg.id, String(outcome.seq));
+          const rng = makeRng(WORLD_SEED, 'craftGear', String(this.combat.rollNonce()));
           this.giveOrDrop(conn, generateItem(rng, { ...outcome.spec, forClass: cls }), 1);
         }
         return;

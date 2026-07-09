@@ -23,10 +23,13 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > written only by the `ServerProfessions` frame; its `notices` drive toasts + the client-side deed /
 > gather-bounty hooks; the channel/fishing-minigame UX stays local), and the server **persists**
 > professions in `persistPosition`. The only trusted bridges left: `ClientClaimReward` (bounty rewards
-> only) and `ClientSpendGold` (travel / mount). **465 tests green** (+16: the `Professions` model +
-> over-the-wire gather / craft-to-bag / consumable-use + node-proximity + protocol round-trip).
-> Verified by typecheck / lint / build + the wire/persistence tests; the client profession UI itself
-> needs a **playtest** (no headless browser).
+> only) and `ClientSpendGold` (travel / mount). **467 tests green** (+18: the `Professions` model +
+> over-the-wire gather / craft-to-bag / consumable-use + node-proximity + protocol round-trip). The
+> adversarial review folded in: **forged-save hardening** (unknown/oversized materials + un-learned
+> recipes dropped/clamped on seed), a **craft RNG** fix (a failed craft no longer walks the stream; the
+> gear roll uses an unpredictable server nonce, not a client-computable seed), and a gather CPU
+> edge-gate. Verified by typecheck / lint / build + the wire/persistence tests; the client profession
+> UI itself needs a **playtest** (no headless browser).
 >
 > ---
 >
