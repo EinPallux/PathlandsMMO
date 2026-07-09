@@ -16,11 +16,19 @@ import {
 } from '@pathlands/shared';
 import { createServerWorld } from '../src/world.js';
 import { ServerSim } from '../src/sim.js';
+import { ServerCombat } from '../src/combat.js';
 import { GameServer } from '../src/gateway.js';
 import { Auth } from '../src/auth.js';
 import { MemoryStore } from '../src/store.js';
 import { Quests } from '../src/quests.js';
 import { TestClient, gatewayOptions, until } from './support.js';
+
+/** Step the combat sim until a Vale boar exists, then return it (mirrors combat.test.ts). */
+function spawnBoar(combat: ServerCombat): { id: string; x: number; y: number; z: number } {
+  for (let i = 0; i < 5; i++) combat.step();
+  const boar = combat.netEntities().find((e) => e.id.startsWith('valeBoars#'))!;
+  return { id: boar.id, x: boar.x, y: boar.y, z: boar.z };
+}
 
 describe('Quests model', () => {
   it('seeds a log and reports it dirty; markClean clears it', () => {
@@ -411,5 +419,65 @@ describe('quests — over the wire', () => {
       0,
     );
     far.close();
+  });
+});
+
+describe('party quest kill-credit (ServerCombat + Quests)', () => {
+  it('advances the quest log of every nearby party member on one kill (the gateway fan-out)', () => {
+    // Part 22 proved creditKill fans the enemy id to each eligible member's drainKills. This proves
+    // the quest-migration seam the gateway adds on top: draining a member's kills and applying each
+    // to that member's authoritative quest log advances it — so party questing credits everyone.
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.setPartyProvider(() => ['P', 'Q']);
+    combat.setLootRecipientProvider(() => 'P'); // loot to one; quest credit to all
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    combat.addPlayer('Q', 'Cleric', 'priest', 6, boar.x + 5, boar.y, boar.z, 0); // ~5 m — in range
+    const enemyId = combat.state.entities.get(boar.id)!.enemyId!;
+    expect(enemyId).toBe('thornbackBoar'); // the enemy q_boar_trouble targets
+
+    // Both members are on q_boar_trouble (kill thornbackBoar x5).
+    const quests = new Quests();
+    for (const id of ['P', 'Q']) {
+      quests.seed(id, createQuestLog());
+      quests.accept(id, 'q_boar_trouble', 6);
+    }
+
+    // P lands the killing blow.
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+
+    // Exactly what the gateway broadcast loop does per member: drain its kills → apply to its log.
+    for (const id of ['P', 'Q']) {
+      for (const kill of combat.drainKills(id)) quests.applyKill(id, kill.enemyId);
+    }
+
+    // BOTH the killer and the nearby ally advanced their kill objective.
+    expect(quests.get('P')!.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(1);
+    expect(quests.get('Q')!.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(1);
+  });
+
+  it('does not credit a party member out of range', () => {
+    const combat = new ServerCombat(createServerWorld());
+    const boar = spawnBoar(combat);
+    combat.setPartyProvider(() => ['P', 'Q']);
+    combat.addPlayer('P', 'Mage', 'mage', 6, boar.x, boar.y, boar.z, 0);
+    combat.addPlayer('Q', 'Cleric', 'priest', 6, boar.x + 200, boar.y, boar.z, 0); // far away
+    const quests = new Quests();
+    for (const id of ['P', 'Q']) {
+      quests.seed(id, createQuestLog());
+      quests.accept(id, 'q_boar_trouble', 6);
+    }
+    combat.state.entities.get(boar.id)!.hp = 1;
+    combat.applyPlayerIntent('P', { type: 'SetTarget', targetId: boar.id });
+    combat.applyPlayerIntent('P', { type: 'CastSkill', skillId: 'fireBlast', targetId: boar.id });
+    combat.step();
+    for (const id of ['P', 'Q']) {
+      for (const kill of combat.drainKills(id)) quests.applyKill(id, kill.enemyId);
+    }
+    expect(quests.get('P')!.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(1);
+    expect(quests.get('Q')!.active.find((p) => p.id === 'q_boar_trouble')!.counts[0]).toBe(0);
   });
 });
