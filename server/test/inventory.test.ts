@@ -292,4 +292,128 @@ describe('inventory — over the wire', () => {
 
     c.close();
   });
+
+  it('persists the authoritative inventory on disconnect (no null-persist data loss)', async () => {
+    const res = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'saver@example.com', password: 'longenough' }),
+    });
+    const token = ((await res.json()) as { token: string }).token;
+    const acct = (await store.getByEmail('saver@example.com'))!;
+    const y = createServerWorld().surfaceSpawnY(120, 120);
+    const ch = createCharacter('c5', 'Saver', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    ch.gold = 0;
+    ch.inventory = [{ item: mkItem({ id: 'relic', name: 'Relic', value: 80 }), qty: 1 }]; // sell = 20
+    await store.putCharacter(acct.id, ch);
+
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Saver', 'warrior', 5, token);
+    await until(() => (c.lastInventory?.bag.length ?? 0) === 1, 3000, 'seeded bag replicated');
+
+    // Mutate the authoritative inventory over the wire, then disconnect. onClose fires
+    // persistPosition fire-and-forget and THEN removes the player from the inventory map, so the
+    // snapshot-before-await fix is what lets the stored blob reflect the SOLD state (empty bag,
+    // 20 gold) rather than a null read (the pre-fix data-loss/dupe race).
+    c.invAction('sell', { index: 0 });
+    await until(() => (c.lastInventory?.gold ?? 0) === 20, 3000, 'sale applied server-side');
+    c.close();
+
+    let saved = null;
+    for (let i = 0; i < 40; i++) {
+      saved = await store.getCharacter(acct.id);
+      if (saved !== null && saved.gold === 20 && saved.inventory.length === 0) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(saved!.gold).toBe(20);
+    expect(saved!.inventory).toHaveLength(0);
+  });
+
+  it('re-drops a ground item on a full-bag pickup instead of vanishing it', async () => {
+    // Two clients sharing a spawn: A has a full bag, B drops a stack there for A to (fail to) grab.
+    const regA = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'fullbag@example.com', password: 'longenough' }),
+    });
+    const tokenA = ((await regA.json()) as { token: string }).token;
+    const acctA = (await store.getByEmail('fullbag@example.com'))!;
+    const regB = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'dropper@example.com', password: 'longenough' }),
+    });
+    const tokenB = ((await regB.json()) as { token: string }).token;
+    const acctB = (await store.getByEmail('dropper@example.com'))!;
+    const y = createServerWorld().surfaceSpawnY(120, 120);
+    const chA = createCharacter('cA', 'Fullbag', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    chA.inventory = Array.from({ length: BAG_SIZE }, (_v, i) => ({
+      item: mkItem({ id: `f${i}` }),
+      qty: 1,
+    }));
+    await store.putCharacter(acctA.id, chA);
+    const chB = createCharacter('cB', 'Dropper', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    chB.inventory = [{ item: mkItem({ id: 'gem', name: 'Gem' }), qty: 1 }];
+    await store.putCharacter(acctB.id, chB);
+
+    const a = new TestClient(wsUrl);
+    await a.opened();
+    a.hello('Fullbag', 'warrior', 5, tokenA);
+    const b = new TestClient(wsUrl);
+    await b.opened();
+    b.hello('Dropper', 'warrior', 5, tokenB);
+    await until(() => (a.lastInventory?.bag.length ?? 0) === BAG_SIZE, 3000, 'A has a full bag');
+
+    // B drops the gem at the shared spawn; A sees it as a ground item in interest.
+    b.dropItem(mkItem({ id: 'gem', name: 'Gem' }), 1);
+    await until(() => a.worldItems.size >= 1, 3000, 'A sees the ground gem');
+    const gid = [...a.worldItems.keys()][0]!;
+
+    // A (full bag) picks it up: it can't fit, so the server re-drops it rather than vanishing it,
+    // and sends NO grant. (Pre-fix: a grant was sent unconditionally and the stack left the world.)
+    a.pickupItem(gid);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(a.grants).toHaveLength(0); // no grant — nothing entered A's bag
+    expect([...a.worldItems.values()].some((w) => w.item.id === 'gem')).toBe(true); // still on ground
+
+    a.close();
+    b.close();
+  });
+
+  it('throttles claimReward ground spills so a full bag can’t flood the world', async () => {
+    const res = await fetch(base + '/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'flooder@example.com', password: 'longenough' }),
+    });
+    const token = ((await res.json()) as { token: string }).token;
+    const acct = (await store.getByEmail('flooder@example.com'))!;
+    const y = createServerWorld().surfaceSpawnY(120, 120);
+    const ch = createCharacter('c6', 'Flooder', 'warrior', { skin: 0, hair: 0 }, 120, y, 120);
+    ch.inventory = Array.from({ length: BAG_SIZE }, (_v, i) => ({
+      item: mkItem({ id: `f${i}` }),
+      qty: 1,
+    }));
+    await store.putCharacter(acct.id, ch);
+
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Flooder', 'warrior', 5, token);
+    await until(() => (c.lastInventory?.bag.length ?? 0) === BAG_SIZE, 3000, 'full bag replicated');
+
+    // Spam far more full-bag reward spills than the burst budget (SPILL_BUCKET_CAP = 32). The token
+    // bucket must bound the ground spawns well below the number sent — the anti-flood guarantee.
+    const N = 80;
+    for (let i = 0; i < N; i++) {
+      c.claimReward(0, [{ item: mkItem({ id: `spam${i}`, name: 'Spam' }), qty: 1 }]);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    const spilled = [...c.worldItems.values()].filter((w) => w.item.id.startsWith('spam')).length;
+    expect(spilled).toBeGreaterThan(0); // some spilled (not everything was eaten)
+    expect(spilled).toBeLessThan(N); // throttled — NOT all 80 reached the ground
+    expect(spilled).toBeLessThanOrEqual(40); // bounded near the 32-token burst (+ a little refill)
+
+    c.close();
+  });
 });

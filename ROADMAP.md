@@ -29,7 +29,9 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >   null-persist data-loss/dupe race, reconnect loss of trusted claims (now buffered + flushed on
 >   welcome), a vendor-buyback UI desync (**buyback replicated on `ServerInventory`**, proto **v19**),
 >   silent full-bag loss of reward/kill loot (**`giveOrDrop`** spills to the ground), and a `bagBonus`
->   memory-DoS (clamped). **430 tests green.**
+>   memory-DoS (clamped). A second-round review of the fixes caught the `giveOrDrop` spill being an
+>   unthrottled ground-spawn DoS via `claimReward` spam — now **token-bucket rate-limited** per
+>   connection. **433 tests green.**
 > - **Next:** server-authoritative quests (#138) — retires the claimReward trust; then professions (#139).
 >
 > ---

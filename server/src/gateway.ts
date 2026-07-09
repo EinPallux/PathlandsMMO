@@ -86,6 +86,12 @@ interface Conn {
   mutedUntilMs: number;
   /** Wall-clock (ms) of this connection's last accepted item drop — an anti-spam-drop gate. */
   lastDropMs: number;
+  /** Token bucket bounding ground-item SPILLS (a full-bag `giveOrDrop` from kill loot / reward
+   *  claims). A burst covers a reconnect-flush of buffered rewards; the sustained refill caps how
+   *  fast a client can flood the world with interest-replicated motes. Refilled lazily on use. */
+  spillTokens: number;
+  /** Wall-clock (ms) of the last spill-token refill (0 = never; the first use tops the bucket up). */
+  spillRefillMs: number;
 }
 
 export interface GatewayOptions {
@@ -127,6 +133,15 @@ const WHO_MIN_INTERVAL_MS = 2000;
 
 /** Minimum spacing between one connection's item drops (ms) — bounds spawned-entity spam. */
 const DROP_MIN_INTERVAL_MS = 250;
+
+/** Ground-item SPILL throttle (a full-bag `giveOrDrop` from kill loot / reward claims). A token
+ *  bucket: a burst of `SPILL_BUCKET_CAP` covers a reconnect-flush of buffered rewards + multi-item
+ *  turn-ins landing on a full bag, then it refills at `SPILL_REFILL_PER_SEC` so a hostile client
+ *  can't turn `claimReward` (a trusted bridge) into an unbounded flood of interest-replicated motes.
+ *  Past the budget the overflow stack is dropped, not spawned (the pre-`giveOrDrop` behaviour — the
+ *  bag was full anyway), so a legitimate player never loses loot at any realistic rate. */
+const SPILL_BUCKET_CAP = 32;
+const SPILL_REFILL_PER_SEC = 2;
 
 /** How close (world units) a player must be to a ground item to pick it up. */
 const PICKUP_RADIUS = 3;
@@ -334,6 +349,8 @@ export class GameServer {
       isGm: false,
       mutedUntilMs: 0,
       lastDropMs: 0,
+      spillTokens: SPILL_BUCKET_CAP,
+      spillRefillMs: 0,
     };
     conn.helloTimer = setTimeout(() => {
       if (conn.id === null) conn.ws.terminate(); // never authenticated — reap it
@@ -726,7 +743,7 @@ export class GameServer {
         this.inventories.addGold(conn.id, msg.gold);
         // Over-cap reward items spill to the ground (giveOrDrop) rather than vanish — a full bag at
         // turn-in must never eat the reward.
-        for (const s of msg.items) this.giveOrDrop(conn.id, s.item, s.qty);
+        for (const s of msg.items) this.giveOrDrop(conn, s.item, s.qty);
         return;
       }
       case 'spendGold': {
@@ -774,14 +791,46 @@ export class GameServer {
    * Credit an item stack to a player's authoritative bag, or — if the bag is full — drop it on the
    * ground at their feet so it is never silently lost. This is the overflow-safe grant path for
    * kill loot and quest-reward turn-ins (a full bag at the moment of the grant must not eat the
-   * item). Marks the ground dirty when it spills so nearby players see the new stack.
+   * item). The SPILL is throttled per connection (`takeSpillToken`) so a hostile client can't spam
+   * `claimReward` into an unbounded flood of ground motes; past the budget the overflow is dropped
+   * rather than spawned. Marks the ground dirty when it spills so nearby players see the new stack.
    */
-  private giveOrDrop(id: string, item: ItemDef, qty: number): void {
-    if (this.inventories.addStack(id, item, qty)) return;
-    const player = this.sim.players.get(id);
+  private giveOrDrop(conn: Conn, item: ItemDef, qty: number): void {
+    if (conn.id === null) return;
+    if (this.inventories.addStack(conn.id, item, qty)) return; // fit in the bag — no spill
+    if (!this.takeSpillToken(conn)) return; // over the spill budget — eat the overflow, don't flood
+    const player = this.sim.players.get(conn.id);
     if (player === undefined) return; // no body to drop at (player gone) — nothing more to do
-    this.groundItems.drop(item, qty, player.phys.x, player.phys.y, player.phys.z, this.sim.tick);
+    const dropQty = Math.max(1, Math.min(MAX_DROP_QTY, Math.floor(qty)));
+    this.groundItems.drop(
+      item,
+      dropQty,
+      player.phys.x,
+      player.phys.y,
+      player.phys.z,
+      this.sim.tick,
+    );
     this.groundChanged = true;
+  }
+
+  /**
+   * Lazily refill and consume one ground-spill token for this connection (the `giveOrDrop` throttle).
+   * Wall-clock is fine here — this is the gateway edge, never the sim. Returns whether a token was
+   * available (i.e. whether the spill is allowed this call).
+   */
+  private takeSpillToken(conn: Conn): boolean {
+    const now = Date.now();
+    const elapsed = now - conn.spillRefillMs;
+    if (elapsed > 0) {
+      conn.spillTokens = Math.min(
+        SPILL_BUCKET_CAP,
+        conn.spillTokens + (elapsed / 1000) * SPILL_REFILL_PER_SEC,
+      );
+      conn.spillRefillMs = now;
+    }
+    if (conn.spillTokens < 1) return false;
+    conn.spillTokens -= 1;
+    return true;
   }
 
   // --- GM tooling (server-authoritative; gated on conn.isGm) ---
@@ -1132,7 +1181,7 @@ export class GameServer {
         // Credit the same loot to the authoritative inventory. A full bag spills the item to the
         // ground (giveOrDrop) instead of eating it, so hard-won kill loot is never silently lost.
         this.inventories.addGold(conn.id, kill.gold);
-        for (const stack of kill.items) this.giveOrDrop(conn.id, stack.item, stack.qty);
+        for (const stack of kill.items) this.giveOrDrop(conn, stack.item, stack.qty);
       }
 
       // 1d) Authoritative combat visuals near this viewer (Stage 2c-3): incoming hits, other

@@ -20,7 +20,7 @@ reconnect reward-loss, a buyback UI desync, silent reward/loot loss on a full ba
 - **Disconnect persisted a null inventory + stale XP (data loss + item dupe).** `onClose` fired
   `persistPosition` fire-and-forget, then synchronously removed the player from the combat + inventory
   maps — so the async write read `null` after its first `await` and silently skipped the XP/inventory
-  save. `persistPosition` now **snapshots** position + progression + bag/gold/equipment *before* the
+  save. `persistPosition` now **snapshots** position + progression + bag/gold/equipment _before_ the
   first `await` and writes from that snapshot.
 - **Trusted claims lost during a reconnect (quest reward / craft / travel fee vanished).**
   `sendClaimReward` / `sendSpendGold` were dropped silently while `you === null` (the reconnect
@@ -35,14 +35,24 @@ reconnect reward-loss, a buyback UI desync, silent reward/loot loss on a full ba
   dropped). A new server **`giveOrDrop`** spills the over-cap stack to the ground at the player's feet
   instead. The ground **pickup** path likewise re-drops rather than vanish an item if a stale client
   gate raced a full bag (and only cues the pickup floater when the stack actually fit).
+- **The `giveOrDrop` spill was itself a ground-spawn DoS** (a second-round review of the fix above):
+  a hostile client could fill its bag then spam the trusted `claimReward` bridge at the frame rate,
+  each spill spawning an interest-replicated, 10-minute-TTL ground mote. The spill is now **throttled
+  per connection** by a token bucket (`SPILL_BUCKET_CAP` = 32 burst — covers a reconnect-flush of
+  buffered rewards — refilling `SPILL_REFILL_PER_SEC` = 2/s); past the budget the overflow is dropped,
+  not spawned (the pre-`giveOrDrop` behaviour), so a legitimate player never loses loot at any real
+  rate. The spill also inherits the `dropItem` path's `MAX_DROP_QTY` clamp.
 - **Unbounded `bagBonus` in the hello could inflate the bag cap into a memory DoS.** `Inventories.seed`
   now **clamps** it to `MAX_BAG_BONUS` (96) — comfortably above any legitimate Deep-Pockets value.
 
-#### Tests (+3)
+#### Tests (+6)
 
-- Model: a hostile `bagBonus` is clamped. Over the wire: a sell **replicates the buyback list**, and
-  an over-cap `claimReward` **spills to the ground** while the bag stays full. Codec: the `inventory`
-  frame round-trips its buyback list and rejects a missing/malformed one; protocol asserted at **19**.
+- Model: a hostile `bagBonus` is clamped. Over the wire: a sell **replicates the buyback list**; an
+  over-cap `claimReward` **spills to the ground** while the bag stays full; a disconnect **persists the
+  mutated inventory** (not a null read — the data-loss/dupe race); a full-bag **pickup re-drops**
+  rather than vanishing the item; and a `claimReward` spill flood is **throttled** well below the
+  number sent. Codec: the `inventory` frame round-trips its buyback list and rejects a
+  missing/malformed one; protocol asserted at **19**.
 
 ### Part 32 — Inventory authority flip, Stage 1b·B (2026-07-07)
 
