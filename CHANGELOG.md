@@ -10,6 +10,326 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 37 — Server-authoritative professions (migration #139) (2026-07-09)
+
+The **professions migration**: gathering, crafting, and consumable use move server-side, so the
+server owns the yields, the skill-ups, node depletion, and the material / consumable stash. The pure
+`shared/professions` engine (`gatherNode` / `rollFish` / `craft`) runs unchanged on the server. This
+**retires the crafting `claimReward` trust bridge** (gear is now forged server-side); the client's
+`GatherDirector` becomes a pure mirror + intent-sender, mirroring the quest flip (#138).
+
+#### Added
+
+- **`Professions` model (`server/src/professions.ts`).** Owns each player's skills / material stash /
+  crafted consumables / learned recipes, seeded from the persisted character on join with defensive
+  clamps (skills to 1–100, bounded stash / learned kinds). Resolves `gather` / `fish` / `craft` /
+  `use` via the pure engine on a **server-owned** `makeRng(WORLD_SEED, …, seq)` stream (never a client
+  seed), with per-player **node depletion** (respawn) and an **action-cadence gate**. Dirty-tracked +
+  per-action `notices`, mirroring `Quests` / `Inventories`.
+- **Protocol v21 (`shared/proto/net.ts`).** `ClientProfAction` (`gather` / `fish` / `craft` / `use`;
+  `gather` / `fish` carry no target — the server resolves the nearest node / water tier from the
+  authoritative position) + `ServerProfessions` (owner's skills / materials / consumables / learned +
+  `NetProfNotice[]`), with structural decoders/validators.
+- **`ServerCombat.applyConsumable`.** Applies a drunk consumable's heal / resource / buff to the
+  player's authoritative combat entity (the buff modifies server-side damage; HP / resource ride the
+  combat-self frame).
+
+#### Changed
+
+- **Gathering is authoritative.** The gateway re-derives gather-node candidates from
+  `world.scatterChunk` around the player's authoritative position (`nearbyGatherNodes`,
+  `GATHER_NODE_RANGE`) and hands them to the model, which skill-gates + depletion-gates them and rolls
+  the yield — a client can't gather a node it isn't standing at / is under-skilled for, out-farm the
+  respawn, or forge materials. `fish` re-validates water + derives the tier from the authoritative
+  biome.
+- **Crafting is authoritative; the craft `claimReward` is retired.** `craft` re-validates skill +
+  inputs and consumes them; a material / consumable output is banked in the stash, and a **gear output
+  is forged server-side** (`generateItem` on a per-`(player, recipe, seq)` RNG, class-flavoured,
+  credited overflow-safe via `giveOrDrop`). `CombatDirector.craftGear` (the last craft `claimReward`
+  path) is **removed**.
+- **Client `GatherDirector` is a mirror.** The skills / stash / consumables / learned maps are written
+  ONLY by the `ServerProfessions` frame; gather / craft / consumable-use are intents. The frame's
+  `notices` reconstruct the exact toasts and drive the still-client-side deed (`onCraft` /
+  `onGatherSkill`) and gather-bounty (`onMaterialGained`) side effects; the mining/fishing channel UX
+  and a client-optimistic node depletion (prompt only) stay local. `CombatDirector.applyConsumable` is
+  now the client-only cue (float + mirror the buff aura for own-hit prediction — HP / resource are
+  server-authoritative).
+- **Server persistence.** `persistPosition` writes professions / materials / consumables /
+  learnedRecipes back to the stored character (snapshotted before the first `await`, like the quest /
+  inventory state), replacing the client-owned blob.
+
+#### Adversarial review (folded)
+
+- **Forged-save hardening (HIGH).** The uploaded character blob isn't deeply validated at the HTTP
+  boundary, so the profession seed now sanitizes it: unknown material / consumable ids are **dropped**,
+  counts **clamped** (`MAX_STASH_QTY`), and `learnedRecipes` **filtered to real discovery-recipe ids** —
+  a forged save can't seed effectively-infinite materials, an unlearned capstone recipe, or unknown
+  items into the server-authoritative stash. (Skill clamping to 1–100 was already in.)
+- **Craft RNG stream (MEDIUM).** A **failed** craft no longer advances the RNG `seq` (it was bumped
+  before the affordability check), so a client can't walk the stream for free with unaffordable-craft
+  spam. And the crafted-gear roll is now seeded from an **unpredictable server-held nonce** (drawn from
+  the evolving combat RNG) instead of a `WORLD_SEED` + client-known-id stream — gear stats can't be
+  pre-computed and grinded for best-in-slot.
+- **Gather CPU edge-gate (LOW).** A per-connection wall-clock floor (`GATHER_EDGE_MIN_INTERVAL_MS`)
+  bounds the 3×3-chunk node scatter / water scan before the model's (tick-based) cadence applies, so a
+  gather-frame flood can't burn that work.
+- **Gather-toast ids (client).** `GatherDirector` toasts now use a dedicated monotonic counter — the
+  gather RNG that used to bump `actionSeq` (and give each toast a distinct React key) moved server-side,
+  so consecutive gather toasts would otherwise have collided on one key.
+
+#### Tests (+18, 467 green)
+
+- The `Professions` model in isolation: seed defaults + dirty tracking, gather yield / skill-up +
+  per-player depletion + cadence gate + skill gating, fishing, crafting (stash + gear outputs, input
+  consumption, unaffordable-refusal), consumable use, forged-skill clamping, **forged-blob sanitizing**
+  (unknown ids dropped / counts clamped / learned filtered), and **no seq advance on a failed craft**.
+- Over the wire: a player gathers a real worldgen node from its authoritative position; a gather far
+  from any node yields nothing; crafted **gear is forged server-side into the bag** (no `claimReward`,
+  a `gen:` weapon, inputs consumed); a consumable is debited server-side. Plus the protocol round-trip
+  for the profession frames.
+
+### Part 36 — Quest event re-validation, Stage 2b (migration #138) (2026-07-09)
+
+Closes the interim trust the flip left on the client-reported objective events. The server now
+re-validates each `ClientQuestEvent` against the player's **authoritative position** before applying
+it, so a cheat can't advance an objective from somewhere it isn't standing.
+
+#### Changed
+
+- **`explore` uses the server position.** The gateway ignores the client-supplied `x` / `z` and
+  advances explore objectives from the player's authoritative sim position — no teleport-explore.
+- **`talk` / `deliver` / `use` require proximity.** The event is applied only when the player is
+  within `QUEST_INTERACT_RADIUS` (12 m) of the target quest giver (settlement plaza + offset, built
+  into a `GIVER_POS` index) or Waystone (`waystoneById`). A target with no known position passes
+  through (documented residual trust — all authored talk/use targets resolve today). `gather` has no
+  position to check.
+
+#### Tests (+2, 447 green)
+
+- Over the wire: an explore objective advances from a player standing at the area but **not** from
+  one forging the coords while elsewhere; a talk objective advances only when the player is **near**
+  the target NPC, and a forged talk from across the map is dropped. (Two prior explore tests now spawn
+  the character at the objective, matching the authoritative-position rule.)
+
+### Part 35 — Quest client flip, Stage 2 (migration #138) (2026-07-09)
+
+The flip: the **client now renders the server's quest log as authoritative** and drives it entirely by
+intents. `QuestDirector`'s log is a **mirror** written ONLY by the `ServerQuestLog` frame — no
+client-side quest mutation remains — and the server **persists** the log. This completes moving quest
+authority server-side and **retires the `claimReward` trust bridge for quests** (crafting still uses
+it until professions migrate, #139).
+
+#### Changed
+
+- **Client actions → intents.** `accept` / `turnIn` / `abandon` / `pin` send `ClientQuestAction`
+  (server re-validates + applies), and the client-observed objective sources (`explore` / `talk` /
+  `use` — Waystone) send `ClientQuestEvent`. Kill / boss / collect are no longer fed to quests
+  client-side (the server drives them from authoritative kill credit), so `onEnemyKilled` stops
+  fanning to the quest system. The log, tracker, giver dialogue, indicators, and map markers now
+  render off the server-authoritative mirror.
+- **Reward flip.** A quest turn-in no longer computes/grants its reward on the client: the gold /
+  items / XP are granted **server-side** (they arrive via the inventory + combat-self frames), and
+  only the **Waystone unlock + Deed progress** — which the server doesn't own — fire client-side,
+  driven by a diff of the mirror when a quest lands in `turnedIn`. Quest XP is adopted through the
+  existing server-`totalXp` delta (the local quest-XP add is gone, so no double-count). Completion /
+  progress / accept **toasts** are reconstructed by diffing consecutive authoritative logs.
+- **Server persistence.** `persistPosition` now writes the authoritative quest log back to the stored
+  character (snapshotted before the first `await`, like the inventory), replacing the client-owned
+  blob it used to preserve. On join the server seeds from it, so continuity is unbroken across the
+  flip; the client still cloud-saves the mirror as a belt-and-suspenders cache.
+
+#### Notes
+
+- **Interim trust remaining** (shrinks each stage): `explore` / `talk` / `use` are still
+  client-reported (a forged event only advances an objective the player holds; the reward is
+  server-computed). Proximity re-validation (server checks the player's authoritative position for
+  explore / talk) is the next hardening. Repeatable-quest turn-in side effects aren't diffed (no
+  repeatable quests exist yet).
+- **Verification**: typecheck + lint + build + the server-side wire/persistence tests are green; the
+  client quest UI itself is not automatically testable (no headless browser) — **playtest the quest
+  flow before relying on it.**
+- **Review fold**: two adversarial reviews confirmed the flip sound (XP counted once, side-effects
+  fire once, persistence race safe, dialogue re-clicks are server no-ops). Folded the cosmetic /
+  defensive items: restored the **reward item-name floater** on turn-in (the item is server-granted,
+  so the client floats its spec label + the chosen one, tracked from the turn-in intent); re-arm the
+  quest **baseline on reconnect** (`resetBaseline`, so a post-reconnect frame replays no toasts /
+  side effects); and corrected the stale `adoptServerXp` comment (it adopts kill **and** quest XP now).
+
+#### Tests (+1, 445 green)
+
+- Over the wire: a disconnect **persists the authoritative quest log** (accept → explore → turn-in
+  reflected in the stored character's `quests`), proving the server owns + writes it now.
+
+### Part 34 — Server-authoritative quests, Stage 1 (migration #138) (2026-07-09)
+
+Begins moving quest **authority** server-side. The pure `shared/quests` engine — which was always
+written to run on both sides — now runs on the **server** too: it owns each player's quest log,
+advances objectives from authoritative signals, and computes turn-in rewards. This stage lands the
+server capability + replication + tests **in parallel** (the client still owns its own log, exactly
+like the inventory migration's Stage 1a); the client flip that retires the trusted `claimReward`
+bridge for quests is Stage 2.
+
+#### Added
+
+- **Server `Quests` model** (`server/src/quests.ts`) — per-session `QuestLogState`, seeded from the
+  persisted character on join, mutated only through the pure engine (`acceptQuest` / `applyQuestEvent`
+  / `turnInQuest` / …) with dirty tracking, mirroring the `Inventories` model.
+- **Protocol (proto v20)**: `ClientQuestAction` (accept / turnIn / abandon / pin / unpin — the server
+  re-validates availability, prereqs, level, and completion), `ClientQuestEvent` (the client-reported
+  objective sources — explore / talk / deliver / use / gather; **kill / boss / collect are rejected**
+  from a client so kill credit can't be forged), and `ServerQuestLog` (the owner's authoritative log,
+  owner-only, on change).
+- **Gateway wiring**: seeds + replicates the quest log; routes quest actions/events; **drives
+  kill / boss / collect from authoritative kill credit** (`drainKills`, so party members each advance
+  their own objectives); and computes the **turn-in reward server-side** — gold + XP into the
+  authoritative wallet / progression, reward items rolled on a deterministic per-(account, quest) RNG
+  stream (never a client seed), class-flavoured, and credited overflow-safe via `giveOrDrop`. A public
+  `ServerCombat.grantXp` awards the quest XP with the same level-up path as kill XP.
+
+#### Notes
+
+- **Non-breaking**: no client changes — the real client keeps owning its quest log this stage, so
+  nothing changes for players while the server engine + replication land under test. The server does
+  not yet persist the log (the client blob stays authoritative until the flip).
+- **Interim trust** (shrinks the exploit surface vs. `claimReward`): explore / talk / use / gather are
+  client-reported for now; proximity re-validation lands with the flip. But a forged event only
+  advances an objective the player genuinely holds, and the **reward is server-computed** — a client
+  can no longer mint arbitrary gold/items through a quest.
+
+#### Fixed (folded from the Stage-1 adversarial review)
+
+- **Kill objectives were double-counted** (a pre-existing shared-engine bug the server would have
+  inherited): every slain enemy emits both a `kill` and a `boss` event, and `matches()` let a `boss`
+  event also satisfy a plain `kill` objective — so "cull 5 boars" finished in 3 kills (the tracker
+  showing 2/5 after one). Fixed engine-wide (a `boss` event now matches only `boss` objectives), which
+  corrects the client and the new server engine **together** (no divergence); the full suite + the
+  P4.10 XP-sufficiency acceptance stay green. A kill now advances a kill objective by exactly one.
+- **Quest reward now always grants one choice**: `grantQuestReward` clamps a missing / out-of-range
+  `choiceIndex` to 0 instead of silently dropping the item (which, at the Stage-2 flip, would have
+  consumed a choices-only quest for gold + XP with no item).
+- **Hardening**: `setPinned` replicates only on a real pin flip (not every call); `cloneLog` bounds a
+  (potentially crafted) uploaded log to `MAX_ACTIVE` / objective / turned-in caps.
+
+#### Tests (+11, 444 green)
+
+- Model: seed/dirty; availability + level-gated + duplicate accept; kill/collect drive by **exactly
+  one per kill**; complete-gated turn-in. Over the wire: accept → explore event → turn-in replicates
+  the log + grants the gold reward; a pre-completed quest's **reward items are granted server-side**
+  on turn-in (the chosen slot honored + a `gen:` id + reward XP through server progression, no
+  `claimReward`); an unfinished turn-in is **rejected**; a level-gated accept is **rejected against
+  the authoritative level**; abandon removes an accepted quest. Engine: a kill+boss pair advances a
+  kill objective by one. Codec: the quest action / event / log frames round-trip and reject malformed
+  / server-only kinds (kill / boss / collect).
+
+### Part 33 — Inventory-flip hardening: adversarial-review fixes (2026-07-07)
+
+Folds the flip's (Part 32) adversarial review into fixes. Closes a disconnect data-loss/dupe race, a
+reconnect reward-loss, a buyback UI desync, silent reward/loot loss on a full bag, and a bag-cap DoS.
+
+#### Fixed
+
+- **Disconnect persisted a null inventory + stale XP (data loss + item dupe).** `onClose` fired
+  `persistPosition` fire-and-forget, then synchronously removed the player from the combat + inventory
+  maps — so the async write read `null` after its first `await` and silently skipped the XP/inventory
+  save. `persistPosition` now **snapshots** position + progression + bag/gold/equipment _before_ the
+  first `await` and writes from that snapshot.
+- **Trusted claims lost during a reconnect (quest reward / craft / travel fee vanished).**
+  `sendClaimReward` / `sendSpendGold` were dropped silently while `you === null` (the reconnect
+  window). They're now **buffered** (capped, in order) and **flushed on the next welcome** — safe
+  from double-apply because the client bag is a pure server mirror, so an un-sent claim is absent
+  from the seed the server restores.
+- **Vendor buyback list desynced from the server** on a stale index / double-click (the client kept
+  its own parallel copy). The **buyback list is now replicated on `ServerInventory`** (item + qty per
+  remembered sale, proto **v19**); the client re-derives each price from the deterministic
+  `sellPrice` and its shop UI is a pure mirror — the optimistic local `buyback` mutation is gone.
+- **A full bag silently ate quest-reward / kill loot** (`addStack` returned false and the item was
+  dropped). A new server **`giveOrDrop`** spills the over-cap stack to the ground at the player's feet
+  instead. The ground **pickup** path likewise re-drops rather than vanish an item if a stale client
+  gate raced a full bag (and only cues the pickup floater when the stack actually fit).
+- **The `giveOrDrop` spill was itself a ground-spawn DoS** (a second-round review of the fix above):
+  a hostile client could fill its bag then spam the trusted `claimReward` bridge at the frame rate,
+  each spill spawning an interest-replicated, 10-minute-TTL ground mote. The spill is now **throttled
+  per connection** by a token bucket (`SPILL_BUCKET_CAP` = 32 burst — covers a reconnect-flush of
+  buffered rewards — refilling `SPILL_REFILL_PER_SEC` = 2/s); past the budget the overflow is dropped,
+  not spawned (the pre-`giveOrDrop` behaviour), so a legitimate player never loses loot at any real
+  rate. The spill also inherits the `dropItem` path's `MAX_DROP_QTY` clamp.
+- **Unbounded `bagBonus` in the hello could inflate the bag cap into a memory DoS.** `Inventories.seed`
+  now **clamps** it to `MAX_BAG_BONUS` (96) — comfortably above any legitimate Deep-Pockets value.
+
+#### Tests (+6)
+
+- Model: a hostile `bagBonus` is clamped. Over the wire: a sell **replicates the buyback list**; an
+  over-cap `claimReward` **spills to the ground** while the bag stays full; a disconnect **persists the
+  mutated inventory** (not a null read — the data-loss/dupe race); a full-bag **pickup re-drops**
+  rather than vanishing the item; and a `claimReward` spill flood is **throttled** well below the
+  number sent. Codec: the `inventory` frame round-trips its buyback list and rejects a
+  missing/malformed one; protocol asserted at **19**.
+
+### Part 32 — Inventory authority flip, Stage 1b·B (2026-07-07)
+
+The economy migration's flip: the **client now renders the server's inventory as authoritative** and
+drives it entirely by intents. `CombatDirector`'s bag / gold / equipment are a **mirror** written
+ONLY by the `ServerInventory` frame — no client-side inventory mutation remains. This closes the
+item-dupe and gold-mint vectors a client-authoritative bag left open, and the server **persists**
+the authoritative inventory.
+
+#### Changed
+
+- **Client actions → intents.** `equip` / `unequip` / `sell` / `buy` / `buyback` send `ClientInvAction`
+  (server re-validates); the change returns via the inventory frame. Kill loot, ground pickups, and
+  drops no longer mutate the bag locally — the frame does. Item-name / gold floaters stay as cosmetics.
+- **Trusted bridges (proto v18)** for the not-yet-migrated bag/gold sources: `ClientClaimReward`
+  (quest turn-in reward + crafted gear — the client validated them) and `ClientSpendGold` (Waystone
+  travel fee, mount purchase — debits only if affordable). Both are documented interim trust, replaced
+  by server validation when quests (#138) / professions (#139) migrate. `ClientHello` carries
+  `bagBonus` so the server sizes the Deep-Pockets bag cap.
+- **Server persistence.** `persistCharacter` writes the authoritative bag / gold / equipment back to
+  the stored character (read-modify-write preserves the still-client-owned quest / profession fields).
+- **Tests** (+1): the v18 inventory-action / trusted-bridge / hello-bagBonus codec round-trips (the
+  Stage 1a/1b·A wire tests already cover seed → replicate → equip → drop end to end).
+
+### Part 31 — Server-validated inventory actions, Stage 1b·A (2026-07-07)
+
+The server can now **validate and apply** inventory actions against its authoritative model, ahead
+of the client flip. Backward-compatible: the client doesn't send these yet, so nothing changes for
+players — this lands the validated server capability + tests first.
+
+#### Added
+
+- **`ClientInvAction`** (`shared/proto/net.ts`): one client→server frame for `equip` / `unequip` /
+  `sell` / `buy` / `buyback`, with a per-action decoder (bag index / equip slot / vendor seed+tier).
+  Additive — no protocol bump (the shared version constant keeps client and server in lockstep).
+- **Gateway `handleInvAction`**: routes each to the `Inventories` model, which re-validates
+  server-side (capacity, gold, equippability, index/slot). **Buy recomputes the deterministic vendor
+  stock from (seed, tier)** server-side, so a client can't set its own price — it only picks the slot.
+- **Perk-aware bag cap**: the model's `bagCap` is now per-player (`BAG_SIZE` + a Deep-Pockets bonus),
+  plumbed through the seed (sourced from account perks when the client flip lands).
+- **Tests** (+1): a wire test that an `equip` action validates server-side and re-replicates the
+  updated bag/equipment.
+
+### Part 30 — Server-authoritative inventory, Stage 1a (2026-07-07)
+
+The economy migration begins: the player's **bag, gold, and worn equipment** start becoming server
+state, closing the item-dupe / gold-mint vectors a client-authoritative bag left open. Stage 1a is
+the foundation — the model + replication run in parallel with the still-client-owned bag, so nothing
+changes for players yet while it lands safely.
+
+#### Added
+
+- **`server/src/inventory.ts` (`Inventories`)**: the authoritative per-player bag / gold / equipment,
+  with the same logic the client ran ported for server-side validation — seed from a character,
+  bag-cap add, gold credit/spend, drop removal (by index or content match), equip/unequip swap
+  (ring auto-slot), sell + buyback, and dirty tracking.
+- **Protocol v17** (`shared/proto/net.ts`): the `ServerInventory` owner-only frame (bag / gold /
+  equipment) + its decoder and an equipment-map guard. `BAG_SIZE` lifted to `shared/data/items.ts`
+  (was a client-local const) so the server shares the base cap.
+- **Gateway wiring**: seeds the inventory from the persisted character on join (empty for a guest),
+  drops it on disconnect, routes kill loot + ground pickups (add) and drops (remove) through it, and
+  replicates the frame to the owner at broadcast cadence when it changes.
+- **Tests** (+8): `server/test/inventory.test.ts` — the model (seed, cap, gold, drop, equip/unequip,
+  sell/buyback) and the wire path (a joiner's seeded bag/gold replicated; a drop empties it);
+  `shared/test/net.test.ts` — the v17 inventory round-trip.
+
 ### Part 29 — Droppable ground items (2026-07-07)
 
 The player-to-player trade surface that replaces bank / mail / a trade window: **drop items on the

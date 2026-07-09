@@ -9,6 +9,7 @@
 // Wall-clock lives at the gateway edge, never here — `step()` is driven by the tick clock.
 
 import {
+  applyHeal,
   applyIntent,
   buildEnemyLootTable,
   CharacterClass,
@@ -33,6 +34,7 @@ import {
   type CombatState,
   type CombatContext,
   type CombatEntity,
+  type ConsumableEffect,
   type Intent,
   type NetCombatSelf,
   type NetEntity,
@@ -221,10 +223,55 @@ export class ServerCombat {
     e.yaw = yaw;
   }
 
+  /**
+   * Draw an unpredictable server-held nonce from the world combat RNG — the same evolving, seeded
+   * stream loot rolls use, whose state depends on ALL prior server activity, so a client can't
+   * predict it (unlike a `makeRng(WORLD_SEED, …, seq)` stream keyed only on public + client-known
+   * values). Used to seed the crafted-gear roll (profession migration #139) so gear stats can't be
+   * pre-computed and grinded. No `Math.random` — it's the seeded shared RNG.
+   */
+  rollNonce(): number {
+    return this.state.rng.int(0, 0x7fffffff);
+  }
+
   /** Apply a validated combat intent (cast / target / auto / release) for a player. */
   applyPlayerIntent(id: string, intent: Intent): void {
     if (intent.type === 'Move') return; // movement is the ServerSim's authority, not combat's
     applyIntent(this.state, id, intent);
+  }
+
+  /**
+   * Apply a drunk consumable's effect to a player's combat entity (profession migration #139): a
+   * heal / resource restore, or a timed stat buff (via the same aura the client used). The HP /
+   * resource change flows out on the combat-self frame, and the buff modifies server-side damage
+   * (combat is authoritative), so a potion's effect is real for everyone. A dead player's drink is a
+   * no-op here (the Professions model still consumed it — parity with the old client fire-and-forget).
+   * Called by the gateway after the Professions model has debited the stash.
+   */
+  applyConsumable(id: string, effect: ConsumableEffect): void {
+    const e = this.state.entities.get(id);
+    if (e === undefined || e.faction !== 'player' || e.dead) return;
+    if (effect.kind === 'heal') {
+      applyHeal(this.state, e, e, effect.amount, 'potion');
+    } else if (effect.kind === 'resource') {
+      e.resource = Math.min(e.maxResource, e.resource + effect.amount);
+    } else {
+      // Timed stat/combat buff via the aura system (refreshes a same-modifier elixir buff).
+      const existing = e.auras.find(
+        (a) => a.skillId === 'elixir' && a.modifier === effect.modifier,
+      );
+      const aura = {
+        uid: `elixir_${effect.modifier}`,
+        sourceId: e.id,
+        skillId: 'elixir',
+        kind: 'buff' as const,
+        modifier: effect.modifier,
+        magnitude: effect.magnitude,
+        expiresTick: this.state.tick + effect.durationTicks,
+      };
+      if (existing !== undefined) Object.assign(existing, aura);
+      else e.auras.push(aura);
+    }
   }
 
   /** The player's own combat state projected to the wire, or null if it isn't a player. */
@@ -317,6 +364,15 @@ export class ServerCombat {
    */
   private awardKillXp(earnerId: string, amount: number): void {
     for (const id of this.eligiblePartyMembers(earnerId)) this.awardXp(id, amount);
+  }
+
+  /**
+   * Award XP from a non-kill source (a quest turn-in, migration #138) to one player, leveling them up
+   * on a threshold cross exactly like kill XP. Server-authoritative — the reward XP is computed from
+   * the quest def, not client-supplied. Only credits the earner (quest turn-in isn't party-shared).
+   */
+  grantXp(playerId: string, amount: number): void {
+    this.awardXp(playerId, amount);
   }
 
   /**

@@ -20,8 +20,219 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 16 (…/ whisper / who / gm / ground items)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(16);
+  it('is at protocol version 21 (…/ server-authoritative quests / professions)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(21);
+  });
+
+  it('round-trips + validates the quest action / event / log frames', () => {
+    // Client → server: quest actions.
+    const accept: ClientMessage = { t: 'quest', action: 'accept', id: 'q_intro' };
+    expect(decodeClient(encodeClient(accept))).toEqual(accept);
+    const turnIn: ClientMessage = { t: 'quest', action: 'turnIn', id: 'q_intro', choiceIndex: 1 };
+    expect(decodeClient(encodeClient(turnIn))).toEqual(turnIn);
+    // A bad action / empty id / fractional choice sinks it.
+    expect(decodeClient(JSON.stringify({ t: 'quest', action: 'grant', id: 'q' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'quest', action: 'accept', id: '' }))).toBeNull();
+    expect(
+      decodeClient(JSON.stringify({ t: 'quest', action: 'turnIn', id: 'q', choiceIndex: 1.5 })),
+    ).toBeNull();
+
+    // Client → server: the client-reportable objective events.
+    const explore: ClientMessage = { t: 'questEvent', ev: { kind: 'explore', x: 12, z: -7 } };
+    expect(decodeClient(encodeClient(explore))).toEqual(explore);
+    const talk: ClientMessage = { t: 'questEvent', ev: { kind: 'talk', npcId: 'elder' } };
+    expect(decodeClient(encodeClient(talk))).toEqual(talk);
+    const gather: ClientMessage = { t: 'questEvent', ev: { kind: 'gather', tag: 'herb', n: 3 } };
+    expect(decodeClient(encodeClient(gather))).toEqual(gather);
+    // kill / boss / collect are server-driven and REJECTED from a client (no forging kill credit).
+    expect(
+      decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'kill', enemyId: 'boar' } })),
+    ).toBeNull();
+    expect(
+      decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'boss', enemyId: 'gloomlord' } })),
+    ).toBeNull();
+    expect(
+      decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'collect', tag: 'tail' } })),
+    ).toBeNull();
+    // A malformed explore (non-finite coord) sinks it.
+    expect(decodeClient('{"t":"questEvent","ev":{"kind":"explore","x":1e999,"z":0}}')).toBeNull();
+
+    // Server → client: the authoritative quest log.
+    const log: ServerMessage = {
+      t: 'questLog',
+      tick: 5,
+      active: [{ id: 'q_intro', counts: [2, 0], pinned: true }],
+      turnedIn: ['q_prologue'],
+    };
+    expect(decodeServer(encodeServer(log))).toEqual(log);
+    // A non-integer count / non-boolean pinned sinks it.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'questLog',
+          tick: 1,
+          active: [{ id: 'q', counts: [1.5], pinned: true }],
+          turnedIn: [],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('round-trips + validates the profession action / state frames (#139)', () => {
+    // Client → server: profession actions. gather / fish carry no id; craft / use carry one.
+    const gather: ClientMessage = { t: 'prof', action: 'gather' };
+    expect(decodeClient(encodeClient(gather))).toEqual(gather);
+    const fish: ClientMessage = { t: 'prof', action: 'fish' };
+    expect(decodeClient(encodeClient(fish))).toEqual(fish);
+    const craft: ClientMessage = { t: 'prof', action: 'craft', id: 'r_copperBar' };
+    expect(decodeClient(encodeClient(craft))).toEqual(craft);
+    const use: ClientMessage = { t: 'prof', action: 'use', id: 'lesserHealthPotion' };
+    expect(decodeClient(encodeClient(use))).toEqual(use);
+    // A bad action / empty id sinks it.
+    expect(decodeClient(JSON.stringify({ t: 'prof', action: 'smelt' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'prof', action: 'craft', id: '' }))).toBeNull();
+
+    // Server → client: the authoritative profession state + per-action notices.
+    const prof: ServerMessage = {
+      t: 'professions',
+      tick: 9,
+      skills: { mining: 3, herbalism: 1, fishing: 1, blacksmithing: 1, alchemy: 1 },
+      materials: { copperOre: 4, roughStone: 2 },
+      consumables: { lesserHealthPotion: 1 },
+      learned: ['r_crystaliumBlade'],
+      notices: [
+        {
+          kind: 'gather',
+          prof: 'mining',
+          yields: [
+            { id: 'copperOre', qty: 2 },
+            { id: 'roughStone', qty: 1 },
+          ],
+          skill: 3,
+          skillUp: true,
+        },
+        { kind: 'craft', recipe: 'r_copperBar' },
+        { kind: 'use', id: 'lesserHealthPotion' },
+      ],
+    };
+    expect(decodeServer(encodeServer(prof))).toEqual(prof);
+    // A non-finite skill value / malformed notice sinks it.
+    expect(
+      decodeServer(
+        '{"t":"professions","tick":1,"skills":{"mining":1e999},"materials":{},"consumables":{},"learned":[],"notices":[]}',
+      ),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'professions',
+          tick: 1,
+          skills: {},
+          materials: {},
+          consumables: {},
+          learned: [],
+          notices: [{ kind: 'craft' }],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('round-trips the inventory-action + trusted-bridge frames + hello bagBonus', () => {
+    const item = { id: 'blade', name: 'Blade' } as unknown as never;
+    // Validated actions.
+    const equip: ClientMessage = { t: 'inv', action: 'equip', index: 2 };
+    expect(decodeClient(encodeClient(equip))).toEqual(equip);
+    const buy: ClientMessage = { t: 'inv', action: 'buy', seed: 7, tier: 5, index: 0 };
+    expect(decodeClient(encodeClient(buy))).toEqual(buy);
+    // A bad action / fractional index sinks it.
+    expect(decodeClient(JSON.stringify({ t: 'inv', action: 'nuke' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'inv', action: 'equip', index: 1.5 }))).toBeNull();
+    // Trusted bridges.
+    const reward: ClientMessage = { t: 'claimReward', gold: 30, items: [{ item, qty: 1 }] };
+    expect(decodeClient(encodeClient(reward))).toEqual(reward);
+    const spend: ClientMessage = { t: 'spendGold', amount: 12 };
+    expect(decodeClient(encodeClient(spend))).toEqual(spend);
+    // A reward with a non-finite stat is rejected (forged-item guard); a negative spend too.
+    expect(
+      decodeClient(
+        '{"t":"claimReward","gold":0,"items":[{"item":{"id":"x","name":"X","atk":1e999},"qty":1}]}',
+      ),
+    ).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'spendGold', amount: -5 }))).toBeNull();
+    // Hello carries the optional bagBonus.
+    const hello: ClientMessage = {
+      t: 'hello',
+      protocol: 19,
+      name: 'A',
+      cls: 'warrior',
+      level: 5,
+      bagBonus: 4,
+    };
+    expect(decodeClient(encodeClient(hello))).toEqual(hello);
+  });
+
+  it('round-trips the server-authoritative inventory frame (incl. buyback)', () => {
+    const item = { id: 'ring_of_x', name: 'Ring of X' } as unknown as never;
+    const inv: ServerMessage = {
+      t: 'inventory',
+      tick: 7,
+      bag: [{ item, qty: 1 }],
+      gold: 250,
+      equipment: { ring1: item },
+      buyback: [{ item, qty: 2 }],
+    };
+    expect(decodeServer(encodeServer(inv))).toEqual(inv);
+    // Empty bag + no equipment + empty buyback round-trips.
+    const empty: ServerMessage = {
+      t: 'inventory',
+      tick: 0,
+      bag: [],
+      gold: 0,
+      equipment: {},
+      buyback: [],
+    };
+    expect(decodeServer(encodeServer(empty))).toEqual(empty);
+    // A malformed equipment value (missing name) sinks the frame; so does a non-number gold.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'inventory',
+          tick: 1,
+          bag: [],
+          gold: 0,
+          equipment: { ring1: { id: 'x' } },
+          buyback: [],
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'inventory',
+          tick: 1,
+          bag: [],
+          gold: 'lots',
+          equipment: {},
+          buyback: [],
+        }),
+      ),
+    ).toBeNull();
+    // A missing / malformed buyback list sinks the frame (it's a required, validated field now).
+    expect(
+      decodeServer(JSON.stringify({ t: 'inventory', tick: 1, bag: [], gold: 0, equipment: {} })),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'inventory',
+          tick: 1,
+          bag: [],
+          gold: 0,
+          equipment: {},
+          buyback: [{ item: { id: 'x' }, qty: 1 }],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips ground-item drop / pickup / replication / grant frames', () => {

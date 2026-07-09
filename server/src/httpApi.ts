@@ -14,9 +14,22 @@ export interface HttpApiConfig {
   maxCharacterBodyBytes: number;
 }
 
+/**
+ * CORS headers so the account API is reachable from a client served on a DIFFERENT origin — the
+ * documented "static client on Vercel / a dev `vite` server, game server on the VPS" split (the game
+ * WebSocket isn't CORS-gated, but these `fetch`es are). Auth is by `Authorization: Bearer` token, not
+ * cookies, so a wildcard origin carries no credential-theft risk (no `allow-credentials`).
+ */
+const CORS_HEADERS: Record<string, string> = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
+  'access-control-allow-headers': 'content-type, authorization',
+  'access-control-max-age': '86400',
+};
+
 function json(res: ServerResponse, status: number, body: unknown): void {
   const s = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json' });
+  res.writeHead(status, { 'content-type': 'application/json', ...CORS_HEADERS });
   res.end(s);
 }
 
@@ -102,6 +115,12 @@ export class HttpApi {
   /** Handle an account route; returns true if the request was ours (else the gateway 404s). */
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = req.url ?? '';
+    // CORS preflight for the account routes (a cross-origin client's `fetch` sends OPTIONS first).
+    if (req.method === 'OPTIONS' && (url.startsWith('/auth/') || url === '/character')) {
+      res.writeHead(204, CORS_HEADERS);
+      res.end();
+      return true;
+    }
     if (url === '/auth/register' && req.method === 'POST') {
       await this.register(req, res);
       return true;

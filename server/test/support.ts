@@ -21,6 +21,9 @@ import {
   type NetPlayer,
   type NetSelf,
   type NetWorldItem,
+  type QuestEvent,
+  type QuestProgress,
+  type NetProfNotice,
 } from '@pathlands/shared';
 import { TICK_DURATION_MS } from '@pathlands/shared';
 import type { GatewayOptions } from '../src/gateway.js';
@@ -106,6 +109,24 @@ export class TestClient {
   readonly worldItems = new Map<string, NetWorldItem>();
   /** Item stacks from the most recent pickup grant, appended in arrival order. */
   readonly grants: NetItemStack[] = [];
+  /** Latest server-authoritative inventory (bag / gold / equipment / buyback), or null before it. */
+  lastInventory: {
+    bag: NetItemStack[];
+    gold: number;
+    equipment: Record<string, unknown>;
+    buyback: NetItemStack[];
+  } | null = null;
+  /** Latest server-authoritative quest log (active + turnedIn), or null before the first. */
+  lastQuestLog: { active: QuestProgress[]; turnedIn: string[] } | null = null;
+  /** Latest server-authoritative profession state (skills / stash / crafts), or null before it. */
+  lastProfessions: {
+    skills: Record<string, number>;
+    materials: Record<string, number>;
+    consumables: Record<string, number>;
+    learned: string[];
+  } | null = null;
+  /** Every profession notice received, in arrival order (gather / craft / use). */
+  readonly profNotices: NetProfNotice[] = [];
   deltaCount = 0;
   private seq = 0;
 
@@ -184,6 +205,26 @@ export class TestClient {
       case 'grant':
         for (const s of msg.items) this.grants.push(s);
         break;
+      case 'inventory':
+        this.lastInventory = {
+          bag: msg.bag,
+          gold: msg.gold,
+          equipment: msg.equipment,
+          buyback: msg.buyback,
+        };
+        break;
+      case 'questLog':
+        this.lastQuestLog = { active: msg.active, turnedIn: msg.turnedIn };
+        break;
+      case 'professions':
+        this.lastProfessions = {
+          skills: msg.skills,
+          materials: msg.materials,
+          consumables: msg.consumables,
+          learned: msg.learned,
+        };
+        for (const n of msg.notices) this.profNotices.push(n);
+        break;
       default:
         break;
     }
@@ -226,6 +267,37 @@ export class TestClient {
   /** Ask to pick up a ground item by id. */
   pickupItem(id: string): void {
     this.send({ t: 'pickupItem', id });
+  }
+  /** Send a server-validated inventory action (equip / unequip / sell / buy / buyback). */
+  invAction(
+    action: 'equip' | 'unequip' | 'sell' | 'buy' | 'buyback',
+    opts: { index?: number; slot?: string; seed?: number; tier?: number } = {},
+  ): void {
+    this.send({ t: 'inv', action, ...opts });
+  }
+  /** Send a trusted reward claim (quest turn-in / crafted item) — the server grants it. */
+  claimReward(gold: number, items: NetItemStack[]): void {
+    this.send({ t: 'claimReward', gold, items });
+  }
+  /** Send a trusted gold debit (travel fee / mount) — spent server-side if affordable. */
+  spendGold(amount: number): void {
+    this.send({ t: 'spendGold', amount });
+  }
+  /** Send a server-validated quest action (accept / turnIn / abandon / pin / unpin). */
+  questAction(
+    action: 'accept' | 'turnIn' | 'abandon' | 'pin' | 'unpin',
+    id: string,
+    choiceIndex?: number,
+  ): void {
+    this.send({ t: 'quest', action, id, ...(choiceIndex !== undefined ? { choiceIndex } : {}) });
+  }
+  /** Send a client-reported objective event (explore / talk / deliver / use / gather). */
+  questEvent(ev: QuestEvent): void {
+    this.send({ t: 'questEvent', ev });
+  }
+  /** Send a server-validated profession action (gather / fish / craft / use). */
+  profAction(action: 'gather' | 'fish' | 'craft' | 'use', id?: string): void {
+    this.send({ t: 'prof', action, ...(id !== undefined ? { id } : {}) });
   }
   /** Send a GM action (target by name). */
   gmAction(

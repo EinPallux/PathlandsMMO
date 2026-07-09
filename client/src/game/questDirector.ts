@@ -7,27 +7,34 @@
 import {
   createQuestLog,
   scaledQuestXp,
-  applyQuestEvent,
   availableFrom,
   readyToTurnIn,
   inProgressAt,
-  acceptQuest,
-  turnInQuest,
-  abandonQuest,
-  setPinned,
   isQuestComplete,
   questById,
-  QUEST_DROP_TAGS,
   QUEST_GIVERS,
   settlementById,
+  type ClientQuestAction,
+  type QuestEvent,
   type QuestLogState,
   type QuestDef,
   type QuestReward,
   type GeneratedItemSpec,
+  type ServerQuestLog,
 } from '@pathlands/shared';
 import type { CombatDirector } from './combatDirector.js';
 import { useStore, type QuestEntryUi, type QuestDialogUi, type QuestMarker } from './store.js';
 import { audio } from '../platform/audio.js';
+
+/** How the QuestDirector reaches the network (quest migration #138, Stage 2). Wired by the game. */
+export interface QuestNetSink {
+  /** Take the latest authoritative quest-log frame (the sole writer of the local mirror), or null. */
+  drainQuestLog(): ServerQuestLog | null;
+  /** Send a server-validated quest action; the change returns on the next quest-log frame. */
+  sendQuestAction(action: ClientQuestAction['action'], id: string, choiceIndex?: number): void;
+  /** Report a client-observed objective event (explore / talk / deliver / use / gather). */
+  sendQuestEvent(ev: QuestEvent): void;
+}
 
 /** World position of each quest-giver = its settlement plaza centre + its offset. */
 const GIVER_POS: Record<string, { x: number; z: number }> = {};
@@ -63,8 +70,21 @@ function rewardSummary(r: QuestReward): string {
 }
 
 export class QuestDirector {
+  /**
+   * The player's quest log — a **mirror** of the server's authoritative log now (quest migration
+   * #138, Stage 2). Written ONLY by `applyServerQuestLog`; every action (accept / turn-in / …) and
+   * client-observed objective event goes to the server as an intent, and the change comes back on the
+   * next quest-log frame. The UI read-side (log / tracker / giver dialogue / markers) is unchanged.
+   */
   private log: QuestLogState;
   private readonly combat: CombatDirector;
+  private netSink: QuestNetSink | null = null;
+  /** False until the first authoritative frame lands, so the login (and post-reconnect) baseline
+   *  fires no toasts / side effects — reset on disconnect (`resetBaseline`). */
+  private seeded = false;
+  /** quest id → the reward choice the player picked at turn-in, so the item-name floater on the
+   *  next authoritative frame (which detects the turn-in) can show the chosen item, not just item 0. */
+  private readonly pendingChoice = new Map<string, number>();
   private toastId = 1;
   private exploreTimer = 0;
   private lastEx = 0;
@@ -77,13 +97,17 @@ export class QuestDirector {
 
   constructor(combat: CombatDirector, log?: QuestLogState) {
     this.combat = combat;
-    this.log = log ?? createQuestLog();
+    this.log = log ?? createQuestLog(); // an initial mirror from the local cache; the server frame wins
     this.publish();
   }
 
-  /** A Waystone was used — advance any `use` objectives. */
+  setNetSink(sink: QuestNetSink): void {
+    this.netSink = sink;
+  }
+
+  /** A Waystone was used — report a `use` objective event to the server engine. */
   handleWaystoneUse(id: string): void {
-    this.emit({ kind: 'use', objectId: id });
+    this.netSink?.sendQuestEvent({ kind: 'use', objectId: id });
   }
 
   /** The current quest log for the character autosave. */
@@ -95,17 +119,31 @@ export class QuestDirector {
     return this.combat.characterLevel;
   }
 
-  // --- event feed ------------------------------------------------------------
+  // --- event feed → server engine -------------------------------------------
 
-  /** An enemy was slain — advance kill/boss/collect objectives. */
-  onKill(enemyId: string): void {
-    this.emit({ kind: 'kill', enemyId });
-    this.emit({ kind: 'boss', enemyId });
-    const tag = QUEST_DROP_TAGS[enemyId];
-    if (tag) this.emit({ kind: 'collect', tag, n: 1 });
+  /**
+   * Apply the authoritative quest log the server just sent — the SOLE writer of the local mirror.
+   * Diffs the previous log to surface progress/complete toasts and fire the client-only turn-in side
+   * effects (Waystone unlock + Deed progress), then republishes the UI + refreshes an open dialogue.
+   * Kill / boss / collect objectives advance here (the server drives them from authoritative kill
+   * credit); explore / talk / use / gather are reported as intents from the methods below.
+   */
+  applyServerQuestLog(): void {
+    const frame = this.netSink?.drainQuestLog();
+    if (frame === undefined || frame === null) return;
+    const next: QuestLogState = {
+      active: frame.active.map((p) => ({ id: p.id, counts: [...p.counts], pinned: p.pinned })),
+      turnedIn: [...frame.turnedIn],
+    };
+    if (this.seeded) this.diffNotices(this.log, next); // skip the login baseline (no spurious toasts)
+    this.log = next;
+    this.seeded = true;
+    this.publish();
+    const dlg = useStore.getState().questDialog;
+    if (dlg) this.reopenGiver(dlg.giverId); // refresh an open dialogue against the new log
   }
 
-  /** Called each frame with the player position (throttled explore checks). */
+  /** Called each frame with the player position (throttled) — report an explore event to the server. */
   tickExplore(dt: number, px: number, pz: number): void {
     this.exploreTimer += dt;
     if (this.exploreTimer < 0.25) return;
@@ -113,28 +151,59 @@ export class QuestDirector {
     if (Math.hypot(px - this.lastEx, pz - this.lastEz) < 1.5) return;
     this.lastEx = px;
     this.lastEz = pz;
-    this.emit({ kind: 'explore', x: px, z: pz });
+    this.netSink?.sendQuestEvent({ kind: 'explore', x: px, z: pz });
   }
 
-  private emit(ev: Parameters<typeof applyQuestEvent>[1]): void {
-    const notices = applyQuestEvent(this.log, ev);
-    const changed = notices.length > 0;
-    for (const n of notices) {
-      if (n.type === 'objectiveComplete') this.toast(`Objective: ${n.text}`, 'progress');
-      else if (n.type === 'questComplete') {
-        this.toast(`Quest complete: ${n.text}`, 'complete');
+  /** Surface toasts + client-only turn-in side effects by diffing the previous → next mirror. */
+  private diffNotices(prev: QuestLogState, next: QuestLogState): void {
+    const prevActive = new Map(prev.active.map((p) => [p.id, p]));
+    const prevTurned = new Set(prev.turnedIn);
+    for (const p of next.active) {
+      const def = questById(p.id);
+      if (!def) continue;
+      const before = prevActive.get(p.id);
+      if (!before) {
+        this.toast(`Quest accepted: ${def.name}`, 'accept');
+        continue;
+      }
+      def.objectives.forEach((o, i) => {
+        const need = Math.max(1, o.count ?? 1);
+        if ((p.counts[i] ?? 0) >= need && (before.counts[i] ?? 0) < need) {
+          this.toast(`Objective: ${o.label}`, 'progress');
+        }
+      });
+      if (isQuestComplete(def, p) && !isQuestComplete(def, before)) {
+        this.toast(`Quest complete: ${def.name}`, 'complete');
         audio.sfx('quest');
       }
     }
-    if (changed) this.publish();
+    // Newly turned-in quests → the Waystone unlock + Deed progress the server doesn't own (the gold /
+    // items / XP were granted server-side and arrive via the inventory + combat-self frames). NOTE:
+    // repeatable quests never enter `turnedIn` (they're only removed from `active`), so these side
+    // effects would be missed for them — inert today (no authored quest is repeatable); revisit when
+    // the first one lands (diff active-removal, or a server turn-in event).
+    for (const id of next.turnedIn) {
+      if (prevTurned.has(id)) continue;
+      const def = questById(id);
+      if (!def) continue;
+      this.combat.applyQuestRewardCosmetic(def.reward);
+      // Float the reward item names (the items themselves are server-granted via the inventory frame).
+      const idx = this.pendingChoice.get(id) ?? 0;
+      this.pendingChoice.delete(id);
+      for (const s of def.reward.items ?? []) this.combat.floatRewardLine(specLabel(s));
+      const choice = def.reward.choices?.[idx];
+      if (choice) this.combat.floatRewardLine(specLabel(choice));
+      this.onQuestTurnedIn?.();
+      this.toast(`Turned in: ${def.name}`, 'complete');
+    }
   }
 
   // --- giver interaction -----------------------------------------------------
 
   /** Open a quest giver's dialogue (offers + ready turn-ins). Also fires a talk event. */
   openGiver(giverId: string, giverName: string): void {
-    // Talking to a giver can itself satisfy a `talk` objective.
-    this.emit({ kind: 'talk', npcId: giverId });
+    // Talking to a giver can itself satisfy a `talk` objective (reported to the server engine).
+    this.netSink?.sendQuestEvent({ kind: 'talk', npcId: giverId });
 
     const offers = availableFrom(giverId, this.log, this.level).map((q) => ({
       id: q.id,
@@ -159,35 +228,35 @@ export class QuestDirector {
     };
   }
 
+  // The action methods are intent-senders now (quest migration #138, Stage 2): the server validates
+  // + applies against its authoritative log and the change returns on the next quest-log frame, which
+  // `applyServerQuestLog` mirrors + toasts. No local mutation, so the UI can't diverge from the server.
+
   accept(id: string): void {
-    const def = questById(id);
-    if (!def) return;
-    if (acceptQuest(this.log, id, this.level)) {
-      this.toast(`Quest accepted: ${def.name}`, 'accept');
-      this.reopenGiver(def.giver);
-      this.publish();
-    }
+    this.netSink?.sendQuestAction('accept', id);
   }
 
   turnIn(id: string, choiceIndex: number): void {
-    const def = questById(id);
-    const reward = turnInQuest(this.log, id);
-    if (!reward || !def) return;
-    this.combat.grantReward(reward, choiceIndex);
-    this.onQuestTurnedIn?.(); // Deed progress
-    this.toast(`Quest complete: ${def.name}`, 'complete');
-    this.reopenGiver(def.turnIn ?? def.giver);
-    this.publish();
+    // The reward (gold / items / XP) is computed + granted server-side; the Waystone unlock + Deed
+    // progress + item-name floaters fire from `diffNotices` when the quest lands in `turnedIn` on the
+    // next frame. Remember the picked choice so that floater shows the item the player actually chose.
+    this.pendingChoice.set(id, choiceIndex);
+    this.netSink?.sendQuestAction('turnIn', id, choiceIndex);
+  }
+
+  /** Re-arm the baseline so the next authoritative frame (a fresh login or a reconnect) fires no
+   *  toasts / turn-in side effects for state that predates it. Called on disconnect by the game. */
+  resetBaseline(): void {
+    this.seeded = false;
+    this.pendingChoice.clear();
   }
 
   abandon(id: string): void {
-    abandonQuest(this.log, id);
-    this.publish();
+    this.netSink?.sendQuestAction('abandon', id);
   }
 
   pin(id: string, pinned: boolean): void {
-    setPinned(this.log, id, pinned);
-    this.publish();
+    this.netSink?.sendQuestAction(pinned ? 'pin' : 'unpin', id);
   }
 
   closeDialog(): void {

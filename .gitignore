@@ -21,3 +21,6 @@ shared/dist/
 
 # test / coverage
 coverage/
+
+# server FileStore data (local dev without Postgres)
+server/data/

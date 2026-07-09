@@ -40,7 +40,7 @@ import { GatherDirector } from './gatherDirector.js';
 import { MetaDirector } from './metaDirector.js';
 import { MountController } from './mountController.js';
 import { BountyDirector } from './bountyDirector.js';
-import { questGiverById } from '@pathlands/shared';
+import { questGiverById, perkMagnitude } from '@pathlands/shared';
 import { useStore, type GameCommands, type Nameplate } from './store.js';
 
 // Spawn (Brookhollow plaza, north of the fountain at 1536,1536) is a shared world
@@ -247,9 +247,10 @@ export class Game {
       character?.bounties,
     );
 
-    // Fan world events out to the quest + meta + bounty systems (they share events).
+    // Fan world events out to the meta + bounty systems (they share kill events). Quest kill/boss/
+    // collect objectives are server-driven now (migration #138) — the gateway advances them from
+    // authoritative kill credit and replicates the log, so the client no longer feeds kills to quests.
     this.combat.onEnemyKilled = (id) => {
-      this.quests.onKill(id);
       this.meta.handleKill(id);
       this.bounties.onKill(id);
     };
@@ -270,10 +271,19 @@ export class Game {
         name: character?.name ?? 'Wanderer',
         cls: this.currentClass,
         level: character?.level ?? 1,
+        // Deep-Pockets bag bonus, so the server sizes the authoritative bag cap right (account perk).
+        bagBonus: perkMagnitude(this.account.perks, 'bagSlots'),
         ...(serverToken !== null ? { token: serverToken } : {}),
       },
-      onStatus: (st) =>
-        useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs }),
+      onStatus: (st) => {
+        // On a drop, re-arm the quest baseline so the post-reconnect log frame is treated as a fresh
+        // baseline (no replayed toasts / turn-in side effects) rather than diffed against stale state.
+        if (st.phase === 'reconnecting') {
+          this.quests.resetBaseline();
+          this.gather.resetBaseline();
+        }
+        useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs });
+      },
       onChat: (line) =>
         useStore.getState().pushChat({
           from: line.from,
@@ -324,7 +334,24 @@ export class Game {
       drainKills: () => net.drainKills(),
       drainFx: () => net.drainFx(),
       drainGrants: () => net.drainGrants(),
+      drainInventory: () => net.drainInventory(),
       send: (intent) => net.sendIntent(intent),
+      sendInvAction: (a) => net.sendInvAction(a),
+      sendClaimReward: (gold, items) => net.sendClaimReward(gold, items),
+      sendSpendGold: (amount) => net.sendSpendGold(amount),
+    });
+    // Quests are server-authoritative now (migration #138, Stage 2): the director renders the
+    // server's quest log + drives it entirely by intents.
+    this.quests.setNetSink({
+      drainQuestLog: () => net.drainQuestLog(),
+      sendQuestAction: (action, id, choiceIndex) => net.sendQuestAction(action, id, choiceIndex),
+      sendQuestEvent: (ev) => net.sendQuestEvent(ev),
+    });
+    // Professions are server-authoritative now (migration #139): the director renders the server's
+    // skills / stash / crafts + drives gathering / crafting / consumable use entirely by intents.
+    this.gather.setNetSink({
+      drainProfessions: () => net.drainProfessions(),
+      sendProfAction: (action, id) => net.sendProfAction(action, id),
     });
     // Persist promptly whenever a ground-item drop/pickup mutates the bag (dupe-window mitigation).
     this.combat.setBagMutationHook(() => this.onPersist?.());
@@ -443,14 +470,11 @@ export class Game {
       unequipItem: (slot) => this.combat.unequipItem(slot),
       sellItem: (index) => this.combat.sellItem(index),
       dropItem: (index) => {
-        // Send the drop FIRST, remove from the local bag only on a confirmed send. A drop the
-        // server would reject (rate-limited, or the socket isn't open) must not vanish the item —
-        // there is no inventory ack to restore it (the bag is client-authoritative).
+        // Send the drop by content; the SERVER removes the matching stack from the authoritative
+        // bag and spawns the ground item, then re-replicates the bag (the client never mutates it
+        // locally now — the inventory frame is the single writer).
         const stack = this.combat.peekInventory(index);
-        if (stack === null) return;
-        if (this.net?.sendDropItem(stack.item, stack.qty) === true) {
-          this.combat.removeInventoryAt(index);
-        }
+        if (stack !== null) this.net?.sendDropItem(stack.item, stack.qty);
       },
       buyItem: (index) => this.combat.buyItem(index),
       buybackItem: (index) => this.combat.buybackItem(index),
@@ -803,10 +827,14 @@ export class Game {
     // player is standing still. Visual consumers (model, camera, streaming) keep `rs`.
     const ph = this.controller.physics;
 
-    // Quest explore-objective checks (throttled inside).
+    // Adopt the server's authoritative quest log (migration #138), then run the throttled explore
+    // check that reports an explore event to it.
+    this.quests.applyServerQuestLog();
     this.quests.tickExplore(dt, ph.x, ph.z);
 
-    // Gathering: node proximity, channel/fishing progress (cancels on movement).
+    // Gathering: adopt the server's authoritative profession state (migration #139), then run node
+    // proximity + channel/fishing progress (cancels on movement).
+    this.gather.applyServerProfessions();
     const gMoved = Math.hypot(ph.x - this.lastGx, ph.z - this.lastGz) > 0.04;
     this.lastGx = ph.x;
     this.lastGz = ph.z;

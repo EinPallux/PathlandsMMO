@@ -14,6 +14,7 @@
 // always lived — the server is authoritative by construction.
 
 import type { ItemDef } from '../data/items.js';
+import type { QuestEvent, QuestProgress } from '../quests/index.js';
 import type { CastSkillIntent, Intent, MoveIntent } from '../sim/intents.js';
 import type { MoveState, PlayerPhysics } from '../sim/types.js';
 
@@ -34,9 +35,29 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  * v14 added the online roster query (ClientWho / ServerWho);
  * v15 added GM tooling (ClientGm + ServerWelcome.gm);
  * v16 added droppable ground items (ClientDropItem / ClientPickupItem / ServerWorldItems /
- *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped.
+ *     ServerItemGranted) — the way players trade now that bank/mail/trade are scrapped;
+ * v17 added the server-authoritative inventory channel (ServerInventory — the owner's bag / gold /
+ *     equipment) as the economy migration begins moving inventory authority server-side;
+ * v18 completed the inventory flip: the client renders the server's inventory + drives it via
+ *     ClientInvAction / ClientClaimReward / ClientSpendGold (the last two trusted bridges for the
+ *     not-yet-migrated quest-reward / travel / mount sources), and ClientHello carries bagBonus;
+ * v19 replicated the vendor buyback list on ServerInventory (item + qty per remembered sale) so the
+ *     client's shop UI is a pure mirror of the server's buyback state instead of a parallel copy that
+ *     desynced on a stale/double-clicked sale;
+ * v20 began the server-authoritative quest migration (#138): ClientQuestAction (accept / turnIn /
+ *     abandon / pin / unpin) + ClientQuestEvent (the client-reported objective sources — explore /
+ *     talk / deliver / use / gather; kill/boss/collect are server-driven) + ServerQuestLog (the
+ *     owner's authoritative quest log). The server runs the pure shared/quests engine + computes
+ *     turn-in rewards; this stage lands the server capability + tests (the client still owns its log);
+ * v21 completed the server-authoritative profession migration (#139): ClientProfAction (gather / fish
+ *     / craft / use) + ServerProfessions (the owner's authoritative skills / material stash / crafted
+ *     consumables / learned recipes, plus per-action NetProfNotice[] so the client mirror plays the
+ *     exact toasts + drives the still-client-side deed / bounty side effects). The server resolves
+ *     gathering (nearest node re-derived from the deterministic worldgen scatter, server-owned RNG,
+ *     per-player node depletion) + crafting (retiring the trusted craft `claimReward` bridge — gear is
+ *     forged + granted server-side) + consumable use (applied to the player's combat entity).
  */
-export const NET_PROTOCOL_VERSION = 16;
+export const NET_PROTOCOL_VERSION = 21;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -46,6 +67,26 @@ const PARTY_ACTIONS = ['invite', 'accept', 'decline', 'leave', 'kick'];
 
 /** Valid GM actions on the wire (the server re-checks GM privilege before acting). */
 const GM_ACTIONS = ['kick', 'mute', 'unmute', 'ban', 'unban', 'teleport', 'give'];
+
+/** Valid inventory actions on the wire (the server re-validates each against the authoritative bag). */
+const INV_ACTIONS = ['equip', 'unequip', 'sell', 'buy', 'buyback'];
+
+/** Valid quest actions on the wire (the server re-validates each against the authoritative log). */
+const QUEST_ACTIONS = ['accept', 'turnIn', 'abandon', 'pin', 'unpin'];
+
+/** The objective-event kinds a CLIENT may report (quest migration #138). kill/boss/collect are
+ *  server-driven from authoritative kill credit and are NEVER accepted from a client (forging them
+ *  would inflate kill counts), so they're excluded here. */
+const CLIENT_QUEST_EVENT_KINDS = ['explore', 'talk', 'deliver', 'use', 'gather'];
+
+/** Valid profession actions on the wire (profession migration #139). The server re-validates each
+ *  against the player's AUTHORITATIVE state + position: `gather` / `fish` carry no target (the server
+ *  resolves the nearest worldgen node / the water tier from where the player actually stands), while
+ *  `craft` / `use` carry the recipe / consumable `id`. */
+const PROF_ACTIONS = ['gather', 'fish', 'craft', 'use'];
+
+/** Bound on a quest / npc id accepted on the wire (defends the decoder + downstream lookups). */
+const MAX_QUEST_ID_LEN = 64;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -181,6 +222,13 @@ export interface ClientHello {
    * used when no token is supplied). Absent ⇒ an ephemeral guest session.
    */
   token?: string;
+  /**
+   * Extra bag slots from the account's Deep-Pockets perk, so the server sizes the authoritative bag
+   * cap correctly. Client-supplied (perks aren't persisted server-side yet) and self-scoped — a
+   * bogus value only changes the sender's OWN cap, so it's a negligible self-cheat; it's replaced by
+   * server-side perk state when perks migrate.
+   */
+  bagBonus?: number;
 }
 
 /**
@@ -281,6 +329,89 @@ export interface ClientPickupItem {
   id: string;
 }
 
+/**
+ * A server-validated inventory action (economy migration, Stage 1b). Each mutates the recipient's
+ * OWN authoritative inventory, which the server re-validates before applying (capacity, gold,
+ * equippability, valid index/slot) — a cheat client can't equip what it can't wear or oversell.
+ * `equip`/`sell`/`buyback` carry a bag/buyback `index`; `unequip` a `slot`; `buy` the vendor's
+ * `seed` + `tier` + stock `index` (the server recomputes the deterministic stock + price, so the
+ * client can't set its own price).
+ */
+export interface ClientInvAction {
+  t: 'inv';
+  action: 'equip' | 'unequip' | 'sell' | 'buy' | 'buyback';
+  index?: number;
+  slot?: string;
+  seed?: number;
+  tier?: number;
+}
+
+/**
+ * A TRUSTED credit into the sender's own inventory — the bridge for a bag/gold source that hasn't
+ * migrated server-side yet (a quest turn-in reward). The client (which validated the quest) tells
+ * the server to grant the reward; the server applies it to the authoritative inventory. Trusted for
+ * now (parity with the previously client-authoritative bag) and replaced by server-side validation
+ * when quests migrate (#138).
+ */
+export interface ClientClaimReward {
+  t: 'claimReward';
+  gold: number;
+  items: NetItemStack[];
+}
+
+/**
+ * A TRUSTED gold DEBIT from the sender's own wallet — the bridge for a not-yet-migrated gold sink
+ * (a Waystone travel fee, a mount purchase). The server debits only if the wallet can afford it, so
+ * this can't push gold negative; the amount is client-computed for now (validated when travel /
+ * mounts migrate). Not a gain vector — it only ever spends.
+ */
+export interface ClientSpendGold {
+  t: 'spendGold';
+  amount: number;
+}
+
+/**
+ * A server-validated quest action against the sender's OWN authoritative quest log (migration #138).
+ * `accept` / `turnIn` / `abandon` / `pin` / `unpin` carry the quest `id`; `turnIn` may carry a
+ * `choiceIndex` picking one of the reward's `choices`. The server re-runs the pure shared/quests
+ * engine (availability, prereqs, completion) before applying — a cheat client can't accept a quest
+ * it hasn't unlocked or turn in one it hasn't finished, and the reward is computed server-side.
+ */
+export interface ClientQuestAction {
+  t: 'quest';
+  action: 'accept' | 'turnIn' | 'abandon' | 'pin' | 'unpin';
+  id: string;
+  choiceIndex?: number;
+}
+
+/**
+ * A client-reported objective event (migration #138). Only the sources the server can't yet observe
+ * itself ride here — `explore` (reach an area), `talk` / `deliver` (an NPC dialogue), `use` (a world
+ * object), `gather` (a profession node). kill / boss / collect are driven server-side from
+ * authoritative kill credit and are rejected on this frame. Interim-trusted this stage (parity with
+ * the previously client-owned log); proximity re-validation lands with the client flip.
+ */
+export interface ClientQuestEvent {
+  t: 'questEvent';
+  ev: QuestEvent;
+}
+
+/**
+ * A server-validated profession action against the sender's OWN authoritative profession state
+ * (migration #139). `gather` mines / herbs the nearest worldgen node to the player, `fish` casts at
+ * the water the player is standing in, `craft` runs a recipe (`id`), and `use` drinks a consumable
+ * (`id`). The server re-derives the gather node from the deterministic worldgen scatter + the
+ * player's AUTHORITATIVE position (so a client can't gather a node it isn't standing at, or one above
+ * its skill), owns the yield / craft RNG, and enforces per-player node depletion — a cheat client
+ * can't forge materials or out-pace the gather cadence. `id` is ignored for `gather` / `fish`.
+ */
+export interface ClientProfAction {
+  t: 'prof';
+  action: 'gather' | 'fish' | 'craft' | 'use';
+  /** Recipe id (`craft`) or consumable id (`use`); ignored for `gather` / `fish`. */
+  id?: string;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientIntent
@@ -290,7 +421,13 @@ export type ClientMessage =
   | ClientWho
   | ClientGm
   | ClientDropItem
-  | ClientPickupItem;
+  | ClientPickupItem
+  | ClientInvAction
+  | ClientClaimReward
+  | ClientSpendGold
+  | ClientQuestAction
+  | ClientQuestEvent
+  | ClientProfAction;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -567,6 +704,83 @@ export interface ServerItemGranted {
   items: NetItemStack[];
 }
 
+/**
+ * The recipient's OWN authoritative inventory — bag stacks, gold, and worn equipment — sent to the
+ * owner only (like ServerSelf / ServerCombatSelf), at broadcast cadence when it changes. As the
+ * economy migrates server-side, this becomes the single source of truth the client's bag / gold /
+ * character sheet render from; the client stops locally aggregating loot into a client-owned bag.
+ */
+export interface ServerInventory {
+  t: 'inventory';
+  tick: number;
+  bag: NetItemStack[];
+  gold: number;
+  /** Equip slot id → the worn item (a full ItemDef, same shape as the save's equipment map). */
+  equipment: Record<string, ItemDef>;
+  /** The vendor buyback list (most-recent-sold first). The client re-derives each price from the
+   *  deterministic `sellPrice(item, qty)`, so only item + qty travel — the shop UI mirrors this. */
+  buyback: NetItemStack[];
+}
+
+/**
+ * The recipient's OWN authoritative quest log (migration #138), sent to the owner only at broadcast
+ * cadence when it changes — the active quests (with per-objective progress counts + pin flag) and the
+ * turned-in id list. As quests migrate server-side this becomes the source of truth the client's quest
+ * log / tracker render from. `active` mirrors `QuestProgress[]`; `turnedIn` mirrors the id list.
+ */
+export interface ServerQuestLog {
+  t: 'questLog';
+  tick: number;
+  active: QuestProgress[];
+  turnedIn: string[];
+}
+
+/** One material / fish yield of a gather (id + qty), carried on a gather NetProfNotice. */
+export interface NetProfYield {
+  id: string;
+  qty: number;
+}
+
+/**
+ * A profession outcome the server reports to the owner alongside the authoritative state (migration
+ * #139), so the client mirror can play the exact toast + drive the still-client-side deed / bounty
+ * side effects instead of guessing them from a state diff (a smelt and a mine both raise a material
+ * count — undecidable without this):
+ *   - `gather`: what a mine / herb / fish yielded (`prof` + `yields`) and the resulting gathering
+ *      `skill` (`skillUp` true when it rose). The client toasts it, credits gather bounties per yield,
+ *      and advances the gathering deed on a skill-up.
+ *   - `craft`: the `recipe` crafted (+ any `discovered` recipe learned). The client toasts it + advances
+ *      the craft deed; a crafted gear item itself arrives on the inventory frame (forged server-side).
+ *   - `use`: the `id` of the consumable drunk. The client floats its effect label — the HP / resource /
+ *      buff is applied to the player's combat entity server-side and arrives on the combat-self frame.
+ */
+export type NetProfNotice =
+  | { kind: 'gather'; prof: string; yields: NetProfYield[]; skill: number; skillUp: boolean }
+  | { kind: 'craft'; recipe: string; discovered?: string }
+  | { kind: 'use'; id: string };
+
+/**
+ * The recipient's OWN authoritative profession state (migration #139) — skills, the material stash,
+ * crafted consumables, and learned discovery recipes — sent to the owner only at broadcast cadence
+ * when it changes. The client's professions / crafting panels render from this mirror; the maps are
+ * the source of truth it overwrites its local state with. `notices` carries what changed since the
+ * last frame (empty on the seed / reconnect frame, so a login replays no toasts) so the client can
+ * play the right feedback + fire deed / bounty side effects.
+ */
+export interface ServerProfessions {
+  t: 'professions';
+  tick: number;
+  /** Profession id → skill level (1–100). */
+  skills: Record<string, number>;
+  /** Material id → stack count. */
+  materials: Record<string, number>;
+  /** Consumable id → stack count. */
+  consumables: Record<string, number>;
+  /** Learned discovery-recipe ids. */
+  learned: string[];
+  notices: NetProfNotice[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -581,6 +795,9 @@ export type ServerMessage =
   | ServerWho
   | ServerWorldItems
   | ServerItemGranted
+  | ServerInventory
+  | ServerQuestLog
+  | ServerProfessions
   | ServerPong
   | ServerError
   | ServerChat;
@@ -739,6 +956,10 @@ export function decodeClient(raw: string): ClientMessage | null {
         if (!isString(o.token)) return null;
         hello.token = o.token;
       }
+      if (o.bagBonus !== undefined) {
+        if (!isFiniteNumber(o.bagBonus)) return null;
+        hello.bagBonus = o.bagBonus;
+      }
       return hello;
     }
     case 'intent': {
@@ -818,6 +1039,105 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_CHAT_LEN) return null;
       return { t: 'pickupItem', id: o.id };
     }
+    case 'inv': {
+      if (!isString(o.action) || !INV_ACTIONS.includes(o.action)) return null;
+      const act: ClientInvAction = { t: 'inv', action: o.action as ClientInvAction['action'] };
+      // Optional fields are validated when present; the gateway enforces which each action needs.
+      if (o.index !== undefined) {
+        if (!isNonNegInt(o.index)) return null;
+        act.index = o.index;
+      }
+      if (o.slot !== undefined) {
+        if (!isString(o.slot) || o.slot.length > 32) return null;
+        act.slot = o.slot;
+      }
+      if (o.seed !== undefined) {
+        if (!isFiniteNumber(o.seed)) return null;
+        act.seed = o.seed;
+      }
+      if (o.tier !== undefined) {
+        if (!isNonNegInt(o.tier)) return null;
+        act.tier = o.tier;
+      }
+      return act;
+    }
+    case 'claimReward': {
+      if (!isNonNegInt(o.gold) || !Array.isArray(o.items) || !o.items.every(isNetItemStack)) {
+        return null;
+      }
+      // The reward items are trusted (client-validated quest); still reject a non-finite stat so a
+      // forged reward can't poison the bag (same guard as a dropped item).
+      for (const s of o.items) {
+        if (!isSafeItemTree((s as { item: unknown }).item, 0, { n: 256 })) return null;
+      }
+      return { t: 'claimReward', gold: o.gold, items: o.items };
+    }
+    case 'spendGold': {
+      if (!isNonNegInt(o.amount)) return null;
+      return { t: 'spendGold', amount: o.amount };
+    }
+    case 'quest': {
+      if (!isString(o.action) || !QUEST_ACTIONS.includes(o.action)) return null;
+      if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_QUEST_ID_LEN) return null;
+      const act: ClientQuestAction = {
+        t: 'quest',
+        action: o.action as ClientQuestAction['action'],
+        id: o.id,
+      };
+      if (o.choiceIndex !== undefined) {
+        if (!isNonNegInt(o.choiceIndex)) return null;
+        act.choiceIndex = o.choiceIndex;
+      }
+      return act;
+    }
+    case 'questEvent': {
+      const ev = decodeClientQuestEvent(o.ev);
+      return ev === null ? null : { t: 'questEvent', ev };
+    }
+    case 'prof': {
+      if (!isString(o.action) || !PROF_ACTIONS.includes(o.action)) return null;
+      const act: ClientProfAction = { t: 'prof', action: o.action as ClientProfAction['action'] };
+      // craft / use carry a recipe / consumable id; gather / fish don't. Bound + require non-empty
+      // when present so a downstream registry lookup can't be handed a huge or empty string.
+      if (o.id !== undefined) {
+        if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_QUEST_ID_LEN) return null;
+        act.id = o.id;
+      }
+      return act;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Validate a client-reported objective event. Only the sources the server can't yet observe itself
+ * are accepted (`explore` / `talk` / `deliver` / `use` / `gather`); kill / boss / collect are
+ * server-driven and rejected here so a client can't forge kill credit. Returns the typed event or
+ * null.
+ */
+function decodeClientQuestEvent(v: unknown): QuestEvent | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (!isString(o.kind) || !CLIENT_QUEST_EVENT_KINDS.includes(o.kind)) return null;
+  const idOk = (s: unknown): s is string =>
+    isString(s) && s.length > 0 && s.length <= MAX_QUEST_ID_LEN;
+  switch (o.kind) {
+    case 'explore':
+      if (!isFiniteNumber(o.x) || !isFiniteNumber(o.z)) return null;
+      return { kind: 'explore', x: o.x, z: o.z };
+    case 'talk':
+      return idOk(o.npcId) ? { kind: 'talk', npcId: o.npcId } : null;
+    case 'deliver':
+      return idOk(o.npcId) ? { kind: 'deliver', npcId: o.npcId } : null;
+    case 'use':
+      return idOk(o.objectId) ? { kind: 'use', objectId: o.objectId } : null;
+    case 'gather':
+      if (!idOk(o.tag)) return null;
+      if (o.n !== undefined && (!isNonNegInt(o.n) || o.n < 1)) return null;
+      return o.n !== undefined
+        ? { kind: 'gather', tag: o.tag, n: o.n }
+        : { kind: 'gather', tag: o.tag };
     default:
       return null;
   }
@@ -915,6 +1235,23 @@ function isNetItemStack(v: unknown): v is NetItemStack {
   if (!isFiniteNumber(o.qty) || typeof o.item !== 'object' || o.item === null) return false;
   const item = o.item as Record<string, unknown>;
   return isString(item.id) && isString(item.name);
+}
+
+/**
+ * A worn-equipment map on the wire (slot id → ItemDef) for ServerInventory. SERVER→client (trusted),
+ * so a structural check: an object whose every value is an item with a string id + name. Returns the
+ * validated map, or null on a malformed shape.
+ */
+function decodeEquipment(v: unknown): Record<string, ItemDef> | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const out: Record<string, ItemDef> = {};
+  for (const [slot, item] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof item !== 'object' || item === null) return null;
+    const it = item as Record<string, unknown>;
+    if (!isString(it.id) || !isString(it.name)) return null;
+    out[slot] = item as unknown as ItemDef;
+  }
+  return out;
 }
 
 /** A ground item on the wire (SERVER→client; trusted source, so a structural sanity check). */
@@ -1103,9 +1440,106 @@ export function decodeServer(raw: string): ServerMessage | null {
       }
       return { t: 'grant', tick: o.tick, items: o.items };
     }
+    case 'inventory': {
+      if (!isFiniteNumber(o.tick) || !isFiniteNumber(o.gold)) return null;
+      if (!Array.isArray(o.bag) || !o.bag.every(isNetItemStack)) return null;
+      if (!Array.isArray(o.buyback) || !o.buyback.every(isNetItemStack)) return null;
+      const equipment = decodeEquipment(o.equipment);
+      if (equipment === null) return null;
+      return {
+        t: 'inventory',
+        tick: o.tick,
+        bag: o.bag,
+        gold: o.gold,
+        equipment,
+        buyback: o.buyback,
+      };
+    }
+    case 'questLog': {
+      if (!isFiniteNumber(o.tick)) return null;
+      if (!Array.isArray(o.active) || !o.active.every(isNetQuestProgress)) return null;
+      if (!Array.isArray(o.turnedIn) || !o.turnedIn.every(isString)) return null;
+      return {
+        t: 'questLog',
+        tick: o.tick,
+        active: o.active as QuestProgress[],
+        turnedIn: o.turnedIn as string[],
+      };
+    }
+    case 'professions': {
+      if (!isFiniteNumber(o.tick)) return null;
+      const skills = decodeCountMap(o.skills);
+      const materials = decodeCountMap(o.materials);
+      const consumables = decodeCountMap(o.consumables);
+      if (skills === null || materials === null || consumables === null) return null;
+      if (!Array.isArray(o.learned) || !o.learned.every(isString)) return null;
+      if (!Array.isArray(o.notices) || !o.notices.every(isNetProfNotice)) return null;
+      return {
+        t: 'professions',
+        tick: o.tick,
+        skills,
+        materials,
+        consumables,
+        learned: o.learned as string[],
+        notices: o.notices as NetProfNotice[],
+      };
+    }
     default:
       return null;
   }
+}
+
+/** Validate an untrusted id → count map (skills / materials / consumables) on the ServerProfessions
+ *  frame. SERVER→client (trusted source), so a structural check: an object whose every value is a
+ *  finite number. Returns the map or null on a malformed shape. */
+function decodeCountMap(v: unknown): Record<string, number> | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Record<string, unknown>)) {
+    if (!isFiniteNumber(n)) return null;
+    out[k] = n;
+  }
+  return out;
+}
+
+/** Validate one gather yield (id + finite qty) on a gather NetProfNotice. */
+function isNetProfYield(v: unknown): v is NetProfYield {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return isString(o.id) && isFiniteNumber(o.qty);
+}
+
+/** Validate one profession notice (gather / craft / use) on the ServerProfessions frame. */
+function isNetProfNotice(v: unknown): v is NetProfNotice {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  switch (o.kind) {
+    case 'gather':
+      return (
+        isString(o.prof) &&
+        isFiniteNumber(o.skill) &&
+        isBool(o.skillUp) &&
+        Array.isArray(o.yields) &&
+        o.yields.every(isNetProfYield)
+      );
+    case 'craft':
+      return isString(o.recipe) && (o.discovered === undefined || isString(o.discovered));
+    case 'use':
+      return isString(o.id);
+    default:
+      return false;
+  }
+}
+
+function isNetQuestProgress(v: unknown): v is QuestProgress {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.id) &&
+    Array.isArray(o.counts) &&
+    o.counts.every((c) => isNonNegInt(c)) &&
+    typeof o.pinned === 'boolean'
+  );
 }
 
 function isNetPartyMember(v: unknown): v is NetPartyMember {

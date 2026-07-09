@@ -1,14 +1,14 @@
-// Client gathering orchestrator (GDD §9): finds gather nodes by re-running the
-// deterministic worldgen scatter near the player, drives the mining/herbalism
-// channel and the fishing minigame, banks materials + profession skill-ups, and
-// publishes the gather prompt / channel bar / professions panel. All gather rules
-// live in shared/professions; this is the input → engine → events edge.
+// Client gathering orchestrator (GDD §9), a server-authoritative MIRROR now (profession migration
+// #139). It still finds gather nodes by re-running the deterministic worldgen scatter near the player
+// and drives the mining/herbalism channel + fishing minigame for UX, but every gather / fish / craft /
+// consumable-use is sent to the server as an INTENT — the server owns the yields (its own seeded RNG),
+// the skill-ups, node depletion, and the material / consumable stash. The authoritative state comes
+// back on the professions frame, which is the SOLE writer of the local skills / materials / consumables
+// / learned mirror; per-action notices on that frame drive the toasts + the still-client-side deed /
+// bounty side effects. All gather rules live in shared/professions and run on the server.
 
 import {
-  Biome,
   nodeInfo,
-  gatherNode,
-  rollFish,
   canGather,
   fishBiteDelaySeconds,
   materialById,
@@ -22,13 +22,15 @@ import {
   CHANNEL_SECONDS,
   RECIPES,
   canCraft,
-  craft,
   recipeById,
   consumableById,
   type World,
   type PropInstance,
   type RecipeOutput,
   type ConsumableEffect,
+  type ClientProfAction,
+  type NetProfNotice,
+  type ServerProfessions,
 } from '@pathlands/shared';
 import type { CombatDirector } from './combatDirector.js';
 import { useStore, type GatherStatus } from './store.js';
@@ -53,7 +55,6 @@ type Channel =
     }
   | {
       mode: 'fish';
-      tier: number;
       phase: 'wait' | 'bite';
       elapsed: number;
       biteAt: number;
@@ -62,22 +63,42 @@ type Channel =
 
 const NODE_RANGE = 3.5; // metres to work a node
 const FISH_RANGE = 3.0; // metres from water to fish
-const RESPAWN_SECONDS = 120; // node respawn (GDD §9: 90–180 s)
+const RESPAWN_SECONDS = 120; // node respawn (GDD §9: 90–180 s) — client-optimistic prompt only
+
+/** How the GatherDirector reaches the network (profession migration #139). Wired by the game. */
+export interface ProfNetSink {
+  /** Take the authoritative profession frames since the last drain (state + per-action notices). */
+  drainProfessions(): ServerProfessions[];
+  /** Send a server-validated profession action; the change returns on the next professions frame. */
+  sendProfAction(action: ClientProfAction['action'], id?: string): void;
+}
 
 export class GatherDirector {
   private readonly world: World;
   private readonly combat: CombatDirector;
+  /** Server-authoritative MIRRORS (profession migration #139): written ONLY by `applyServerProfessions`.
+   *  Actions go to the server as intents; the change comes back on the professions frame. */
   private skills: Record<string, number>;
   private materials: Record<string, number>;
   private consumables: Record<string, number>;
+  /** Learned discovery-recipe ids (advanced recipes hidden until discovered). Mirror. */
+  private learned: Set<string>;
+
+  private netSink: ProfNetSink | null = null;
 
   private nodes: Node[] = [];
   private nodeCX = Infinity;
   private nodeCZ = Infinity;
-  private readonly depleted = new Map<string, number>(); // key → clock time it respawns
+  /** Client-optimistic depletion (key → clock time it respawns) so the prompt doesn't immediately
+   *  re-offer a node just worked; the server owns the AUTHORITATIVE depletion + respawn. */
+  private readonly depleted = new Map<string, number>();
   private clock = 0;
   private channel: Channel | null = null;
   private actionSeq = 1;
+  /** Monotonic id source for gather/craft toasts (negative, to stay distinct from quest toasts).
+   *  Separate from `actionSeq` because the gather/craft RNG that used to bump it moved server-side —
+   *  without its own counter consecutive toasts would collide on one React key. */
+  private toastSeq = 1;
   private nearby: { label: string; kind: string } | null = null;
 
   /** Meta hooks (set by the game): a craft finished / a gathering skill increased. */
@@ -85,9 +106,6 @@ export class GatherDirector {
   onGatherSkill?: (skill: number) => void;
   /** A material was gathered (id + qty) — feeds gather bounties. */
   onMaterialGained?: (materialId: string, qty: number) => void;
-
-  /** Learned discovery-recipe ids (advanced recipes hidden until discovered). */
-  private learned: Set<string>;
 
   constructor(
     world: World,
@@ -99,6 +117,7 @@ export class GatherDirector {
   ) {
     this.world = world;
     this.combat = combat;
+    // Seed the mirror from the local cache; the first server frame is authoritative and wins.
     this.skills = skills
       ? { ...skills }
       : { mining: 1, herbalism: 1, fishing: 1, blacksmithing: 1, alchemy: 1 };
@@ -109,7 +128,11 @@ export class GatherDirector {
     this.publishCrafting();
   }
 
-  /** Progression for the character autosave. */
+  setNetSink(sink: ProfNetSink): void {
+    this.netSink = sink;
+  }
+
+  /** Progression for the character autosave (read from the mirror). */
   get state(): {
     professions: Record<string, number>;
     materials: Record<string, number>;
@@ -124,65 +147,101 @@ export class GatherDirector {
     };
   }
 
-  // --- crafting + consumables -----------------------------------------------
+  // --- server frame → mirror + side effects ---------------------------------
 
-  /** Craft a recipe: consume materials, bank the output, level the profession. */
-  craftRecipe(id: string): void {
-    const recipe = recipeById(id);
-    if (!recipe) return;
-    const skill = this.skills[recipe.profession] ?? 1;
-    const rng = makeRng(this.world.seed, 'craft', id, String(this.actionSeq++));
-    const res = craft(rng, recipe, this.materials, skill, this.learned);
-    if (!res) {
-      this.toast('You lack the materials or skill.');
-      return;
+  /**
+   * Apply the authoritative profession frames the server sent — the SOLE writer of the local mirror.
+   * Overwrites skills / materials / consumables / learned with the server's truth, then plays each
+   * frame's notices (the toasts + the still-client-side deed / bounty side effects). A seed / reconnect
+   * frame carries no notices, so a login replays nothing.
+   */
+  applyServerProfessions(): void {
+    const frames = this.netSink?.drainProfessions();
+    if (frames === undefined || frames.length === 0) return;
+    for (const f of frames) {
+      this.skills = { ...f.skills };
+      this.materials = { ...f.materials };
+      this.consumables = { ...f.consumables };
+      this.learned = new Set(f.learned);
+      for (const n of f.notices) this.playNotice(n);
     }
-    this.skills[recipe.profession] = res.newSkill;
-    this.applyOutput(res.output);
-    // Recipe discovery (GDD §9): learn the recipe, announce it, and surface it in the
-    // craft list next publish.
-    if (res.discovered) {
-      this.learned.add(res.discovered);
-      this.toast(`Discovered a recipe: ${recipeById(res.discovered)?.name ?? res.discovered}!`);
-    }
-    this.onCraft?.();
     this.publishProfessions();
     this.publishCrafting();
   }
 
-  private applyOutput(output: RecipeOutput): void {
-    if (output.kind === 'material') {
-      this.materials[output.id] = (this.materials[output.id] ?? 0) + output.qty;
-      this.toast(`Crafted ${output.qty}× ${materialById(output.id)?.name ?? output.id}`);
-    } else if (output.kind === 'consumable') {
-      this.consumables[output.id] = (this.consumables[output.id] ?? 0) + output.qty;
-      this.toast(`Brewed ${consumableById(output.id)?.name ?? output.id}`);
+  /** Play one server profession notice: the toast + the client-side deed / bounty side effects. The
+   *  mirror state is already updated (the maps on the same frame are authoritative). */
+  private playNotice(n: NetProfNotice): void {
+    if (n.kind === 'gather') {
+      const names = n.yields.map((y) => `${y.qty}× ${materialById(y.id)?.name ?? y.id}`);
+      let msg = names.join(', ');
+      if (n.skillUp) {
+        const prof = n.prof as Profession;
+        msg += `  (${PROFESSION_NAME[prof] ?? n.prof} ${n.skill})`;
+        this.onGatherSkill?.(n.skill); // Deed progress (gathering milestones)
+      }
+      if (msg.length > 0) this.toast(msg);
+      for (const y of n.yields) this.onMaterialGained?.(y.id, y.qty); // gather bounties
+    } else if (n.kind === 'craft') {
+      const recipe = recipeById(n.recipe);
+      if (recipe !== undefined) {
+        const o = recipe.output;
+        if (o.kind === 'material') {
+          this.toast(`Crafted ${o.qty}× ${materialById(o.id)?.name ?? o.id}`);
+        } else if (o.kind === 'consumable') {
+          this.toast(`Brewed ${consumableById(o.id)?.name ?? o.id}`);
+        } else {
+          // Gear: the item itself is forged server-side + arrives on the inventory frame.
+          this.toast(`Crafted ${recipe.name}`);
+        }
+      }
+      this.onCraft?.(); // Deed progress (craft milestones)
+      if (n.discovered !== undefined) {
+        this.toast(`Discovered a recipe: ${recipeById(n.discovered)?.name ?? n.discovered}!`);
+      }
     } else {
-      this.combat.craftGear({
-        slot: output.slot,
-        rarity: output.rarity,
-        reqLevel: output.reqLevel,
-      });
+      // A consumable was drunk server-side: float its effect cue (the HP / resource / buff itself is
+      // applied to the combat entity server-side and arrives on the combat-self frame).
+      const def = consumableById(n.id);
+      if (def !== undefined) this.combat.applyConsumable(def.effect);
     }
   }
 
-  /** Drink a consumable: apply its effect to the player and consume one. */
+  /** Re-arm on a reconnect: clear the client-optimistic depletion so the fresh server state drives
+   *  the prompts. (The mirror itself is overwritten by the next authoritative frame.) */
+  resetBaseline(): void {
+    this.depleted.clear();
+  }
+
+  // --- crafting + consumables (intent senders) ------------------------------
+
+  /** Craft a recipe: a light client-side pre-check for instant feedback, then a `craft` intent. The
+   *  server re-validates skill + inputs, consumes them, banks the output (or forges gear), and
+   *  replicates — the toast fires from the returned notice. */
+  craftRecipe(id: string): void {
+    const recipe = recipeById(id);
+    if (recipe === undefined) return;
+    if (recipe.discovery && !this.learned.has(id)) return; // not learned yet (server also enforces)
+    const skill = this.skills[recipe.profession] ?? 1;
+    if (!canCraft(recipe, this.materials, skill)) {
+      this.toast('You lack the materials or skill.');
+      return;
+    }
+    this.netSink?.sendProfAction('craft', id);
+  }
+
+  /** Drink a consumable: a `use` intent (guarded on holding one for instant feedback). The server
+   *  debits the stash + applies the effect; the count + cue return on the next frames. */
   useConsumable(id: string): void {
-    const have = this.consumables[id] ?? 0;
-    if (have <= 0) return;
-    const def = consumableById(id);
-    if (!def) return;
-    if (have - 1 <= 0) delete this.consumables[id];
-    else this.consumables[id] = have - 1;
-    this.combat.applyConsumable(def.effect);
-    this.publishProfessions();
+    if ((this.consumables[id] ?? 0) <= 0) return;
+    this.netSink?.sendProfAction('use', id);
   }
 
   // --- per-frame ------------------------------------------------------------
 
   update(dt: number, px: number, py: number, pz: number, moved: boolean): void {
     this.clock += dt;
-    // Respawn depleted nodes.
+    // Respawn (client-optimistic) depleted nodes so the prompt returns.
     for (const [k, t] of this.depleted) if (this.clock >= t) this.depleted.delete(k);
 
     this.refreshNodes(px, pz);
@@ -229,7 +288,7 @@ export class GatherDirector {
       return true;
     }
     if (this.nearWater(px, py, pz)) {
-      this.startFishing(px, pz);
+      this.startFishing();
       return true;
     }
     return false;
@@ -247,60 +306,30 @@ export class GatherDirector {
     };
   }
 
+  /** The channel finished: send a `gather` intent (the server resolves the nearest node to the
+   *  player's authoritative position + owns the yield). Optimistically deplete the node locally so
+   *  the prompt doesn't instantly re-offer it. */
   private finishWork(): void {
     const c = this.channel;
     if (!c || c.mode !== 'work') return;
     this.channel = null;
-    const rng = makeRng(this.world.seed, 'gather', c.profession, String(this.actionSeq++));
-    const skill = this.skills[c.profession] ?? 1;
-    const res = gatherNode(rng, c.profession, c.tier, skill);
     this.depleted.set(c.nodeKey, this.clock + RESPAWN_SECONDS);
-    if (!res) {
-      this.toast('Your skill is too low.');
-      return;
-    }
-    this.bank(c.profession, res.yields, res.newSkill, skill);
+    this.netSink?.sendProfAction('gather');
   }
 
-  private startFishing(px: number, pz: number): void {
-    const tier = this.fishingTier(px, pz);
+  private startFishing(): void {
+    // The bite timing is a client-side UX flourish (cosmetic RNG); the CATCH is server-authoritative.
     const rng = makeRng(this.world.seed, 'fishcast', String(this.actionSeq++));
     const biteAt = fishBiteDelaySeconds(rng);
-    this.channel = { mode: 'fish', tier, phase: 'wait', elapsed: 0, biteAt, biteEnd: 0 };
+    this.channel = { mode: 'fish', phase: 'wait', elapsed: 0, biteAt, biteEnd: 0 };
   }
 
+  /** Reeled in on time: send a `fish` intent (the server validates water + owns the catch). */
   private catchFish(): void {
     const c = this.channel;
     if (!c || c.mode !== 'fish') return;
     this.channel = null;
-    const rng = makeRng(this.world.seed, 'fish', String(this.actionSeq++));
-    const skill = this.skills.fishing ?? 1;
-    const res = rollFish(rng, c.tier, skill);
-    this.bank(Profession.Fishing, res.yields, res.newSkill, skill);
-  }
-
-  private bank(
-    prof: Profession,
-    yields: Array<{ materialId: string; qty: number }>,
-    newSkill: number,
-    oldSkill: number,
-  ): void {
-    const names: string[] = [];
-    for (const y of yields) {
-      this.materials[y.materialId] = (this.materials[y.materialId] ?? 0) + y.qty;
-      const m = materialById(y.materialId);
-      names.push(`${y.qty}× ${m?.name ?? y.materialId}`);
-      this.onMaterialGained?.(y.materialId, y.qty);
-    }
-    this.skills[prof] = newSkill;
-    let msg = names.join(', ');
-    if (newSkill > oldSkill) {
-      msg += `  (${PROFESSION_NAME[prof]} ${newSkill})`;
-      this.onGatherSkill?.(newSkill); // Deed progress (gathering milestones)
-    }
-    this.toast(msg);
-    this.publishProfessions();
-    this.publishCrafting(); // new materials may unlock recipes
+    this.netSink?.sendProfAction('fish');
   }
 
   // --- node querying --------------------------------------------------------
@@ -364,20 +393,6 @@ export class GatherDirector {
     return false;
   }
 
-  private fishingTier(px: number, pz: number): number {
-    switch (this.world.biomeAt(Math.floor(px), Math.floor(pz))) {
-      case Biome.Foothills:
-        return 1;
-      case Biome.Peaks:
-        return 2;
-      case Biome.Trollmoor:
-      case Biome.Coast:
-        return 3;
-      default:
-        return 0; // Vale / Weald ponds
-    }
-  }
-
   // --- publishing -----------------------------------------------------------
 
   private cancelChannel(reason: string): void {
@@ -386,10 +401,13 @@ export class GatherDirector {
   }
 
   private toast(text: string): void {
-    // Reuse the quest toast channel for a light gathering notice.
+    // Reuse the quest toast channel for a light gathering notice. A dedicated monotonic id (negative,
+    // to stay distinct from the quest toasts' positive ids) — consecutive gather toasts must not
+    // collide on one React key (they would before, now that the gather RNG that bumped `actionSeq`
+    // moved server-side).
     const store = useStore.getState();
     store.setQuestToasts(
-      [...store.questToasts, { id: -this.actionSeq, text, kind: 'progress' as const }].slice(-4),
+      [...store.questToasts, { id: -this.toastSeq++, text, kind: 'progress' as const }].slice(-4),
     );
   }
 

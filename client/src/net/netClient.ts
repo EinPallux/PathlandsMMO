@@ -36,8 +36,16 @@ import {
   type NetPlayer,
   type NetWorldItem,
   type ClientGm,
+  type ClientInvAction,
+  type ClientProfAction,
+  type ClientQuestAction,
+  type ItemStackSave,
   type NetWhoEntry,
+  type QuestEvent,
+  type ServerInventory,
   type ServerKill,
+  type ServerProfessions,
+  type ServerQuestLog,
   type ServerSelf,
 } from '@pathlands/shared';
 
@@ -108,7 +116,7 @@ export interface NetStatus {
 export interface NetClientOptions {
   url: string;
   /** Guest identity; plus an optional account session token (accounts, Phase-6 Part 4). */
-  identity: { name: string; cls: string; level: number; token?: string };
+  identity: { name: string; cls: string; level: number; token?: string; bagBonus?: number };
   /** How far in the past to render remotes (ms). ≥ ~1.5× the wire interval (ARCH §7). */
   renderDelayMs?: number;
   /** Notified whenever connection status changes. */
@@ -145,6 +153,18 @@ interface Track {
   level: number;
   samples: Sample[];
 }
+
+/** A trusted economy claim buffered because the socket had no live session (the reconnect window,
+ *  `you === null`). Flushed in order on the next welcome so a quest reward / craft / travel fee
+ *  earned mid-reconnect isn't silently dropped. Safe against double-apply: the client bag is a pure
+ *  server mirror, so an un-sent claim is absent from the seed the server restores on reconnect. */
+type PendingClaim =
+  | { kind: 'claimReward'; gold: number; items: ItemStackSave[] }
+  | { kind: 'spendGold'; amount: number };
+
+/** Cap the buffered-claim queue so a permanently-disconnected client can't grow it without bound
+ *  (and a flush stays well under the server's per-second frame limit). Oldest is dropped past this. */
+const MAX_BUFFERED_CLAIMS = 32;
 
 const DEFAULT_RENDER_DELAY_MS = 150;
 /** Client drop spacing — a hair above the server's 250 ms gate so a sent drop is never rejected
@@ -188,6 +208,17 @@ export class NetClient {
   private readonly worldItemMap = new Map<string, NetWorldItem>();
   /** Item stacks granted to us (a ground-item pickup) since the game last drained them. */
   private readonly grantQueue: NetItemStack[] = [];
+  /** The latest authoritative inventory frame (bag/gold/equipment), last-wins until drained. */
+  private pendingInventory: ServerInventory | null = null;
+  /** Trusted claims (quest reward / craft / travel fee) that couldn't be sent because we had no
+   *  live session; flushed in order on the next welcome. Deliberately NOT cleared on disconnect —
+   *  surviving the reconnect is the whole point. */
+  private readonly claimBuffer: PendingClaim[] = [];
+  /** The latest authoritative quest log frame (active + turnedIn), last-wins until drained. */
+  private pendingQuestLog: ServerQuestLog | null = null;
+  /** Authoritative profession frames (state + per-action notices) awaiting drain. Queued (NOT
+   *  last-wins) so no notice — a gather/craft toast + deed/bounty side effect — is ever dropped. */
+  private readonly professionsQueue: ServerProfessions[] = [];
   /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
   private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
@@ -244,6 +275,7 @@ export class NetClient {
         cls: id.cls,
         level: id.level,
         ...(id.token !== undefined ? { token: id.token } : {}),
+        ...(id.bagBonus !== undefined ? { bagBonus: id.bagBonus } : {}),
       });
       this.startPinging();
     });
@@ -269,6 +301,10 @@ export class NetClient {
         this.pendingSelf = null;
         this.clockInit = false;
         this.updateClock(msg.tick);
+        // Flush any trusted claims buffered while we had no session (the reconnect window), in the
+        // order they were made. The server has already seeded the inventory by the time it sent this
+        // welcome, so each claim applies on top of the restored bag/gold and re-replicates.
+        this.flushClaimBuffer();
         this.emitStatus();
         break;
       case 'snapshot': {
@@ -358,7 +394,16 @@ export class NetClient {
         for (const id of msg.gone) this.worldItemMap.delete(id); // LEAVE / picked up / despawned
         break;
       case 'grant':
-        for (const s of msg.items) this.grantQueue.push(s); // a pickup — the game adds to the bag
+        for (const s of msg.items) this.grantQueue.push(s); // a pickup — the game floats the loot cue
+        break;
+      case 'inventory':
+        this.pendingInventory = msg; // last-wins authoritative bag/gold/equipment (economy migration)
+        break;
+      case 'questLog':
+        this.pendingQuestLog = msg; // last-wins authoritative quest log (quest migration #138)
+        break;
+      case 'professions':
+        this.professionsQueue.push(msg); // queued: every frame's notices must be played in order
         break;
       default:
         break;
@@ -445,7 +490,10 @@ export class NetClient {
     this.enemySamples.clear();
     this.worldItemMap.clear();
     this.grantQueue.length = 0;
+    this.pendingInventory = null;
     this.lastCombatSelf = null;
+    this.pendingQuestLog = null;
+    this.professionsQueue.length = 0;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
     // Parties are session-scoped: a dropped session is out of its party (a reconnect is a
@@ -571,6 +619,91 @@ export class NetClient {
   drainGrants(): NetItemStack[] {
     if (this.grantQueue.length === 0) return [];
     return this.grantQueue.splice(0, this.grantQueue.length);
+  }
+
+  /** Take and clear the latest authoritative inventory frame, or null if none since the last drain. */
+  drainInventory(): ServerInventory | null {
+    const inv = this.pendingInventory;
+    this.pendingInventory = null;
+    return inv;
+  }
+
+  /** Send a server-validated inventory action (equip / unequip / sell / buy / buyback). */
+  sendInvAction(a: Omit<ClientInvAction, 't'>): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'inv', ...a });
+  }
+
+  /** Send a trusted reward claim (quest turn-in / crafted item) — the server grants it. Buffered
+   *  for the next welcome if we have no live session, so a reward earned mid-reconnect isn't lost. */
+  sendClaimReward(gold: number, items: ItemStackSave[]): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) {
+      this.bufferClaim({ kind: 'claimReward', gold, items });
+      return;
+    }
+    this.send({ t: 'claimReward', gold, items });
+  }
+
+  /** Send a trusted gold debit (travel fee / mount) — the server spends it if affordable. Buffered
+   *  for the next welcome if we have no live session (the player still owes the fee on reconnect). */
+  sendSpendGold(amount: number): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) {
+      this.bufferClaim({ kind: 'spendGold', amount });
+      return;
+    }
+    this.send({ t: 'spendGold', amount });
+  }
+
+  /** Take and clear the latest authoritative quest log frame, or null if none since the last drain. */
+  drainQuestLog(): ServerQuestLog | null {
+    const q = this.pendingQuestLog;
+    this.pendingQuestLog = null;
+    return q;
+  }
+
+  /** Send a server-validated quest action (accept / turnIn / abandon / pin / unpin). Not buffered:
+   *  quest actions are idempotent-ish (a lost turn-in leaves the quest complete + re-turn-inable), so
+   *  a drop during reconnect self-heals on the next authoritative log frame. */
+  sendQuestAction(action: ClientQuestAction['action'], id: string, choiceIndex?: number): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'quest', action, id, ...(choiceIndex !== undefined ? { choiceIndex } : {}) });
+  }
+
+  /** Report a client-observed objective event (explore / talk / deliver / use / gather) to the
+   *  server's authoritative quest engine. kill / boss / collect are server-driven, never sent here. */
+  sendQuestEvent(ev: QuestEvent): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'questEvent', ev });
+  }
+
+  /** Take and clear the authoritative profession frames since the last drain (state + notices), in
+   *  arrival order, so the mirror applies every state + plays every toast / side effect. */
+  drainProfessions(): ServerProfessions[] {
+    if (this.professionsQueue.length === 0) return [];
+    return this.professionsQueue.splice(0, this.professionsQueue.length);
+  }
+
+  /** Send a server-validated profession action (gather / fish / craft / use). Not buffered: a lost
+   *  action simply doesn't happen (the server owns the state), so the player just retries. */
+  sendProfAction(action: ClientProfAction['action'], id?: string): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'prof', action, ...(id !== undefined ? { id } : {}) });
+  }
+
+  /** Queue a trusted claim that couldn't be sent (no live session), dropping the oldest past the cap. */
+  private bufferClaim(claim: PendingClaim): void {
+    this.claimBuffer.push(claim);
+    if (this.claimBuffer.length > MAX_BUFFERED_CLAIMS) this.claimBuffer.shift();
+  }
+
+  /** Send every buffered claim, in order, then clear the buffer (called from the welcome handler). */
+  private flushClaimBuffer(): void {
+    if (this.claimBuffer.length === 0) return;
+    const pending = this.claimBuffer.splice(0, this.claimBuffer.length);
+    for (const c of pending) {
+      if (c.kind === 'claimReward') this.send({ t: 'claimReward', gold: c.gold, items: c.items });
+      else this.send({ t: 'spendGold', amount: c.amount });
+    }
   }
 
   /** Send a GM action (the server re-checks GM privilege; a non-GM's frame is ignored). */
