@@ -10,6 +10,49 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 35 — Quest client flip, Stage 2 (migration #138) (2026-07-09)
+
+The flip: the **client now renders the server's quest log as authoritative** and drives it entirely by
+intents. `QuestDirector`'s log is a **mirror** written ONLY by the `ServerQuestLog` frame — no
+client-side quest mutation remains — and the server **persists** the log. This completes moving quest
+authority server-side and **retires the `claimReward` trust bridge for quests** (crafting still uses
+it until professions migrate, #139).
+
+#### Changed
+
+- **Client actions → intents.** `accept` / `turnIn` / `abandon` / `pin` send `ClientQuestAction`
+  (server re-validates + applies), and the client-observed objective sources (`explore` / `talk` /
+  `use` — Waystone) send `ClientQuestEvent`. Kill / boss / collect are no longer fed to quests
+  client-side (the server drives them from authoritative kill credit), so `onEnemyKilled` stops
+  fanning to the quest system. The log, tracker, giver dialogue, indicators, and map markers now
+  render off the server-authoritative mirror.
+- **Reward flip.** A quest turn-in no longer computes/grants its reward on the client: the gold /
+  items / XP are granted **server-side** (they arrive via the inventory + combat-self frames), and
+  only the **Waystone unlock + Deed progress** — which the server doesn't own — fire client-side,
+  driven by a diff of the mirror when a quest lands in `turnedIn`. Quest XP is adopted through the
+  existing server-`totalXp` delta (the local quest-XP add is gone, so no double-count). Completion /
+  progress / accept **toasts** are reconstructed by diffing consecutive authoritative logs.
+- **Server persistence.** `persistPosition` now writes the authoritative quest log back to the stored
+  character (snapshotted before the first `await`, like the inventory), replacing the client-owned
+  blob it used to preserve. On join the server seeds from it, so continuity is unbroken across the
+  flip; the client still cloud-saves the mirror as a belt-and-suspenders cache.
+
+#### Notes
+
+- **Interim trust remaining** (shrinks each stage): `explore` / `talk` / `use` are still
+  client-reported (a forged event only advances an objective the player holds; the reward is
+  server-computed). Proximity re-validation (server checks the player's authoritative position for
+  explore / talk) is the next hardening. Repeatable-quest turn-in side effects aren't diffed (no
+  repeatable quests exist yet).
+- **Verification**: typecheck + lint + build + the server-side wire/persistence tests are green; the
+  client quest UI itself is not automatically testable (no headless browser) — **playtest the quest
+  flow before relying on it.**
+
+#### Tests (+1, 445 green)
+
+- Over the wire: a disconnect **persists the authoritative quest log** (accept → explore → turn-in
+  reflected in the stored character's `quests`), proving the server owns + writes it now.
+
 ### Part 34 — Server-authoritative quests, Stage 1 (migration #138) (2026-07-09)
 
 Begins moving quest **authority** server-side. The pure `shared/quests` engine — which was always

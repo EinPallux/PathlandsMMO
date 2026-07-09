@@ -37,10 +37,13 @@ import {
   type NetWorldItem,
   type ClientGm,
   type ClientInvAction,
+  type ClientQuestAction,
   type ItemStackSave,
   type NetWhoEntry,
+  type QuestEvent,
   type ServerInventory,
   type ServerKill,
+  type ServerQuestLog,
   type ServerSelf,
 } from '@pathlands/shared';
 
@@ -209,6 +212,8 @@ export class NetClient {
    *  live session; flushed in order on the next welcome. Deliberately NOT cleared on disconnect —
    *  surviving the reconnect is the whole point. */
   private readonly claimBuffer: PendingClaim[] = [];
+  /** The latest authoritative quest log frame (active + turnedIn), last-wins until drained. */
+  private pendingQuestLog: ServerQuestLog | null = null;
   /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
   private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
@@ -389,6 +394,9 @@ export class NetClient {
       case 'inventory':
         this.pendingInventory = msg; // last-wins authoritative bag/gold/equipment (economy migration)
         break;
+      case 'questLog':
+        this.pendingQuestLog = msg; // last-wins authoritative quest log (quest migration #138)
+        break;
       default:
         break;
     }
@@ -476,6 +484,7 @@ export class NetClient {
     this.grantQueue.length = 0;
     this.pendingInventory = null;
     this.lastCombatSelf = null;
+    this.pendingQuestLog = null;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
     // Parties are session-scoped: a dropped session is out of its party (a reconnect is a
@@ -634,6 +643,28 @@ export class NetClient {
       return;
     }
     this.send({ t: 'spendGold', amount });
+  }
+
+  /** Take and clear the latest authoritative quest log frame, or null if none since the last drain. */
+  drainQuestLog(): ServerQuestLog | null {
+    const q = this.pendingQuestLog;
+    this.pendingQuestLog = null;
+    return q;
+  }
+
+  /** Send a server-validated quest action (accept / turnIn / abandon / pin / unpin). Not buffered:
+   *  quest actions are idempotent-ish (a lost turn-in leaves the quest complete + re-turn-inable), so
+   *  a drop during reconnect self-heals on the next authoritative log frame. */
+  sendQuestAction(action: ClientQuestAction['action'], id: string, choiceIndex?: number): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'quest', action, id, ...(choiceIndex !== undefined ? { choiceIndex } : {}) });
+  }
+
+  /** Report a client-observed objective event (explore / talk / deliver / use / gather) to the
+   *  server's authoritative quest engine. kill / boss / collect are server-driven, never sent here. */
+  sendQuestEvent(ev: QuestEvent): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'questEvent', ev });
   }
 
   /** Queue a trusted claim that couldn't be sent (no live session), dropping the oldest past the cap. */

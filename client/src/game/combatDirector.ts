@@ -714,6 +714,17 @@ export class CombatDirector {
     if (reward.waystoneUnlock) this.discovered.add(reward.waystoneUnlock);
   }
 
+  /**
+   * Apply the CLIENT-only parts of a server-granted quest reward at turn-in (quest migration #138,
+   * Stage 2). The gold / items / XP are computed + granted SERVER-SIDE now (they arrive via the
+   * inventory + combat-self frames), so this only unlocks the Waystone (a client-side discovery) and
+   * floats the gold for feedback. The XP is adopted from the server's totalXp delta (no local add).
+   */
+  applyQuestRewardCosmetic(reward: QuestReward): void {
+    if ((reward.gold ?? 0) > 0) this.pushFloater(this.player, `+${reward.gold}c`, 'xp');
+    if (reward.waystoneUnlock) this.discovered.add(reward.waystoneUnlock);
+  }
+
   /** Generate a reward item for the player's class (floats its name; caller bridges it to the bag). */
   private generateRewardItem(s: GeneratedItemSpec): ItemStackSave {
     const item = generateItem(this.state.rng, { ...s, forClass: this.cls });

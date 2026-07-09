@@ -416,6 +416,19 @@ export class GameServer {
     const bag = invSnap !== null ? invSnap.bag.map((s) => ({ item: s.item, qty: s.qty })) : null;
     const gold = invSnap !== null ? invSnap.gold : null;
     const equipment = invSnap !== null ? { ...invSnap.equipment } : null;
+    // Server-authoritative quest log (migration #138) — deep-copied up front for the same race.
+    const questSnap = this.quests.get(player.id);
+    const quests =
+      questSnap !== null
+        ? {
+            active: questSnap.active.map((p) => ({
+              id: p.id,
+              counts: [...p.counts],
+              pinned: p.pinned,
+            })),
+            turnedIn: [...questSnap.turnedIn],
+          }
+        : null;
 
     const ch = await this.store.getCharacter(accountId);
     if (ch === null) return; // guest-with-account who never uploaded a character
@@ -434,12 +447,15 @@ export class GameServer {
     }
     // Server-authoritative inventory (economy migration): the bag / gold / equipment are the
     // server's truth now, so write them back. Read-modify-write preserves the still-client-owned
-    // fields (quests / professions / deeds) already on the loaded blob.
+    // fields (professions / deeds) already on the loaded blob.
     if (bag !== null && gold !== null && equipment !== null) {
       ch.inventory = bag;
       ch.gold = gold;
       ch.equipment = equipment;
     }
+    // Server-authoritative quest log (migration #138): the log is the server's truth now, written
+    // back over the client-owned blob it used to be.
+    if (quests !== null) ch.quests = quests;
     await this.store.putCharacter(accountId, ch);
   }
 

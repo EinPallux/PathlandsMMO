@@ -6,6 +6,20 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-09) — Part 35: Quest client flip, Stage 2 (#138).**
+> The flip: the client renders the server's quest log as authoritative. `QuestDirector`'s log is a
+> **mirror** written only by the `ServerQuestLog` frame; accept / turn-in / abandon / pin and the
+> client-observed objective sources (explore / talk / use) go to the server as intents; kill / boss /
+> collect are no longer fed to quests client-side (server-driven). Turn-in **rewards are granted
+> server-side** (gold / items via the inventory frame, XP via the combat-self delta) — only the
+> Waystone unlock + Deed progress fire client-side, from a diff of the mirror — so the **quest
+> `claimReward` trust is retired** (crafting keeps it until #139). The server **persists** the
+> authoritative log (`persistPosition`), replacing the client-owned blob. **445 tests green** (+1: a
+> disconnect persists the server's log). Verified by typecheck / lint / build + the wire/persistence
+> tests; the client quest UI itself needs a **playtest** (no headless browser).
+>
+> ---
+>
 > **Phase 6 (2026-07-09) — Part 34: Server-authoritative quests, Stage 1 (#138).**
 > The quest migration begins. The pure `shared/quests` engine now runs **server-side** too: the
 > `Quests` model (`server/src/quests.ts`) owns each player's `QuestLogState`, seeded from the
@@ -25,11 +39,13 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 >
 > * **Stage 1 (done):** server engine + protocol + gateway (accept/turn-in/event/kill-drive) +
 >   server-computed rewards + replication. Non-breaking — the client still owns its log this stage.
-> * **Next — Stage 2 (the flip):** the client renders `ServerQuestLog` as authoritative (its
->   `QuestDirector` becomes a mirror + intent-sender), retiring the quest `claimReward` path; the
->   server persists the log (with the `MAX_ACTIVE` seed clamp becoming load-bearing); proximity
->   re-validation for talk / explore; and a party-per-member kill-credit **wire** test (the fan-out is
->   unit-tested today, the end-to-end gateway path lands with the flip). Then professions (#139).
+> * **Stage 2 (done, Part 35):** the client renders `ServerQuestLog` as authoritative (`QuestDirector`
+>   is a mirror + intent-sender), the quest `claimReward` path is retired, and the server persists the
+>   log (the `MAX_ACTIVE` seed clamp is now load-bearing).
+> * **Next — Stage 2b (hardening):** proximity re-validation (server checks the player's authoritative
+>   position for explore / talk instead of trusting the client-reported one); a party-per-member
+>   kill-credit **wire** test (the fan-out is unit-tested, the end-to-end gateway path isn't yet); and
+>   a client playtest of the quest UX. Then professions (#139).
 >
 > ---
 >

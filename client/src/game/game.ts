@@ -247,9 +247,10 @@ export class Game {
       character?.bounties,
     );
 
-    // Fan world events out to the quest + meta + bounty systems (they share events).
+    // Fan world events out to the meta + bounty systems (they share kill events). Quest kill/boss/
+    // collect objectives are server-driven now (migration #138) — the gateway advances them from
+    // authoritative kill credit and replicates the log, so the client no longer feeds kills to quests.
     this.combat.onEnemyKilled = (id) => {
-      this.quests.onKill(id);
       this.meta.handleKill(id);
       this.bounties.onKill(id);
     };
@@ -331,6 +332,13 @@ export class Game {
       sendInvAction: (a) => net.sendInvAction(a),
       sendClaimReward: (gold, items) => net.sendClaimReward(gold, items),
       sendSpendGold: (amount) => net.sendSpendGold(amount),
+    });
+    // Quests are server-authoritative now (migration #138, Stage 2): the director renders the
+    // server's quest log + drives it entirely by intents.
+    this.quests.setNetSink({
+      drainQuestLog: () => net.drainQuestLog(),
+      sendQuestAction: (action, id, choiceIndex) => net.sendQuestAction(action, id, choiceIndex),
+      sendQuestEvent: (ev) => net.sendQuestEvent(ev),
     });
     // Persist promptly whenever a ground-item drop/pickup mutates the bag (dupe-window mitigation).
     this.combat.setBagMutationHook(() => this.onPersist?.());
@@ -806,7 +814,9 @@ export class Game {
     // player is standing still. Visual consumers (model, camera, streaming) keep `rs`.
     const ph = this.controller.physics;
 
-    // Quest explore-objective checks (throttled inside).
+    // Adopt the server's authoritative quest log (migration #138), then run the throttled explore
+    // check that reports an explore event to it.
+    this.quests.applyServerQuestLog();
     this.quests.tickExplore(dt, ph.x, ph.z);
 
     // Gathering: node proximity, channel/fishing progress (cancels on movement).

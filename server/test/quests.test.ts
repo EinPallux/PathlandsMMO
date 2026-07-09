@@ -256,4 +256,41 @@ describe('quests — over the wire', () => {
 
     c.close();
   });
+
+  it('persists the authoritative quest log on disconnect (server-owned now, Stage 2)', async () => {
+    const token = await persist('journal@example.com', 'cq6', 'Journal');
+    const acct = (await store.getByEmail('journal@example.com'))!;
+    const c = new TestClient(wsUrl);
+    await c.opened();
+    c.hello('Journal', 'warrior', 1, token);
+    await until(() => c.lastQuestLog !== null, 3000, 'seeded');
+
+    // Accept → complete (explore) → turn in q_find_feet entirely over the wire.
+    c.questAction('accept', 'q_find_feet');
+    await until(
+      () => c.lastQuestLog?.active.some((p) => p.id === 'q_find_feet') === true,
+      3000,
+      'accepted',
+    );
+    c.questEvent({ kind: 'explore', x: 1536, z: 1536 });
+    await until(
+      () => (c.lastQuestLog?.active.find((p) => p.id === 'q_find_feet')?.counts[0] ?? 0) >= 1,
+      3000,
+      'explored',
+    );
+    c.questAction('turnIn', 'q_find_feet');
+    await until(() => c.lastQuestLog?.turnedIn.includes('q_find_feet') === true, 3000, 'turned in');
+
+    // Disconnect → the server writes ITS authoritative log to the stored character (no longer a
+    // client-owned blob). The persisted character reflects the turn-in.
+    c.close();
+    let saved = null;
+    for (let i = 0; i < 40; i++) {
+      saved = await store.getCharacter(acct.id);
+      if (saved !== null && saved.quests.turnedIn.includes('q_find_feet')) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(saved!.quests.turnedIn).toContain('q_find_feet');
+    expect(saved!.quests.active.some((p) => p.id === 'q_find_feet')).toBe(false);
+  });
 });
