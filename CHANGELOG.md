@@ -10,6 +10,50 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 34 — Server-authoritative quests, Stage 1 (migration #138) (2026-07-09)
+
+Begins moving quest **authority** server-side. The pure `shared/quests` engine — which was always
+written to run on both sides — now runs on the **server** too: it owns each player's quest log,
+advances objectives from authoritative signals, and computes turn-in rewards. This stage lands the
+server capability + replication + tests **in parallel** (the client still owns its own log, exactly
+like the inventory migration's Stage 1a); the client flip that retires the trusted `claimReward`
+bridge for quests is Stage 2.
+
+#### Added
+
+- **Server `Quests` model** (`server/src/quests.ts`) — per-session `QuestLogState`, seeded from the
+  persisted character on join, mutated only through the pure engine (`acceptQuest` / `applyQuestEvent`
+  / `turnInQuest` / …) with dirty tracking, mirroring the `Inventories` model.
+- **Protocol (proto v20)**: `ClientQuestAction` (accept / turnIn / abandon / pin / unpin — the server
+  re-validates availability, prereqs, level, and completion), `ClientQuestEvent` (the client-reported
+  objective sources — explore / talk / deliver / use / gather; **kill / boss / collect are rejected**
+  from a client so kill credit can't be forged), and `ServerQuestLog` (the owner's authoritative log,
+  owner-only, on change).
+- **Gateway wiring**: seeds + replicates the quest log; routes quest actions/events; **drives
+  kill / boss / collect from authoritative kill credit** (`drainKills`, so party members each advance
+  their own objectives); and computes the **turn-in reward server-side** — gold + XP into the
+  authoritative wallet / progression, reward items rolled on a deterministic per-(account, quest) RNG
+  stream (never a client seed), class-flavoured, and credited overflow-safe via `giveOrDrop`. A public
+  `ServerCombat.grantXp` awards the quest XP with the same level-up path as kill XP.
+
+#### Notes
+
+- **Non-breaking**: no client changes — the real client keeps owning its quest log this stage, so
+  nothing changes for players while the server engine + replication land under test. The server does
+  not yet persist the log (the client blob stays authoritative until the flip).
+- **Interim trust** (shrinks the exploit surface vs. `claimReward`): explore / talk / use / gather are
+  client-reported for now; proximity re-validation lands with the flip. But a forged event only
+  advances an objective the player genuinely holds, and the **reward is server-computed** — a client
+  can no longer mint arbitrary gold/items through a quest.
+
+#### Tests (+8, 441 green)
+
+- Model: seed/dirty; availability + level-gated + duplicate accept; kill/collect drive from an
+  authoritative kill (with overkill clamped); complete-gated turn-in. Over the wire: accept → explore
+  event → turn-in replicates the log + grants the gold reward; a pre-completed quest's **reward items
+  are granted server-side** on turn-in (no `claimReward`); an unfinished turn-in is **rejected**.
+  Codec: the quest action / event / log frames round-trip and reject malformed / server-only kinds.
+
 ### Part 33 — Inventory-flip hardening: adversarial-review fixes (2026-07-07)
 
 Folds the flip's (Part 32) adversarial review into fixes. Closes a disconnect data-loss/dupe race, a

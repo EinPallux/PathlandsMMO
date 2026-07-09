@@ -14,6 +14,7 @@
 // always lived — the server is authoritative by construction.
 
 import type { ItemDef } from '../data/items.js';
+import type { QuestEvent, QuestProgress } from '../quests/index.js';
 import type { CastSkillIntent, Intent, MoveIntent } from '../sim/intents.js';
 import type { MoveState, PlayerPhysics } from '../sim/types.js';
 
@@ -42,9 +43,14 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  *     not-yet-migrated quest-reward / travel / mount sources), and ClientHello carries bagBonus;
  * v19 replicated the vendor buyback list on ServerInventory (item + qty per remembered sale) so the
  *     client's shop UI is a pure mirror of the server's buyback state instead of a parallel copy that
- *     desynced on a stale/double-clicked sale.
+ *     desynced on a stale/double-clicked sale;
+ * v20 began the server-authoritative quest migration (#138): ClientQuestAction (accept / turnIn /
+ *     abandon / pin / unpin) + ClientQuestEvent (the client-reported objective sources — explore /
+ *     talk / deliver / use / gather; kill/boss/collect are server-driven) + ServerQuestLog (the
+ *     owner's authoritative quest log). The server runs the pure shared/quests engine + computes
+ *     turn-in rewards; this stage lands the server capability + tests (the client still owns its log).
  */
-export const NET_PROTOCOL_VERSION = 19;
+export const NET_PROTOCOL_VERSION = 20;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -57,6 +63,17 @@ const GM_ACTIONS = ['kick', 'mute', 'unmute', 'ban', 'unban', 'teleport', 'give'
 
 /** Valid inventory actions on the wire (the server re-validates each against the authoritative bag). */
 const INV_ACTIONS = ['equip', 'unequip', 'sell', 'buy', 'buyback'];
+
+/** Valid quest actions on the wire (the server re-validates each against the authoritative log). */
+const QUEST_ACTIONS = ['accept', 'turnIn', 'abandon', 'pin', 'unpin'];
+
+/** The objective-event kinds a CLIENT may report (quest migration #138). kill/boss/collect are
+ *  server-driven from authoritative kill credit and are NEVER accepted from a client (forging them
+ *  would inflate kill counts), so they're excluded here. */
+const CLIENT_QUEST_EVENT_KINDS = ['explore', 'talk', 'deliver', 'use', 'gather'];
+
+/** Bound on a quest / npc id accepted on the wire (defends the decoder + downstream lookups). */
+const MAX_QUEST_ID_LEN = 64;
 
 /** Max chat text length accepted at the wire (the server trims further). */
 export const MAX_CHAT_LEN = 300;
@@ -340,6 +357,32 @@ export interface ClientSpendGold {
   amount: number;
 }
 
+/**
+ * A server-validated quest action against the sender's OWN authoritative quest log (migration #138).
+ * `accept` / `turnIn` / `abandon` / `pin` / `unpin` carry the quest `id`; `turnIn` may carry a
+ * `choiceIndex` picking one of the reward's `choices`. The server re-runs the pure shared/quests
+ * engine (availability, prereqs, completion) before applying — a cheat client can't accept a quest
+ * it hasn't unlocked or turn in one it hasn't finished, and the reward is computed server-side.
+ */
+export interface ClientQuestAction {
+  t: 'quest';
+  action: 'accept' | 'turnIn' | 'abandon' | 'pin' | 'unpin';
+  id: string;
+  choiceIndex?: number;
+}
+
+/**
+ * A client-reported objective event (migration #138). Only the sources the server can't yet observe
+ * itself ride here — `explore` (reach an area), `talk` / `deliver` (an NPC dialogue), `use` (a world
+ * object), `gather` (a profession node). kill / boss / collect are driven server-side from
+ * authoritative kill credit and are rejected on this frame. Interim-trusted this stage (parity with
+ * the previously client-owned log); proximity re-validation lands with the client flip.
+ */
+export interface ClientQuestEvent {
+  t: 'questEvent';
+  ev: QuestEvent;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientIntent
@@ -352,7 +395,9 @@ export type ClientMessage =
   | ClientPickupItem
   | ClientInvAction
   | ClientClaimReward
-  | ClientSpendGold;
+  | ClientSpendGold
+  | ClientQuestAction
+  | ClientQuestEvent;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -647,6 +692,19 @@ export interface ServerInventory {
   buyback: NetItemStack[];
 }
 
+/**
+ * The recipient's OWN authoritative quest log (migration #138), sent to the owner only at broadcast
+ * cadence when it changes — the active quests (with per-objective progress counts + pin flag) and the
+ * turned-in id list. As quests migrate server-side this becomes the source of truth the client's quest
+ * log / tracker render from. `active` mirrors `QuestProgress[]`; `turnedIn` mirrors the id list.
+ */
+export interface ServerQuestLog {
+  t: 'questLog';
+  tick: number;
+  active: QuestProgress[];
+  turnedIn: string[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -662,6 +720,7 @@ export type ServerMessage =
   | ServerWorldItems
   | ServerItemGranted
   | ServerInventory
+  | ServerQuestLog
   | ServerPong
   | ServerError
   | ServerChat;
@@ -940,6 +999,57 @@ export function decodeClient(raw: string): ClientMessage | null {
       if (!isNonNegInt(o.amount)) return null;
       return { t: 'spendGold', amount: o.amount };
     }
+    case 'quest': {
+      if (!isString(o.action) || !QUEST_ACTIONS.includes(o.action)) return null;
+      if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_QUEST_ID_LEN) return null;
+      const act: ClientQuestAction = {
+        t: 'quest',
+        action: o.action as ClientQuestAction['action'],
+        id: o.id,
+      };
+      if (o.choiceIndex !== undefined) {
+        if (!isNonNegInt(o.choiceIndex)) return null;
+        act.choiceIndex = o.choiceIndex;
+      }
+      return act;
+    }
+    case 'questEvent': {
+      const ev = decodeClientQuestEvent(o.ev);
+      return ev === null ? null : { t: 'questEvent', ev };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Validate a client-reported objective event. Only the sources the server can't yet observe itself
+ * are accepted (`explore` / `talk` / `deliver` / `use` / `gather`); kill / boss / collect are
+ * server-driven and rejected here so a client can't forge kill credit. Returns the typed event or
+ * null.
+ */
+function decodeClientQuestEvent(v: unknown): QuestEvent | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (!isString(o.kind) || !CLIENT_QUEST_EVENT_KINDS.includes(o.kind)) return null;
+  const idOk = (s: unknown): s is string =>
+    isString(s) && s.length > 0 && s.length <= MAX_QUEST_ID_LEN;
+  switch (o.kind) {
+    case 'explore':
+      if (!isFiniteNumber(o.x) || !isFiniteNumber(o.z)) return null;
+      return { kind: 'explore', x: o.x, z: o.z };
+    case 'talk':
+      return idOk(o.npcId) ? { kind: 'talk', npcId: o.npcId } : null;
+    case 'deliver':
+      return idOk(o.npcId) ? { kind: 'deliver', npcId: o.npcId } : null;
+    case 'use':
+      return idOk(o.objectId) ? { kind: 'use', objectId: o.objectId } : null;
+    case 'gather':
+      if (!idOk(o.tag)) return null;
+      if (o.n !== undefined && (!isNonNegInt(o.n) || o.n < 1)) return null;
+      return o.n !== undefined
+        ? { kind: 'gather', tag: o.tag, n: o.n }
+        : { kind: 'gather', tag: o.tag };
     default:
       return null;
   }
@@ -1257,9 +1367,31 @@ export function decodeServer(raw: string): ServerMessage | null {
         buyback: o.buyback,
       };
     }
+    case 'questLog': {
+      if (!isFiniteNumber(o.tick)) return null;
+      if (!Array.isArray(o.active) || !o.active.every(isNetQuestProgress)) return null;
+      if (!Array.isArray(o.turnedIn) || !o.turnedIn.every(isString)) return null;
+      return {
+        t: 'questLog',
+        tick: o.tick,
+        active: o.active as QuestProgress[],
+        turnedIn: o.turnedIn as string[],
+      };
+    }
     default:
       return null;
   }
+}
+
+function isNetQuestProgress(v: unknown): v is QuestProgress {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    isString(o.id) &&
+    Array.isArray(o.counts) &&
+    o.counts.every((c) => isNonNegInt(c)) &&
+    typeof o.pinned === 'boolean'
+  );
 }
 
 function isNetPartyMember(v: unknown): v is NetPartyMember {

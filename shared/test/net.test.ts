@@ -20,8 +20,59 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 19 (…/ inventory-action flip / buyback replication)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(19);
+  it('is at protocol version 20 (…/ buyback replication / server-authoritative quests)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(20);
+  });
+
+  it('round-trips + validates the quest action / event / log frames', () => {
+    // Client → server: quest actions.
+    const accept: ClientMessage = { t: 'quest', action: 'accept', id: 'q_intro' };
+    expect(decodeClient(encodeClient(accept))).toEqual(accept);
+    const turnIn: ClientMessage = { t: 'quest', action: 'turnIn', id: 'q_intro', choiceIndex: 1 };
+    expect(decodeClient(encodeClient(turnIn))).toEqual(turnIn);
+    // A bad action / empty id / fractional choice sinks it.
+    expect(decodeClient(JSON.stringify({ t: 'quest', action: 'grant', id: 'q' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'quest', action: 'accept', id: '' }))).toBeNull();
+    expect(
+      decodeClient(JSON.stringify({ t: 'quest', action: 'turnIn', id: 'q', choiceIndex: 1.5 })),
+    ).toBeNull();
+
+    // Client → server: the client-reportable objective events.
+    const explore: ClientMessage = { t: 'questEvent', ev: { kind: 'explore', x: 12, z: -7 } };
+    expect(decodeClient(encodeClient(explore))).toEqual(explore);
+    const talk: ClientMessage = { t: 'questEvent', ev: { kind: 'talk', npcId: 'elder' } };
+    expect(decodeClient(encodeClient(talk))).toEqual(talk);
+    const gather: ClientMessage = { t: 'questEvent', ev: { kind: 'gather', tag: 'herb', n: 3 } };
+    expect(decodeClient(encodeClient(gather))).toEqual(gather);
+    // kill / boss / collect are server-driven and REJECTED from a client (no forging kill credit).
+    expect(
+      decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'kill', enemyId: 'boar' } })),
+    ).toBeNull();
+    expect(
+      decodeClient(JSON.stringify({ t: 'questEvent', ev: { kind: 'collect', tag: 'tail' } })),
+    ).toBeNull();
+    // A malformed explore (non-finite coord) sinks it.
+    expect(decodeClient('{"t":"questEvent","ev":{"kind":"explore","x":1e999,"z":0}}')).toBeNull();
+
+    // Server → client: the authoritative quest log.
+    const log: ServerMessage = {
+      t: 'questLog',
+      tick: 5,
+      active: [{ id: 'q_intro', counts: [2, 0], pinned: true }],
+      turnedIn: ['q_prologue'],
+    };
+    expect(decodeServer(encodeServer(log))).toEqual(log);
+    // A non-integer count / non-boolean pinned sinks it.
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'questLog',
+          tick: 1,
+          active: [{ id: 'q', counts: [1.5], pinned: true }],
+          turnedIn: [],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('round-trips the inventory-action + trusted-bridge frames + hello bagBonus', () => {

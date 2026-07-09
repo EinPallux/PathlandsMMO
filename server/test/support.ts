@@ -21,6 +21,8 @@ import {
   type NetPlayer,
   type NetSelf,
   type NetWorldItem,
+  type QuestEvent,
+  type QuestProgress,
 } from '@pathlands/shared';
 import { TICK_DURATION_MS } from '@pathlands/shared';
 import type { GatewayOptions } from '../src/gateway.js';
@@ -113,6 +115,8 @@ export class TestClient {
     equipment: Record<string, unknown>;
     buyback: NetItemStack[];
   } | null = null;
+  /** Latest server-authoritative quest log (active + turnedIn), or null before the first. */
+  lastQuestLog: { active: QuestProgress[]; turnedIn: string[] } | null = null;
   deltaCount = 0;
   private seq = 0;
 
@@ -199,6 +203,9 @@ export class TestClient {
           buyback: msg.buyback,
         };
         break;
+      case 'questLog':
+        this.lastQuestLog = { active: msg.active, turnedIn: msg.turnedIn };
+        break;
       default:
         break;
     }
@@ -256,6 +263,18 @@ export class TestClient {
   /** Send a trusted gold debit (travel fee / mount) — spent server-side if affordable. */
   spendGold(amount: number): void {
     this.send({ t: 'spendGold', amount });
+  }
+  /** Send a server-validated quest action (accept / turnIn / abandon / pin / unpin). */
+  questAction(
+    action: 'accept' | 'turnIn' | 'abandon' | 'pin' | 'unpin',
+    id: string,
+    choiceIndex?: number,
+  ): void {
+    this.send({ t: 'quest', action, id, ...(choiceIndex !== undefined ? { choiceIndex } : {}) });
+  }
+  /** Send a client-reported objective event (explore / talk / deliver / use / gather). */
+  questEvent(ev: QuestEvent): void {
+    this.send({ t: 'questEvent', ev });
   }
   /** Send a GM action (target by name). */
   gmAction(

@@ -320,6 +320,15 @@ export class ServerCombat {
   }
 
   /**
+   * Award XP from a non-kill source (a quest turn-in, migration #138) to one player, leveling them up
+   * on a threshold cross exactly like kill XP. Server-authoritative — the reward XP is computed from
+   * the quest def, not client-supplied. Only credits the earner (quest turn-in isn't party-shared).
+   */
+  grantXp(playerId: string, amount: number): void {
+    this.awardXp(playerId, amount);
+  }
+
+  /**
    * Buffer the visual side of a combat event (a floater / hit spark / death poof / boss line) at
    * a world position, for the gateway to replicate. Damage/heal read the (live) target's
    * position; a death reads the position carried on the event (the corpse may already be reaped).

@@ -6,6 +6,29 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-09) — Part 34: Server-authoritative quests, Stage 1 (#138).**
+> The quest migration begins. The pure `shared/quests` engine now runs **server-side** too: the
+> `Quests` model (`server/src/quests.ts`) owns each player's `QuestLogState`, seeded from the
+> persisted character on join. Accept / turn-in / abandon / pin ride new `ClientQuestAction` intents
+> (server re-validates availability / prereqs / level / completion); the client-reported objective
+> sources (explore / talk / deliver / use / gather) ride `ClientQuestEvent` (kill / boss / collect are
+> **server-driven** from authoritative kill credit and rejected from a client); the authoritative log
+> replicates on `ServerQuestLog` (proto **v20**). Turn-in **rewards are computed server-side** — gold
+>
+> - XP + items rolled on a deterministic per-(account, quest) RNG and granted via `giveOrDrop` — so a
+>   quest can no longer mint arbitrary gold/items through the trusted `claimReward` bridge.
+>   **441 tests green** (8 new: model accept/kill-drive/turn-in + the wire accept→progress→turn-in,
+>   server-side reward items, and unfinished-turn-in rejection + the v20 codec).
+>   _Quest migration plan (strangler-fig, mirroring the economy):_
+>
+> * **Stage 1 (done):** server engine + protocol + gateway (accept/turn-in/event/kill-drive) +
+>   server-computed rewards + replication. Non-breaking — the client still owns its log this stage.
+> * **Next — Stage 2 (the flip):** the client renders `ServerQuestLog` as authoritative (its
+>   `QuestDirector` becomes a mirror + intent-sender), retiring the quest `claimReward` path; the
+>   server persists the log; proximity re-validation for talk / explore. Then professions (#139).
+>
+> ---
+>
 > **Phase 6 (2026-07-07) — Part 30: Server-authoritative inventory, Stage 1a (foundation).**
 > The economy migration begins: the player's **bag / gold / equipment** become server state. The
 > `Inventories` model (`server/src/inventory.ts`) seeds each player from their persisted character on

@@ -13,16 +13,22 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
+  CharacterClass,
   decodeClient,
   encodeServer,
   findEmote,
+  generateItem,
   lootTurnRecipient,
+  makeRng,
   NET_PROTOCOL_VERSION,
+  scaledQuestXp,
   vendorStock,
   WORLD_SEED,
   type ClientGm,
   type ClientInvAction,
   type ClientParty,
+  type ClientQuestAction,
+  type GeneratedItemSpec,
   type ItemDef,
   type ItemStackSave,
   type NetCombatEvent,
@@ -33,6 +39,8 @@ import {
   type NetPlayer,
   type NetWhoEntry,
   type NetWorldItem,
+  type QuestLogState,
+  type QuestReward,
   type ServerChat,
   type ServerMessage,
 } from '@pathlands/shared';
@@ -41,6 +49,7 @@ import { ServerCombat } from './combat.js';
 import { PartyManager } from './party.js';
 import { GroundItems } from './groundItems.js';
 import { Inventories } from './inventory.js';
+import { Quests } from './quests.js';
 import {
   buildCellIndex,
   buildEntityCellIndex,
@@ -195,6 +204,8 @@ export class GameServer {
   private readonly groundItems = new GroundItems();
   /** Server-authoritative player inventories (bag / gold / equipment) — the economy migration. */
   private readonly inventories = new Inventories();
+  /** Server-authoritative player quest logs — the quest migration (#138). */
+  private readonly quests = new Quests();
   /** Ground-item lifetime in SIM TICKS (from GROUND_ITEM_TTL_MS ÷ tick duration). */
   private readonly groundItemTtlTicks: number;
   /** Set when a ground item was dropped / picked up / despawned — forces a replication pass. */
@@ -378,6 +389,7 @@ export class GameServer {
       }
       this.combat.removePlayer(conn.id); // drop its combat entity + any enemy threat on it
       this.inventories.remove(conn.id); // drop its authoritative inventory
+      this.quests.remove(conn.id); // drop its authoritative quest log
       // Drop from any party (+ clear pending invites) and re-roster the survivors.
       const partyChange = this.party.remove(conn.id);
       this.sim.remove(conn.id);
@@ -482,6 +494,7 @@ export class GameServer {
         let seedInventory: ItemStackSave[] = [];
         let seedGold = 0;
         let seedEquipment: Record<string, ItemDef> = {};
+        let seedQuests: QuestLogState | undefined; // the persisted quest log (empty for a guest)
         if (msg.token !== undefined) {
           const claims = this.auth.verify(msg.token, Math.floor(Date.now() / 1000));
           if (claims === null) {
@@ -512,6 +525,7 @@ export class GameServer {
             seedInventory = ch.inventory;
             seedGold = ch.gold;
             seedEquipment = ch.equipment;
+            seedQuests = ch.quests;
           }
         }
         // The socket may have closed while we awaited the store; bail if so.
@@ -539,6 +553,10 @@ export class GameServer {
           equipment: seedEquipment,
           bagBonus: msg.bagBonus, // client-supplied Deep-Pockets bonus (self-scoped; see ClientHello)
         });
+        // Seed the authoritative quest log from the persisted character (empty for a guest). Like the
+        // inventory this stage, the server runs the engine + replicates while the client still owns
+        // its own log; the client flip (#138 Stage 2) makes this the source of truth.
+        this.quests.seed(player.id, seedQuests);
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);
           conn.helloTimer = null;
@@ -752,7 +770,82 @@ export class GameServer {
         this.inventories.spendGold(conn.id, Math.max(0, Math.floor(msg.amount)));
         return;
       }
+      case 'quest': {
+        if (conn.id === null) return; // must be joined
+        this.handleQuestAction(conn, msg);
+        return;
+      }
+      case 'questEvent': {
+        if (conn.id === null) return; // must be joined
+        // A client-reported objective source (explore / talk / deliver / use / gather) — applied to
+        // the authoritative log. Interim-trusted this stage; proximity re-validation lands with the
+        // client flip. kill/boss/collect are server-driven (drainKills), never accepted here.
+        this.quests.applyEvent(conn.id, msg.ev);
+        return;
+      }
     }
+  }
+
+  /**
+   * Apply a server-validated quest action against the player's OWN authoritative log (migration
+   * #138). The pure `shared/quests` engine re-checks availability / prereqs / completion, so a client
+   * can't accept a locked quest or turn in an unfinished one; the turn-in reward is computed
+   * server-side (`grantQuestReward`), retiring the trusted `claimReward` bridge for quests. A
+   * successful mutation marks the log dirty, so it replicates on the next broadcast.
+   */
+  private handleQuestAction(conn: Conn, msg: ClientQuestAction): void {
+    if (conn.id === null) return;
+    switch (msg.action) {
+      case 'accept': {
+        // Availability/minLevel are checked against the player's AUTHORITATIVE level (from combat).
+        const level = this.combat.progressionOf(conn.id)?.level ?? 1;
+        this.quests.accept(conn.id, msg.id, level);
+        break;
+      }
+      case 'turnIn': {
+        const reward = this.quests.turnIn(conn.id, msg.id);
+        if (reward !== null) this.grantQuestReward(conn, msg.id, reward, msg.choiceIndex);
+        break;
+      }
+      case 'abandon':
+        this.quests.abandon(conn.id, msg.id);
+        break;
+      case 'pin':
+        this.quests.setPinned(conn.id, msg.id, true);
+        break;
+      case 'unpin':
+        this.quests.setPinned(conn.id, msg.id, false);
+        break;
+    }
+  }
+
+  /**
+   * Grant a completed quest's reward server-side (migration #138): gold + XP into the authoritative
+   * wallet / progression, and reward items rolled on a DETERMINISTIC per-(account, quest) RNG stream
+   * (never a client seed), class-flavoured, and credited overflow-safe via `giveOrDrop`. This is what
+   * the trusted `claimReward` bridge did on the client; the server owns it now. `waystoneUnlock` is
+   * applied client-side and lands with the flip (nothing to grant here this stage).
+   */
+  private grantQuestReward(
+    conn: Conn,
+    questId: string,
+    reward: QuestReward,
+    choiceIndex?: number,
+  ): void {
+    if (conn.id === null) return;
+    this.inventories.addGold(conn.id, reward.gold ?? 0);
+    if (reward.xp > 0) this.combat.grantXp(conn.id, scaledQuestXp(reward.xp));
+    const cls = this.inventories.get(conn.id)?.cls ?? CharacterClass.Warrior;
+    const specs: GeneratedItemSpec[] = [...(reward.items ?? [])];
+    if (reward.choices !== undefined && choiceIndex !== undefined) {
+      const chosen = reward.choices[choiceIndex];
+      if (chosen !== undefined) specs.push(chosen);
+    }
+    const key = conn.accountId ?? conn.id;
+    specs.forEach((spec, i) => {
+      const rng = makeRng(WORLD_SEED, 'questReward', key, questId, String(i));
+      this.giveOrDrop(conn, generateItem(rng, { ...spec, forClass: cls }), 1);
+    });
   }
 
   /**
@@ -1182,6 +1275,25 @@ export class GameServer {
         // ground (giveOrDrop) instead of eating it, so hard-won kill loot is never silently lost.
         this.inventories.addGold(conn.id, kill.gold);
         for (const stack of kill.items) this.giveOrDrop(conn, stack.item, stack.qty);
+        // Drive the authoritative quest log from the same kill (migration #138): kill + boss + the
+        // enemy's collect drop-tag. `drainKills` already fanned this credit to every eligible party
+        // member, so party questing advances for each of them — kill counts can't be forged.
+        this.quests.applyKill(conn.id, kill.enemyId);
+      }
+
+      // 1c-ii) Own authoritative quest log (migration #138) — owner-only, sent when it changed since
+      //        the last broadcast (accepts / turn-ins / progress incl. the kills just credited).
+      if (this.quests.isDirty(conn.id)) {
+        const log = this.quests.get(conn.id);
+        if (log !== null) {
+          this.send(conn.ws, {
+            t: 'questLog',
+            tick: this.sim.tick,
+            active: log.active,
+            turnedIn: log.turnedIn,
+          });
+          this.quests.markClean(conn.id);
+        }
       }
 
       // 1d) Authoritative combat visuals near this viewer (Stage 2c-3): incoming hits, other
