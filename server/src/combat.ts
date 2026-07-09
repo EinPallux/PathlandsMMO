@@ -9,6 +9,7 @@
 // Wall-clock lives at the gateway edge, never here — `step()` is driven by the tick clock.
 
 import {
+  applyHeal,
   applyIntent,
   buildEnemyLootTable,
   CharacterClass,
@@ -33,6 +34,7 @@ import {
   type CombatState,
   type CombatContext,
   type CombatEntity,
+  type ConsumableEffect,
   type Intent,
   type NetCombatSelf,
   type NetEntity,
@@ -225,6 +227,40 @@ export class ServerCombat {
   applyPlayerIntent(id: string, intent: Intent): void {
     if (intent.type === 'Move') return; // movement is the ServerSim's authority, not combat's
     applyIntent(this.state, id, intent);
+  }
+
+  /**
+   * Apply a drunk consumable's effect to a player's combat entity (profession migration #139): a
+   * heal / resource restore, or a timed stat buff (via the same aura the client used). The HP /
+   * resource change flows out on the combat-self frame, and the buff modifies server-side damage
+   * (combat is authoritative), so a potion's effect is real for everyone. A dead player's drink is a
+   * no-op here (the Professions model still consumed it — parity with the old client fire-and-forget).
+   * Called by the gateway after the Professions model has debited the stash.
+   */
+  applyConsumable(id: string, effect: ConsumableEffect): void {
+    const e = this.state.entities.get(id);
+    if (e === undefined || e.faction !== 'player' || e.dead) return;
+    if (effect.kind === 'heal') {
+      applyHeal(this.state, e, e, effect.amount, 'potion');
+    } else if (effect.kind === 'resource') {
+      e.resource = Math.min(e.maxResource, e.resource + effect.amount);
+    } else {
+      // Timed stat/combat buff via the aura system (refreshes a same-modifier elixir buff).
+      const existing = e.auras.find(
+        (a) => a.skillId === 'elixir' && a.modifier === effect.modifier,
+      );
+      const aura = {
+        uid: `elixir_${effect.modifier}`,
+        sourceId: e.id,
+        skillId: 'elixir',
+        kind: 'buff' as const,
+        modifier: effect.modifier,
+        magnitude: effect.magnitude,
+        expiresTick: this.state.tick + effect.durationTicks,
+      };
+      if (existing !== undefined) Object.assign(existing, aura);
+      else e.auras.push(aura);
+    }
   }
 
   /** The player's own combat state projected to the wire, or null if it isn't a player. */

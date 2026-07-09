@@ -37,12 +37,14 @@ import {
   type NetWorldItem,
   type ClientGm,
   type ClientInvAction,
+  type ClientProfAction,
   type ClientQuestAction,
   type ItemStackSave,
   type NetWhoEntry,
   type QuestEvent,
   type ServerInventory,
   type ServerKill,
+  type ServerProfessions,
   type ServerQuestLog,
   type ServerSelf,
 } from '@pathlands/shared';
@@ -214,6 +216,9 @@ export class NetClient {
   private readonly claimBuffer: PendingClaim[] = [];
   /** The latest authoritative quest log frame (active + turnedIn), last-wins until drained. */
   private pendingQuestLog: ServerQuestLog | null = null;
+  /** Authoritative profession frames (state + per-action notices) awaiting drain. Queued (NOT
+   *  last-wins) so no notice — a gather/craft toast + deed/bounty side effect — is ever dropped. */
+  private readonly professionsQueue: ServerProfessions[] = [];
   /** Local time (ms) of our last SENT item drop — the client-side drop rate gate. */
   private lastDropMs = 0;
   /** Kills credited to us since the game last drained them (server-rolled loot + quest id). */
@@ -397,6 +402,9 @@ export class NetClient {
       case 'questLog':
         this.pendingQuestLog = msg; // last-wins authoritative quest log (quest migration #138)
         break;
+      case 'professions':
+        this.professionsQueue.push(msg); // queued: every frame's notices must be played in order
+        break;
       default:
         break;
     }
@@ -485,6 +493,7 @@ export class NetClient {
     this.pendingInventory = null;
     this.lastCombatSelf = null;
     this.pendingQuestLog = null;
+    this.professionsQueue.length = 0;
     this.killQueue.length = 0;
     this.fxQueue.length = 0;
     // Parties are session-scoped: a dropped session is out of its party (a reconnect is a
@@ -665,6 +674,20 @@ export class NetClient {
   sendQuestEvent(ev: QuestEvent): void {
     if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
     this.send({ t: 'questEvent', ev });
+  }
+
+  /** Take and clear the authoritative profession frames since the last drain (state + notices), in
+   *  arrival order, so the mirror applies every state + plays every toast / side effect. */
+  drainProfessions(): ServerProfessions[] {
+    if (this.professionsQueue.length === 0) return [];
+    return this.professionsQueue.splice(0, this.professionsQueue.length);
+  }
+
+  /** Send a server-validated profession action (gather / fish / craft / use). Not buffered: a lost
+   *  action simply doesn't happen (the server owns the state), so the player just retries. */
+  sendProfAction(action: ClientProfAction['action'], id?: string): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN || this.you === null) return;
+    this.send({ t: 'prof', action, ...(id !== undefined ? { id } : {}) });
   }
 
   /** Queue a trusted claim that couldn't be sent (no live session), dropping the oldest past the cap. */

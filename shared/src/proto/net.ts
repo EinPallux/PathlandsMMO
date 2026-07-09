@@ -48,9 +48,16 @@ import type { MoveState, PlayerPhysics } from '../sim/types.js';
  *     abandon / pin / unpin) + ClientQuestEvent (the client-reported objective sources — explore /
  *     talk / deliver / use / gather; kill/boss/collect are server-driven) + ServerQuestLog (the
  *     owner's authoritative quest log). The server runs the pure shared/quests engine + computes
- *     turn-in rewards; this stage lands the server capability + tests (the client still owns its log).
+ *     turn-in rewards; this stage lands the server capability + tests (the client still owns its log);
+ * v21 completed the server-authoritative profession migration (#139): ClientProfAction (gather / fish
+ *     / craft / use) + ServerProfessions (the owner's authoritative skills / material stash / crafted
+ *     consumables / learned recipes, plus per-action NetProfNotice[] so the client mirror plays the
+ *     exact toasts + drives the still-client-side deed / bounty side effects). The server resolves
+ *     gathering (nearest node re-derived from the deterministic worldgen scatter, server-owned RNG,
+ *     per-player node depletion) + crafting (retiring the trusted craft `claimReward` bridge — gear is
+ *     forged + granted server-side) + consumable use (applied to the player's combat entity).
  */
-export const NET_PROTOCOL_VERSION = 20;
+export const NET_PROTOCOL_VERSION = 21;
 
 /** Max players in one party (GDD §Party). */
 export const MAX_PARTY = 4;
@@ -71,6 +78,12 @@ const QUEST_ACTIONS = ['accept', 'turnIn', 'abandon', 'pin', 'unpin'];
  *  server-driven from authoritative kill credit and are NEVER accepted from a client (forging them
  *  would inflate kill counts), so they're excluded here. */
 const CLIENT_QUEST_EVENT_KINDS = ['explore', 'talk', 'deliver', 'use', 'gather'];
+
+/** Valid profession actions on the wire (profession migration #139). The server re-validates each
+ *  against the player's AUTHORITATIVE state + position: `gather` / `fish` carry no target (the server
+ *  resolves the nearest worldgen node / the water tier from where the player actually stands), while
+ *  `craft` / `use` carry the recipe / consumable `id`. */
+const PROF_ACTIONS = ['gather', 'fish', 'craft', 'use'];
 
 /** Bound on a quest / npc id accepted on the wire (defends the decoder + downstream lookups). */
 const MAX_QUEST_ID_LEN = 64;
@@ -383,6 +396,22 @@ export interface ClientQuestEvent {
   ev: QuestEvent;
 }
 
+/**
+ * A server-validated profession action against the sender's OWN authoritative profession state
+ * (migration #139). `gather` mines / herbs the nearest worldgen node to the player, `fish` casts at
+ * the water the player is standing in, `craft` runs a recipe (`id`), and `use` drinks a consumable
+ * (`id`). The server re-derives the gather node from the deterministic worldgen scatter + the
+ * player's AUTHORITATIVE position (so a client can't gather a node it isn't standing at, or one above
+ * its skill), owns the yield / craft RNG, and enforces per-player node depletion — a cheat client
+ * can't forge materials or out-pace the gather cadence. `id` is ignored for `gather` / `fish`.
+ */
+export interface ClientProfAction {
+  t: 'prof';
+  action: 'gather' | 'fish' | 'craft' | 'use';
+  /** Recipe id (`craft`) or consumable id (`use`); ignored for `gather` / `fish`. */
+  id?: string;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientIntent
@@ -397,7 +426,8 @@ export type ClientMessage =
   | ClientClaimReward
   | ClientSpendGold
   | ClientQuestAction
-  | ClientQuestEvent;
+  | ClientQuestEvent
+  | ClientProfAction;
 
 // ---------------------------------------------------------------------------
 // Server → Client
@@ -705,6 +735,52 @@ export interface ServerQuestLog {
   turnedIn: string[];
 }
 
+/** One material / fish yield of a gather (id + qty), carried on a gather NetProfNotice. */
+export interface NetProfYield {
+  id: string;
+  qty: number;
+}
+
+/**
+ * A profession outcome the server reports to the owner alongside the authoritative state (migration
+ * #139), so the client mirror can play the exact toast + drive the still-client-side deed / bounty
+ * side effects instead of guessing them from a state diff (a smelt and a mine both raise a material
+ * count — undecidable without this):
+ *   - `gather`: what a mine / herb / fish yielded (`prof` + `yields`) and the resulting gathering
+ *      `skill` (`skillUp` true when it rose). The client toasts it, credits gather bounties per yield,
+ *      and advances the gathering deed on a skill-up.
+ *   - `craft`: the `recipe` crafted (+ any `discovered` recipe learned). The client toasts it + advances
+ *      the craft deed; a crafted gear item itself arrives on the inventory frame (forged server-side).
+ *   - `use`: the `id` of the consumable drunk. The client floats its effect label — the HP / resource /
+ *      buff is applied to the player's combat entity server-side and arrives on the combat-self frame.
+ */
+export type NetProfNotice =
+  | { kind: 'gather'; prof: string; yields: NetProfYield[]; skill: number; skillUp: boolean }
+  | { kind: 'craft'; recipe: string; discovered?: string }
+  | { kind: 'use'; id: string };
+
+/**
+ * The recipient's OWN authoritative profession state (migration #139) — skills, the material stash,
+ * crafted consumables, and learned discovery recipes — sent to the owner only at broadcast cadence
+ * when it changes. The client's professions / crafting panels render from this mirror; the maps are
+ * the source of truth it overwrites its local state with. `notices` carries what changed since the
+ * last frame (empty on the seed / reconnect frame, so a login replays no toasts) so the client can
+ * play the right feedback + fire deed / bounty side effects.
+ */
+export interface ServerProfessions {
+  t: 'professions';
+  tick: number;
+  /** Profession id → skill level (1–100). */
+  skills: Record<string, number>;
+  /** Material id → stack count. */
+  materials: Record<string, number>;
+  /** Consumable id → stack count. */
+  consumables: Record<string, number>;
+  /** Learned discovery-recipe ids. */
+  learned: string[];
+  notices: NetProfNotice[];
+}
+
 export type ServerMessage =
   | ServerWelcome
   | ServerSnapshot
@@ -721,6 +797,7 @@ export type ServerMessage =
   | ServerItemGranted
   | ServerInventory
   | ServerQuestLog
+  | ServerProfessions
   | ServerPong
   | ServerError
   | ServerChat;
@@ -1016,6 +1093,17 @@ export function decodeClient(raw: string): ClientMessage | null {
     case 'questEvent': {
       const ev = decodeClientQuestEvent(o.ev);
       return ev === null ? null : { t: 'questEvent', ev };
+    }
+    case 'prof': {
+      if (!isString(o.action) || !PROF_ACTIONS.includes(o.action)) return null;
+      const act: ClientProfAction = { t: 'prof', action: o.action as ClientProfAction['action'] };
+      // craft / use carry a recipe / consumable id; gather / fish don't. Bound + require non-empty
+      // when present so a downstream registry lookup can't be handed a huge or empty string.
+      if (o.id !== undefined) {
+        if (!isString(o.id) || o.id.length === 0 || o.id.length > MAX_QUEST_ID_LEN) return null;
+        act.id = o.id;
+      }
+      return act;
     }
     default:
       return null;
@@ -1378,8 +1466,68 @@ export function decodeServer(raw: string): ServerMessage | null {
         turnedIn: o.turnedIn as string[],
       };
     }
+    case 'professions': {
+      if (!isFiniteNumber(o.tick)) return null;
+      const skills = decodeCountMap(o.skills);
+      const materials = decodeCountMap(o.materials);
+      const consumables = decodeCountMap(o.consumables);
+      if (skills === null || materials === null || consumables === null) return null;
+      if (!Array.isArray(o.learned) || !o.learned.every(isString)) return null;
+      if (!Array.isArray(o.notices) || !o.notices.every(isNetProfNotice)) return null;
+      return {
+        t: 'professions',
+        tick: o.tick,
+        skills,
+        materials,
+        consumables,
+        learned: o.learned as string[],
+        notices: o.notices as NetProfNotice[],
+      };
+    }
     default:
       return null;
+  }
+}
+
+/** Validate an untrusted id → count map (skills / materials / consumables) on the ServerProfessions
+ *  frame. SERVER→client (trusted source), so a structural check: an object whose every value is a
+ *  finite number. Returns the map or null on a malformed shape. */
+function decodeCountMap(v: unknown): Record<string, number> | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Record<string, unknown>)) {
+    if (!isFiniteNumber(n)) return null;
+    out[k] = n;
+  }
+  return out;
+}
+
+/** Validate one gather yield (id + finite qty) on a gather NetProfNotice. */
+function isNetProfYield(v: unknown): v is NetProfYield {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return isString(o.id) && isFiniteNumber(o.qty);
+}
+
+/** Validate one profession notice (gather / craft / use) on the ServerProfessions frame. */
+function isNetProfNotice(v: unknown): v is NetProfNotice {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  switch (o.kind) {
+    case 'gather':
+      return (
+        isString(o.prof) &&
+        isFiniteNumber(o.skill) &&
+        isBool(o.skillUp) &&
+        Array.isArray(o.yields) &&
+        o.yields.every(isNetProfYield)
+      );
+    case 'craft':
+      return isString(o.recipe) && (o.discovered === undefined || isString(o.discovered));
+    case 'use':
+      return isString(o.id);
+    default:
+      return false;
   }
 }
 

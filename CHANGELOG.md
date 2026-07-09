@@ -10,6 +10,64 @@ All notable changes to Pathlands are documented here, per working session. Forma
 > content) in **PostgreSQL** (for a future admin/map editor), **GM tooling**, server-authoritative
 > **quests / professions / economy**, **droppable ground items**, **shared quest credit**.
 
+### Part 37 — Server-authoritative professions (migration #139) (2026-07-09)
+
+The **professions migration**: gathering, crafting, and consumable use move server-side, so the
+server owns the yields, the skill-ups, node depletion, and the material / consumable stash. The pure
+`shared/professions` engine (`gatherNode` / `rollFish` / `craft`) runs unchanged on the server. This
+**retires the crafting `claimReward` trust bridge** (gear is now forged server-side); the client's
+`GatherDirector` becomes a pure mirror + intent-sender, mirroring the quest flip (#138).
+
+#### Added
+
+- **`Professions` model (`server/src/professions.ts`).** Owns each player's skills / material stash /
+  crafted consumables / learned recipes, seeded from the persisted character on join with defensive
+  clamps (skills to 1–100, bounded stash / learned kinds). Resolves `gather` / `fish` / `craft` /
+  `use` via the pure engine on a **server-owned** `makeRng(WORLD_SEED, …, seq)` stream (never a client
+  seed), with per-player **node depletion** (respawn) and an **action-cadence gate**. Dirty-tracked +
+  per-action `notices`, mirroring `Quests` / `Inventories`.
+- **Protocol v21 (`shared/proto/net.ts`).** `ClientProfAction` (`gather` / `fish` / `craft` / `use`;
+  `gather` / `fish` carry no target — the server resolves the nearest node / water tier from the
+  authoritative position) + `ServerProfessions` (owner's skills / materials / consumables / learned +
+  `NetProfNotice[]`), with structural decoders/validators.
+- **`ServerCombat.applyConsumable`.** Applies a drunk consumable's heal / resource / buff to the
+  player's authoritative combat entity (the buff modifies server-side damage; HP / resource ride the
+  combat-self frame).
+
+#### Changed
+
+- **Gathering is authoritative.** The gateway re-derives gather-node candidates from
+  `world.scatterChunk` around the player's authoritative position (`nearbyGatherNodes`,
+  `GATHER_NODE_RANGE`) and hands them to the model, which skill-gates + depletion-gates them and rolls
+  the yield — a client can't gather a node it isn't standing at / is under-skilled for, out-farm the
+  respawn, or forge materials. `fish` re-validates water + derives the tier from the authoritative
+  biome.
+- **Crafting is authoritative; the craft `claimReward` is retired.** `craft` re-validates skill +
+  inputs and consumes them; a material / consumable output is banked in the stash, and a **gear output
+  is forged server-side** (`generateItem` on a per-`(player, recipe, seq)` RNG, class-flavoured,
+  credited overflow-safe via `giveOrDrop`). `CombatDirector.craftGear` (the last craft `claimReward`
+  path) is **removed**.
+- **Client `GatherDirector` is a mirror.** The skills / stash / consumables / learned maps are written
+  ONLY by the `ServerProfessions` frame; gather / craft / consumable-use are intents. The frame's
+  `notices` reconstruct the exact toasts and drive the still-client-side deed (`onCraft` /
+  `onGatherSkill`) and gather-bounty (`onMaterialGained`) side effects; the mining/fishing channel UX
+  and a client-optimistic node depletion (prompt only) stay local. `CombatDirector.applyConsumable` is
+  now the client-only cue (float + mirror the buff aura for own-hit prediction — HP / resource are
+  server-authoritative).
+- **Server persistence.** `persistPosition` writes professions / materials / consumables /
+  learnedRecipes back to the stored character (snapshotted before the first `await`, like the quest /
+  inventory state), replacing the client-owned blob.
+
+#### Tests (+16, 465 green)
+
+- The `Professions` model in isolation: seed defaults + dirty tracking, gather yield / skill-up +
+  per-player depletion + cadence gate + skill gating, fishing, crafting (stash + gear outputs, input
+  consumption, unaffordable-refusal), consumable use, and forged-skill clamping.
+- Over the wire: a player gathers a real worldgen node from its authoritative position; a gather far
+  from any node yields nothing; crafted **gear is forged server-side into the bag** (no `claimReward`,
+  a `gen:` weapon, inputs consumed); a consumable is debited server-side. Plus the protocol round-trip
+  for the profession frames.
+
 ### Part 36 — Quest event re-validation, Stage 2b (migration #138) (2026-07-09)
 
 Closes the interim trust the flip left on the client-reported objective events. The server now

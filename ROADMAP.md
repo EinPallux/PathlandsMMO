@@ -6,6 +6,30 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 
 ## Current Status
 
+> **Phase 6 (2026-07-09) — Part 37: Server-authoritative professions (#139).**
+> The **professions migration** — gathering, crafting, and consumable use are now server-owned. The
+> `Professions` model (`server/src/professions.ts`) owns each player's skills / material stash /
+> crafted consumables / learned recipes, seeded from the persisted character on join and replicated on
+> `ServerProfessions` (proto **v21**, owner-only) with per-action `NetProfNotice[]`. Every action is a
+> `ClientProfAction` intent: **`gather`** works the nearest worldgen node the player is standing at
+> (the gateway re-derives candidates from `world.scatterChunk` around the **authoritative position**;
+> the model skill-gates + depletion-gates them and rolls the yield on a **server-owned** seeded RNG, so
+> a client can't gather a node it isn't at, out-farm the respawn, or forge materials — a per-player
+> cadence gate bounds the rate); **`fish`** validates the player is at water + derives the tier from the
+> authoritative biome; **`craft`** re-validates skill + inputs and consumes them, banking a
+> material/consumable output or **forging a gear item server-side** (`generateItem`, `giveOrDrop`) —
+> **retiring the crafting `claimReward` bridge**; **`use`** applies a consumable's heal / resource /
+> buff to the player's combat entity. The client `GatherDirector` is now a **mirror** (the maps are
+> written only by the `ServerProfessions` frame; its `notices` drive toasts + the client-side deed /
+> gather-bounty hooks; the channel/fishing-minigame UX stays local), and the server **persists**
+> professions in `persistPosition`. The only trusted bridges left: `ClientClaimReward` (bounty rewards
+> only) and `ClientSpendGold` (travel / mount). **465 tests green** (+16: the `Professions` model +
+> over-the-wire gather / craft-to-bag / consumable-use + node-proximity + protocol round-trip).
+> Verified by typecheck / lint / build + the wire/persistence tests; the client profession UI itself
+> needs a **playtest** (no headless browser).
+>
+> ---
+>
 > **Phase 6 (2026-07-09) — Part 35: Quest client flip, Stage 2 (#138).**
 > The flip: the client renders the server's quest log as authoritative. `QuestDirector`'s log is a
 > **mirror** written only by the `ServerQuestLog` frame; accept / turn-in / abandon / pin and the
@@ -45,8 +69,10 @@ Pathlands is built in **six phases**. Each phase is a major milestone that ends 
 > * **Stage 2b (done, Part 36):** the server re-validates each `ClientQuestEvent` against the player's
 >   authoritative position — explore advances from the server position (not client coords), and
 >   talk / deliver / use require proximity (`QUEST_INTERACT_RADIUS`) to the giver / Waystone.
-> * **Next:** a party-per-member kill-credit **wire** test (the fan-out is unit-tested, the end-to-end
->   gateway path isn't yet) + a client playtest of the quest UX; then professions (#139).
+> * **Done:** the party-per-member kill-credit test (a kill advances every nearby member's quest log).
+> * **Done (Part 37):** the **professions migration (#139)** — server-authoritative gathering /
+>   crafting / consumable use, retiring the crafting `claimReward` trust (see the Part 37 block above).
+> * **Next:** a client playtest of the quest + profession UX (no headless browser).
 >
 > ---
 >

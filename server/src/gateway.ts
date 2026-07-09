@@ -13,6 +13,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
+  Biome,
   CharacterClass,
   decodeClient,
   encodeServer,
@@ -21,6 +22,7 @@ import {
   lootTurnRecipient,
   makeRng,
   NET_PROTOCOL_VERSION,
+  nodeInfo,
   QUEST_GIVERS,
   scaledQuestXp,
   settlementById,
@@ -30,6 +32,7 @@ import {
   type ClientGm,
   type ClientInvAction,
   type ClientParty,
+  type ClientProfAction,
   type ClientQuestAction,
   type GeneratedItemSpec,
   type ItemDef,
@@ -42,6 +45,7 @@ import {
   type NetPlayer,
   type NetWhoEntry,
   type NetWorldItem,
+  type PropInstance,
   type QuestEvent,
   type QuestLogState,
   type QuestReward,
@@ -54,6 +58,7 @@ import { PartyManager } from './party.js';
 import { GroundItems } from './groundItems.js';
 import { Inventories } from './inventory.js';
 import { Quests } from './quests.js';
+import { Professions, type GatherCandidate } from './professions.js';
 import {
   buildCellIndex,
   buildEntityCellIndex,
@@ -181,6 +186,21 @@ for (const g of QUEST_GIVERS) {
   if (s !== undefined) GIVER_POS.set(g.id, { x: s.cx + g.dx, z: s.cz + g.dz });
 }
 
+/** How close (world units) a player must be to a gather node to work it (profession migration #139).
+ *  A touch above the client's 3.5 m prompt range so client↔server position lag can't reject a gather
+ *  the player legitimately started (they've stood still through the 2–3 s channel), while staying far
+ *  too tight to reach a node from across the map. */
+const GATHER_NODE_RANGE = 4.5;
+
+/** Per-player node respawn (profession migration #139) — GDD §9's 90–180 s, matching the client's
+ *  120 s. Converted to sim ticks at construction (the sim has no wall-clock). */
+const GATHER_RESPAWN_MS = 120_000;
+
+/** Minimum spacing between one player's gather / fish actions (profession migration #139). Well under
+ *  the 2–3 s gather channel + fishing minigame so legit play never trips it, but it caps the farm rate
+ *  where nodes are dense (mining especially) even past per-node depletion. Converted to ticks. */
+const GATHER_MIN_INTERVAL_MS = 1200;
+
 /** Server-side visible cap on a rebroadcast chat line (below the wire MAX_CHAT_LEN). */
 const CHAT_BROADCAST_MAX = 200;
 
@@ -223,8 +243,13 @@ export class GameServer {
   private readonly inventories = new Inventories();
   /** Server-authoritative player quest logs — the quest migration (#138). */
   private readonly quests = new Quests();
+  /** Server-authoritative player professions (skills / stash / crafts) — the migration (#139). */
+  private readonly professions = new Professions();
   /** Ground-item lifetime in SIM TICKS (from GROUND_ITEM_TTL_MS ÷ tick duration). */
   private readonly groundItemTtlTicks: number;
+  /** Gather node respawn + gather/fish cadence, in SIM TICKS (from their MS budgets ÷ tick duration). */
+  private readonly gatherRespawnTicks: number;
+  private readonly gatherMinIntervalTicks: number;
   /** Set when a ground item was dropped / picked up / despawned — forces a replication pass. */
   private groundChanged = false;
 
@@ -239,6 +264,9 @@ export class GameServer {
       1,
       Math.round(GROUND_ITEM_TTL_MS / Math.max(1, opts.tickDurationMs)),
     );
+    const tickMs = Math.max(1, opts.tickDurationMs);
+    this.gatherRespawnTicks = Math.max(1, Math.round(GATHER_RESPAWN_MS / tickMs));
+    this.gatherMinIntervalTicks = Math.max(1, Math.round(GATHER_MIN_INTERVAL_MS / tickMs));
     // Let the combat sim share a kill's XP with the killer's nearby party (Part 21): it looks up
     // the party's member ids and range-gates them itself. Solo players resolve to an empty list.
     this.combat.setPartyProvider((id) => this.party.partyOf(id)?.members ?? []);
@@ -407,6 +435,7 @@ export class GameServer {
       this.combat.removePlayer(conn.id); // drop its combat entity + any enemy threat on it
       this.inventories.remove(conn.id); // drop its authoritative inventory
       this.quests.remove(conn.id); // drop its authoritative quest log
+      this.professions.remove(conn.id); // drop its authoritative profession state
       // Drop from any party (+ clear pending invites) and re-roster the survivors.
       const partyChange = this.party.remove(conn.id);
       this.sim.remove(conn.id);
@@ -446,6 +475,9 @@ export class GameServer {
             turnedIn: [...questSnap.turnedIn],
           }
         : null;
+    // Server-authoritative professions (migration #139) — snapshot up front for the same race. `get`
+    // already returns fresh copies of the maps + learned list.
+    const prof = this.professions.get(player.id);
 
     const ch = await this.store.getCharacter(accountId);
     if (ch === null) return; // guest-with-account who never uploaded a character
@@ -473,6 +505,14 @@ export class GameServer {
     // Server-authoritative quest log (migration #138): the log is the server's truth now, written
     // back over the client-owned blob it used to be.
     if (quests !== null) ch.quests = quests;
+    // Server-authoritative professions (migration #139): skills / material stash / crafted consumables
+    // / learned recipes are the server's truth now, written back over the (formerly client-owned) blob.
+    if (prof !== null) {
+      ch.professions = prof.skills;
+      ch.materials = prof.materials;
+      ch.consumables = prof.consumables;
+      ch.learnedRecipes = prof.learned;
+    }
     await this.store.putCharacter(accountId, ch);
   }
 
@@ -528,6 +568,13 @@ export class GameServer {
         let seedGold = 0;
         let seedEquipment: Record<string, ItemDef> = {};
         let seedQuests: QuestLogState | undefined; // the persisted quest log (empty for a guest)
+        // Profession state to seed the authoritative model from (defaults for a guest).
+        let seedProf: {
+          professions?: Record<string, number> | null;
+          materials?: Record<string, number> | null;
+          consumables?: Record<string, number> | null;
+          learnedRecipes?: readonly string[] | null;
+        } | null = null;
         if (msg.token !== undefined) {
           const claims = this.auth.verify(msg.token, Math.floor(Date.now() / 1000));
           if (claims === null) {
@@ -559,6 +606,12 @@ export class GameServer {
             seedGold = ch.gold;
             seedEquipment = ch.equipment;
             seedQuests = ch.quests;
+            seedProf = {
+              professions: ch.professions,
+              materials: ch.materials,
+              consumables: ch.consumables,
+              learnedRecipes: ch.learnedRecipes,
+            };
           }
         }
         // The socket may have closed while we awaited the store; bail if so.
@@ -590,6 +643,10 @@ export class GameServer {
         // inventory this stage, the server runs the engine + replicates while the client still owns
         // its own log; the client flip (#138 Stage 2) makes this the source of truth.
         this.quests.seed(player.id, seedQuests);
+        // Seed the authoritative professions from the persisted character (defaults for a guest). The
+        // RNG-stream key is the account id (or the session id for a guest) so the server-owned gather /
+        // craft rolls are deterministic per player yet unpredictable to the client.
+        this.professions.seed(player.id, conn.accountId ?? player.id, seedProf);
         if (conn.helloTimer !== null) {
           clearTimeout(conn.helloTimer);
           conn.helloTimer = null;
@@ -819,6 +876,137 @@ export class GameServer {
         if (ev !== null) this.quests.applyEvent(conn.id, ev);
         return;
       }
+      case 'prof': {
+        if (conn.id === null) return; // must be joined
+        this.handleProfAction(conn, msg);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Apply a server-validated profession action against the player's OWN authoritative state
+   * (migration #139). `gather` mines/herbs the nearest worldgen node the player is standing at (skill-
+   * gated + depletion-gated server-side, so a client can't forge materials or out-farm the respawn),
+   * `fish` casts at the water they're standing in (biome → tier server-side), `craft` runs a recipe
+   * (inputs re-validated + consumed server-side; gear forged + granted here, retiring the old trusted
+   * `claimReward` bridge), and `use` drinks a consumable (applied to their combat entity). The pure
+   * `shared/professions` engine owns the rules; the state change replicates on the next broadcast.
+   */
+  private handleProfAction(conn: Conn, msg: ClientProfAction): void {
+    if (conn.id === null) return;
+    const player = this.sim.players.get(conn.id);
+    if (player === undefined) return;
+    switch (msg.action) {
+      case 'gather': {
+        const candidates = this.nearbyGatherNodes(player.phys.x, player.phys.z);
+        if (candidates.length === 0) return; // no node in range — nothing to gather
+        this.professions.gather(
+          conn.id,
+          candidates,
+          this.sim.tick,
+          this.gatherRespawnTicks,
+          this.gatherMinIntervalTicks,
+        );
+        return;
+      }
+      case 'fish': {
+        // Re-validate the player is actually in/at water (never trust the client) + derive the tier
+        // from the authoritative biome, so a cheat can't fish tier-3 marlin from a puddle.
+        if (!this.nearWater(player.phys.x, player.phys.y, player.phys.z)) return;
+        const tier = this.fishingTier(player.phys.x, player.phys.z);
+        this.professions.fish(conn.id, tier, this.sim.tick, this.gatherMinIntervalTicks);
+        return;
+      }
+      case 'craft': {
+        if (msg.id === undefined) return; // craft needs a recipe id
+        const outcome = this.professions.craftRecipe(conn.id, msg.id);
+        if (outcome.kind === 'gear') {
+          // Forge the gear for the player's class on a DETERMINISTIC per-(player, recipe, seq) stream
+          // (never a client seed) and credit it overflow-safe — the server owns the crafted item now.
+          const cls = this.inventories.get(conn.id)?.cls ?? CharacterClass.Warrior;
+          const key = conn.accountId ?? conn.id;
+          const rng = makeRng(WORLD_SEED, 'craftGear', key, msg.id, String(outcome.seq));
+          this.giveOrDrop(conn, generateItem(rng, { ...outcome.spec, forClass: cls }), 1);
+        }
+        return;
+      }
+      case 'use': {
+        if (msg.id === undefined) return; // use needs a consumable id
+        const effect = this.professions.useConsumable(conn.id, msg.id);
+        if (effect !== null) this.combat.applyConsumable(conn.id, effect);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Resolve the gather nodes within `GATHER_NODE_RANGE` of a player's authoritative position by
+   * re-running the SAME deterministic worldgen scatter the client uses (same seed + code ⇒ same nodes
+   * in the same places, ARCH §5), sorted nearest-first. The Professions model owns skill / depletion
+   * gating over these candidates. Empty if no node is in range (or a chunk fails to scatter).
+   */
+  private nearbyGatherNodes(px: number, pz: number): GatherCandidate[] {
+    const cx = Math.floor(px / 32);
+    const cz = Math.floor(pz / 32);
+    const found: { c: GatherCandidate; d: number }[] = [];
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        let props: PropInstance[];
+        try {
+          props = this.sim.world.world.scatterChunk(cx + dx, cz + dz);
+        } catch {
+          continue;
+        }
+        for (const p of props) {
+          const info = nodeInfo(p.prop);
+          if (info === undefined) continue;
+          const d = Math.hypot(p.x - px, p.z - pz);
+          if (d > GATHER_NODE_RANGE) continue;
+          found.push({
+            c: {
+              prof: info.profession,
+              tier: info.tier,
+              key: `${Math.round(p.x)},${Math.round(p.z)}`,
+            },
+            d,
+          });
+        }
+      }
+    }
+    found.sort((a, b) => a.d - b.d);
+    return found.map((f) => f.c);
+  }
+
+  /** Whether a player is within fishing range of water — the authoritative version of the client's
+   *  `nearWater` (a ring of samples a couple of voxels below foot level), so a `fish` action is only
+   *  honoured at real water. */
+  private nearWater(px: number, py: number, pz: number): boolean {
+    const world = this.sim.world.world;
+    const y = Math.floor(py);
+    for (let a = 0; a < 8; a++) {
+      const ang = (a / 8) * Math.PI * 2;
+      const wx = Math.floor(px + Math.cos(ang) * 3.0);
+      const wz = Math.floor(pz + Math.sin(ang) * 3.0);
+      for (let dy = -2; dy <= 0; dy++) {
+        if (world.isFluidAt(wx, y + dy, wz)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** The water tier at a position from its authoritative biome (mirrors the client's `fishingTier`). */
+  private fishingTier(px: number, pz: number): number {
+    switch (this.sim.world.world.biomeAt(Math.floor(px), Math.floor(pz))) {
+      case Biome.Foothills:
+        return 1;
+      case Biome.Peaks:
+        return 2;
+      case Biome.Trollmoor:
+      case Biome.Coast:
+        return 3;
+      default:
+        return 0; // Vale / Weald ponds
     }
   }
 
@@ -1367,6 +1555,25 @@ export class GameServer {
             turnedIn: log.turnedIn,
           });
           this.quests.markClean(conn.id);
+        }
+      }
+
+      // 1c-iii) Own authoritative profession state (migration #139) — owner-only, sent when it changed
+      //         (a gather / fish / craft / consumable-use). `notices` tells the client mirror what to
+      //         toast + which deed / bounty side effects to fire.
+      if (this.professions.isDirty(conn.id)) {
+        const f = this.professions.frame(conn.id);
+        if (f !== null) {
+          this.send(conn.ws, {
+            t: 'professions',
+            tick: this.sim.tick,
+            skills: f.skills,
+            materials: f.materials,
+            consumables: f.consumables,
+            learned: f.learned,
+            notices: f.notices,
+          });
+          this.professions.markClean(conn.id);
         }
       }
 

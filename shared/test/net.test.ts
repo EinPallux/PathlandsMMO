@@ -20,8 +20,8 @@ import {
 } from '../src/index.js';
 
 describe('net protocol codec', () => {
-  it('is at protocol version 20 (…/ buyback replication / server-authoritative quests)', () => {
-    expect(NET_PROTOCOL_VERSION).toBe(20);
+  it('is at protocol version 21 (…/ server-authoritative quests / professions)', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(21);
   });
 
   it('round-trips + validates the quest action / event / log frames', () => {
@@ -73,6 +73,65 @@ describe('net protocol codec', () => {
           tick: 1,
           active: [{ id: 'q', counts: [1.5], pinned: true }],
           turnedIn: [],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('round-trips + validates the profession action / state frames (#139)', () => {
+    // Client → server: profession actions. gather / fish carry no id; craft / use carry one.
+    const gather: ClientMessage = { t: 'prof', action: 'gather' };
+    expect(decodeClient(encodeClient(gather))).toEqual(gather);
+    const fish: ClientMessage = { t: 'prof', action: 'fish' };
+    expect(decodeClient(encodeClient(fish))).toEqual(fish);
+    const craft: ClientMessage = { t: 'prof', action: 'craft', id: 'r_copperBar' };
+    expect(decodeClient(encodeClient(craft))).toEqual(craft);
+    const use: ClientMessage = { t: 'prof', action: 'use', id: 'lesserHealthPotion' };
+    expect(decodeClient(encodeClient(use))).toEqual(use);
+    // A bad action / empty id sinks it.
+    expect(decodeClient(JSON.stringify({ t: 'prof', action: 'smelt' }))).toBeNull();
+    expect(decodeClient(JSON.stringify({ t: 'prof', action: 'craft', id: '' }))).toBeNull();
+
+    // Server → client: the authoritative profession state + per-action notices.
+    const prof: ServerMessage = {
+      t: 'professions',
+      tick: 9,
+      skills: { mining: 3, herbalism: 1, fishing: 1, blacksmithing: 1, alchemy: 1 },
+      materials: { copperOre: 4, roughStone: 2 },
+      consumables: { lesserHealthPotion: 1 },
+      learned: ['r_crystaliumBlade'],
+      notices: [
+        {
+          kind: 'gather',
+          prof: 'mining',
+          yields: [
+            { id: 'copperOre', qty: 2 },
+            { id: 'roughStone', qty: 1 },
+          ],
+          skill: 3,
+          skillUp: true,
+        },
+        { kind: 'craft', recipe: 'r_copperBar' },
+        { kind: 'use', id: 'lesserHealthPotion' },
+      ],
+    };
+    expect(decodeServer(encodeServer(prof))).toEqual(prof);
+    // A non-finite skill value / malformed notice sinks it.
+    expect(
+      decodeServer(
+        '{"t":"professions","tick":1,"skills":{"mining":1e999},"materials":{},"consumables":{},"learned":[],"notices":[]}',
+      ),
+    ).toBeNull();
+    expect(
+      decodeServer(
+        JSON.stringify({
+          t: 'professions',
+          tick: 1,
+          skills: {},
+          materials: {},
+          consumables: {},
+          learned: [],
+          notices: [{ kind: 'craft' }],
         }),
       ),
     ).toBeNull();

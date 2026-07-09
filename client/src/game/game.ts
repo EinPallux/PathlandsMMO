@@ -278,7 +278,10 @@ export class Game {
       onStatus: (st) => {
         // On a drop, re-arm the quest baseline so the post-reconnect log frame is treated as a fresh
         // baseline (no replayed toasts / turn-in side effects) rather than diffed against stale state.
-        if (st.phase === 'reconnecting') this.quests.resetBaseline();
+        if (st.phase === 'reconnecting') {
+          this.quests.resetBaseline();
+          this.gather.resetBaseline();
+        }
         useStore.getState().setNet({ phase: st.phase, peers: st.peers, latencyMs: st.latencyMs });
       },
       onChat: (line) =>
@@ -343,6 +346,12 @@ export class Game {
       drainQuestLog: () => net.drainQuestLog(),
       sendQuestAction: (action, id, choiceIndex) => net.sendQuestAction(action, id, choiceIndex),
       sendQuestEvent: (ev) => net.sendQuestEvent(ev),
+    });
+    // Professions are server-authoritative now (migration #139): the director renders the server's
+    // skills / stash / crafts + drives gathering / crafting / consumable use entirely by intents.
+    this.gather.setNetSink({
+      drainProfessions: () => net.drainProfessions(),
+      sendProfAction: (action, id) => net.sendProfAction(action, id),
     });
     // Persist promptly whenever a ground-item drop/pickup mutates the bag (dupe-window mitigation).
     this.combat.setBagMutationHook(() => this.onPersist?.());
@@ -823,7 +832,9 @@ export class Game {
     this.quests.applyServerQuestLog();
     this.quests.tickExplore(dt, ph.x, ph.z);
 
-    // Gathering: node proximity, channel/fishing progress (cancels on movement).
+    // Gathering: adopt the server's authoritative profession state (migration #139), then run node
+    // proximity + channel/fishing progress (cancels on movement).
+    this.gather.applyServerProfessions();
     const gMoved = Math.hypot(ph.x - this.lastGx, ph.z - this.lastGz) > 0.04;
     this.lastGx = ph.x;
     this.lastGz = ph.z;

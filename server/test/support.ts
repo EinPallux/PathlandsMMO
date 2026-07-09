@@ -23,6 +23,7 @@ import {
   type NetWorldItem,
   type QuestEvent,
   type QuestProgress,
+  type NetProfNotice,
 } from '@pathlands/shared';
 import { TICK_DURATION_MS } from '@pathlands/shared';
 import type { GatewayOptions } from '../src/gateway.js';
@@ -117,6 +118,15 @@ export class TestClient {
   } | null = null;
   /** Latest server-authoritative quest log (active + turnedIn), or null before the first. */
   lastQuestLog: { active: QuestProgress[]; turnedIn: string[] } | null = null;
+  /** Latest server-authoritative profession state (skills / stash / crafts), or null before it. */
+  lastProfessions: {
+    skills: Record<string, number>;
+    materials: Record<string, number>;
+    consumables: Record<string, number>;
+    learned: string[];
+  } | null = null;
+  /** Every profession notice received, in arrival order (gather / craft / use). */
+  readonly profNotices: NetProfNotice[] = [];
   deltaCount = 0;
   private seq = 0;
 
@@ -206,6 +216,15 @@ export class TestClient {
       case 'questLog':
         this.lastQuestLog = { active: msg.active, turnedIn: msg.turnedIn };
         break;
+      case 'professions':
+        this.lastProfessions = {
+          skills: msg.skills,
+          materials: msg.materials,
+          consumables: msg.consumables,
+          learned: msg.learned,
+        };
+        for (const n of msg.notices) this.profNotices.push(n);
+        break;
       default:
         break;
     }
@@ -275,6 +294,10 @@ export class TestClient {
   /** Send a client-reported objective event (explore / talk / deliver / use / gather). */
   questEvent(ev: QuestEvent): void {
     this.send({ t: 'questEvent', ev });
+  }
+  /** Send a server-validated profession action (gather / fish / craft / use). */
+  profAction(action: 'gather' | 'fish' | 'craft' | 'use', id?: string): void {
+    this.send({ t: 'prof', action, ...(id !== undefined ? { id } : {}) });
   }
   /** Send a GM action (target by name). */
   gmAction(

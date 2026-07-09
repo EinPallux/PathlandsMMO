@@ -32,7 +32,6 @@ import {
   rollLoot,
   buildEnemyLootTable,
   generateItem,
-  applyHeal,
   WORLD_SPAWNS,
   EquipSlot,
   nearestWaystone,
@@ -739,32 +738,22 @@ export class CombatDirector {
   }
 
   /**
-   * Forge a crafted item for the player's class and bridge it to the authoritative bag (a trusted
-   * claimReward — crafting validation moves server-side when professions migrate). Returns false if
-   * the mirror bag is full (the craft's materials are already spent by the caller — pre-existing).
+   * The CLIENT-only feedback of a consumable the server applied (profession migration #139). The
+   * server owns the consumable now: it debits the stash + applies the HP / resource / buff to the
+   * player's authoritative combat entity, so the HP / resource arrive on the combat-self frame (which
+   * overwrites `p.hp` / `p.resource` each frame — a local restore would just be clobbered). This
+   * floats the on-screen cue and, for a damage buff, mirrors the aura into the LOCAL sim so own-hit
+   * PREDICTION matches the server's now-buffed damage (auras aren't overwritten by the combat-self
+   * frame). Fired from the `use` profession notice.
    */
-  craftGear(s: GeneratedItemSpec): boolean {
-    if (this.inventory.length >= this.bagCap()) {
-      this.pushFloater(this.player, 'Bag full', 'miss');
-      return false;
-    }
-    const item = generateItem(this.state.rng, { ...s, forClass: this.cls });
-    this.pushFloater(this.player, `Crafted ${item.name}`, 'heal');
-    this.netSink?.sendClaimReward(0, [{ item, qty: 1 }]);
-    return true;
-  }
-
-  /** Drink a consumable: restore HP/resource or apply a timed buff to the player. */
   applyConsumable(effect: ConsumableEffect): void {
     const p = this.player;
-    if (p.dead) return;
-    if (effect.kind === 'heal') {
-      applyHeal(this.state, p, p, effect.amount, 'potion');
-    } else if (effect.kind === 'resource') {
-      p.resource = Math.min(p.maxResource, p.resource + effect.amount);
-      this.pushFloater(p, `+${effect.amount}`, 'heal');
+    if (p.dead) return; // a dead player's drink is a server-side no-op (parity) — no cue
+    if (effect.kind === 'heal' || effect.kind === 'resource') {
+      this.pushFloater(p, `+${effect.amount}`, 'heal'); // server-authoritative restore; float the cue
     } else {
-      // Timed stat/combat buff via the aura system (refreshes a same-effect buff).
+      // Timed stat/combat buff: mirror the aura locally for own-hit prediction (refreshes a
+      // same-modifier elixir buff) and float the label.
       const existing = p.auras.find(
         (a) => a.skillId === 'elixir' && a.modifier === effect.modifier,
       );
